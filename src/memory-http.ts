@@ -48,9 +48,13 @@ export function installAgentRpMemoryHttp(routeCtx: Context, hostCtx: Context, se
             kind: memory.kind,
             subject: memory.subject,
             text: memory.text,
-            source: agent.session.events[memory.sourceEventSeq]?.type === 'command/run'
-              ? 'user'
-              : agent.session.events[memory.sourceEventSeq]?.type === 'agent-rp/memory-seed' ? 'inherited' : 'character',
+            // An import also cites a command/run, so the record's own origin
+            // has to be consulted before the source event is classified.
+            source: memory.origin === 'imported'
+              ? 'imported'
+              : agent.session.events[memory.sourceEventSeq]?.type === 'command/run'
+                ? 'user'
+                : agent.session.events[memory.sourceEventSeq]?.type === 'agent-rp/memory-seed' ? 'inherited' : 'character',
           })),
         }
         json(response, 200, value)

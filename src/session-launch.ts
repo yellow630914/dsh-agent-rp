@@ -367,8 +367,16 @@ export function prepareAgentRpSession(
       chat.attachment,
       request.characterId,
     )
+  // A migrated chat activates the same reusable worlds a fresh character
+  // Session would. Without these actor snapshots the Session falls back to the
+  // card's embedded `character_book`, so worlds the player bound in the
+  // resource center — and edits made to a split embedded book — are lost.
   return {
-    seed: seedWithPreset(migrationSeed, presets, request.presetId),
+    seed: seedWithPreset(
+      appendCharacterWorldSessionSeed(migrationSeed, character.worldBinding, worldInfos),
+      presets,
+      request.presetId,
+    ),
     title: character.detail.displayName,
   }
 }

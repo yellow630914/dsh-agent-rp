@@ -4871,6 +4871,7 @@ function MemoryManagerDialog({ load, onManage, onClose }: {
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  const memoryFileRef = useRef<HTMLInputElement>(null)
   const refresh = (): Promise<void> => load().then(setMemories)
   useEffect(() => {
     let current = true
@@ -4908,6 +4909,59 @@ function MemoryManagerDialog({ load, onManage, onClose }: {
       setError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => { setBusy(false) })
   }
+  const exportMemories = (): void => {
+    // Only kind/subject/text cross a file boundary. Ids and source sequences
+    // belong to the Session that minted them, and an import mints its own.
+    const value = {
+      format: 0,
+      kind: 'agent-rp-memory-export',
+      exportedAt: new Date().toISOString(),
+      memories: (memories ?? []).map(memory => ({
+        kind: memory.kind, subject: memory.subject, text: memory.text,
+      })),
+    }
+    const objectUrl = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }))
+    const link = document.createElement('a')
+    try {
+      link.href = objectUrl
+      link.download = `Agent-RP-记忆-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.append(link)
+      link.click()
+    } finally {
+      link.remove()
+      window.setTimeout(() => { URL.revokeObjectURL(objectUrl) }, 0)
+    }
+  }
+  const importMemories = (file: File): void => {
+    setBusy(true)
+    setError(undefined)
+    void file.text().then(async source => {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(source)
+      } catch {
+        throw new Error('这个文件不是有效的 JSON')
+      }
+      const record = parsed as { readonly memories?: unknown } | null
+      const list = Array.isArray(parsed)
+        ? parsed
+        : record !== null && typeof record === 'object' && Array.isArray(record.memories) ? record.memories : undefined
+      if (list === undefined) throw new Error('文件里没有 memories 列表')
+      // Shape-check here only for a readable message; the Host re-validates
+      // everything and is the authority on what may enter the Session.
+      const entries = list.map((item, index) => {
+        const entry = item as { readonly kind?: unknown; readonly subject?: unknown; readonly text?: unknown } | null
+        if (entry === null || typeof entry !== 'object' || typeof entry.kind !== 'string'
+          || typeof entry.subject !== 'string' || typeof entry.text !== 'string') {
+          throw new Error(`第 ${index + 1} 条记忆缺少 kind、subject 或 text`)
+        }
+        return { kind: entry.kind as AgentRpMemoryView['kind'], subject: entry.subject, text: entry.text }
+      })
+      await onManage({ format: 0, operation: 'import', entries })
+    }).then(refresh).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    }).finally(() => { setBusy(false) })
+  }
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const visibleMemories = (memories ?? []).filter(memory => normalizedQuery === ''
     || `${memory.subject}\n${memory.text}\n${memoryKindLabels[memory.kind]}`.toLocaleLowerCase().includes(normalizedQuery))
@@ -4931,6 +4985,16 @@ function MemoryManagerDialog({ load, onManage, onClose }: {
           </p>
         </div>
         <div style={{ alignItems: 'center', display: 'flex', gap: '8px' }}>
+          <input ref={memoryFileRef} type="file" accept=".json,application/json" hidden onChange={event => {
+            const file = event.currentTarget.files?.[0]
+            event.currentTarget.value = ''
+            if (file !== undefined) importMemories(file)
+          }} />
+          <button type="button" data-agent-rp-action="export-memory"
+            disabled={busy || memories === undefined || memories.length === 0}
+            onClick={exportMemories} style={headerMenuItemStyle}>导出</button>
+          <button type="button" data-agent-rp-action="import-memory" disabled={busy}
+            onClick={() => { memoryFileRef.current?.click() }} style={headerMenuItemStyle}>导入</button>
           <button type="button" disabled={busy} onClick={() => {
             if (creating) setCreating(false)
             else beginCreation()
@@ -4987,7 +5051,8 @@ function MemoryManagerDialog({ load, onManage, onClose }: {
               fontSize: '10px', opacity: .82, padding: '2px 7px',
             }}>{memoryKindLabels[memory.kind]}</span>
             {memory.source !== 'character' && <span style={{ fontSize: '10px', marginLeft: 'auto', opacity: .45 }}>
-              {memory.source === 'user' ? '由你保存' : '从上一段带来'}
+              {memory.source === 'user' ? '由你保存'
+                : memory.source === 'imported' ? '从文件导入' : '从上一段带来'}
             </span>}
           </div>
           {editing?.id === memory.id
@@ -12854,7 +12919,7 @@ export function apply(ctx: ClientContext): void {
       || value.memories.some(memory => typeof memory !== 'object' || memory === null
         || typeof memory.id !== 'string' || typeof memory.subject !== 'string' || typeof memory.text !== 'string'
         || !['fact', 'promise', 'relationship', 'preference', 'event'].includes(memory.kind)
-        || (memory.source !== 'character' && memory.source !== 'user' && memory.source !== 'inherited'))) {
+        || !['character', 'user', 'inherited', 'imported'].includes(memory.source as string))) {
       throw new Error(value.error ?? `记忆读取失败（${response.status}）`)
     }
     return value.memories

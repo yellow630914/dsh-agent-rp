@@ -8,7 +8,7 @@
 - 釘住的版本：`github:hewzhew/dsh-agent-rp#f8b98d9eb4bbffa218db3a755da7a61b0c731b7c`
 - 被修補的檔案：`/home/dsh/.dsh/profiles/web/node_modules/@hewzhew/dsh-agent-rp/lib/index.js`
 
-同樣的修改已經套用到本專案的 `src/`，可以用 `git diff` 檢視；`issues/` 下有對應的四份問題單。
+同樣的修改已經套用到本專案的 `src/`，可以用 `git diff` 檢視；同一個目錄下有對應的四份問題單。
 
 ---
 

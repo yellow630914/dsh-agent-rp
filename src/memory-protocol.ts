@@ -15,7 +15,7 @@ export interface AgentRpMemoryView {
   readonly kind: AgentRpMemoryKind
   readonly subject: string
   readonly text: string
-  readonly source: 'character' | 'user' | 'inherited'
+  readonly source: 'character' | 'user' | 'inherited' | 'imported'
 }
 
 /** Current active-memory response for one Roleplay Session. */

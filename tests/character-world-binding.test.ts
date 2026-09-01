@@ -286,3 +286,72 @@ test('edits a character world composition across future launch, runtime, project
   assert.equal(parseCharacterCardJsonBytes(characters.exportModified(character.id).data).lorebook, undefined)
   assert.deepEqual(characters.asset(character.id).data, bytes)
 })
+
+test('migrating a SillyTavern chat activates the same bound worlds a character launch would', context => {
+  const { root, worlds, characters } = integratedLibraries(context)
+  const character = characters.importFile({
+    data: characterBytes(),
+    filename: 'character.json', mediaType: 'application/json',
+  })
+  const embeddedWorldId = characters.worldBinding(character.id)?.primary?.worldInfoId
+  assert.ok(embeddedWorldId)
+  const supporting = worlds.importFile({
+    filename: '附加世界.json',
+    data: worldInfoBytes('附加世界', '附加世界记录港口航线。'),
+  })
+  const binding = characters.get(character.id).worldBinding
+  assert.ok(binding)
+  characters.updateWorldBinding(character.id, {
+    format: 0,
+    revision: binding.revision,
+    primaryWorldInfoId: embeddedWorldId,
+    additionalWorldInfoIds: [supporting.id],
+  })
+
+  const chats = new SillyTavernChatLibrary({ root: join(root, 'migration-chats') })
+  const presets = new PresetLibrary({ root: join(root, 'migration-presets') })
+  const upload = chats.importFile({
+    data: new Uint8Array(readFileSync('tests/fixtures/manual-sillytavern-chat.jsonl')),
+    filename: 'chat.jsonl',
+  })
+  const migrated = prepareAgentRpSession(characters, chats, presets, worlds, {
+    format: 0,
+    sourceSessionId: 'migration-source',
+    kind: 'chat',
+    importId: upload.id,
+    characterId: character.id,
+  })
+  const migratedSession = Session.create(SessionId('character-world-binding-migration'), migrated.seed)
+  const migratedSources = readSessionLorebookSourcesFromEvents(migratedSession.events)
+
+  const launched = prepareAgentRpSession(characters, chats, presets, worlds, {
+    format: 0,
+    sourceSessionId: 'launch-source',
+    kind: 'character',
+    characterId: character.id,
+    greetingIndex: 0,
+  })
+  const launchedSession = Session.create(SessionId('character-world-binding-launch'), launched.seed)
+  const launchedSources = readSessionLorebookSourcesFromEvents(launchedSession.events)
+
+  // Both entry points must resolve the same worlds, in the same actor order.
+  assert.deepEqual(
+    migratedSources.map(source => [source.id, source.name, source.source]),
+    launchedSources.map(source => [source.id, source.name, source.source]),
+  )
+  assert.deepEqual(migratedSources.map(source => source.name), ['海城', '附加世界'])
+  // The bound world snapshot, not the card's embedded `character_book` fallback.
+  assert.deepEqual(migratedSources.map(source => source.id), [
+    `character:library:${embeddedWorldId}`,
+    `character:library:${supporting.id}`,
+  ])
+  assert.equal(
+    migratedSession.events.filter(event => event.type === 'agent-rp/world-info-library-seed').length,
+    2,
+  )
+  // The migrated history still replays after the world seeds are appended to it.
+  assert.equal(
+    Session.create(SessionId('character-world-binding-migration-replay'), [...migratedSession.events]).events.length,
+    migratedSession.events.length,
+  )
+})

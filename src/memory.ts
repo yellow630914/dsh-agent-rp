@@ -38,6 +38,12 @@ export interface AgentRpMemoryRecord {
   readonly sourceEventSeq: number
   /** Earlier active record replaced by this correction. */
   readonly supersedes?: AgentRpMemoryId
+  /**
+   * Set when the record came from a memory file rather than from play. Both an
+   * import and a manual add cite a `command/run`, so the source event alone
+   * cannot tell them apart.
+   */
+  readonly origin?: 'imported'
 }
 
 /** Input accepted after the model-facing tool schema has validated primitive types. */
@@ -93,6 +99,10 @@ export type AgentRpMemoryCommandRequest = {
   readonly format: 0
   readonly operation: 'forget'
   readonly id: AgentRpMemoryId
+} | {
+  readonly format: 0
+  readonly operation: 'import'
+  readonly entries: readonly AgentRpMemorySeedEntry[]
 }
 
 /** Durable result of one user-initiated memory command. */
@@ -102,6 +112,12 @@ export type AgentRpMemoryCommandRecord = AgentRpMemoryCommandRequest & {
 
 const SUBJECT_MAX_LENGTH = 120
 const TEXT_MAX_LENGTH = 1_000
+/**
+ * One import is a single durable record that every later replay re-parses, and
+ * every active memory is rendered into the system prompt. Both costs scale with
+ * this number, so it is deliberately far below the seed event's 1000 ceiling.
+ */
+const IMPORT_MAX_ENTRIES = 200
 const MEMORY_ID_PATTERN = /^memory-(?:(?:0|[1-9]\d*)|seed-(?:0|[1-9]\d*)-(?:0|[1-9]\d*))$/u
 const COMMAND_RESULT_PREFIX = 'agent-rp-memory-v0:'
 
@@ -132,6 +148,19 @@ export function findAgentRpMemorySubjectConflict(
   return active.find(record => record.id !== replacing && memorySubjectKey(record.subject) === key)
 }
 
+/** Report the first topic a batch repeats within itself, using the active-topic folding rules. */
+export function findAgentRpMemoryImportDuplicate(
+  entries: readonly AgentRpMemorySeedEntry[],
+): string | undefined {
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    const key = memorySubjectKey(entry.subject)
+    if (seen.has(key)) return entry.subject
+    seen.add(key)
+  }
+  return undefined
+}
+
 function object(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(`${label}不是对象`)
   return value as Record<string, unknown>
@@ -153,6 +182,31 @@ function memoryCommandRequest(value: unknown): AgentRpMemoryCommandRequest {
       subject: normalizeText(record.subject, 'subject', SUBJECT_MAX_LENGTH),
       text: normalizeText(record.text, 'text', TEXT_MAX_LENGTH),
     }
+  }
+  if (record.operation === 'import') {
+    if (!Array.isArray(record.entries) || record.entries.length === 0
+      || record.entries.length > IMPORT_MAX_ENTRIES
+      || Object.keys(record).some(key => !['format', 'operation', 'entries'].includes(key))) {
+      throw new Error(`记忆导入请求字段无效；一次最多导入 ${IMPORT_MAX_ENTRIES} 条`)
+    }
+    // Entry ids, source sequences and versions in the file are deliberately not
+    // read: this Session mints its own. Only kind, subject and text cross over.
+    const entries = record.entries.map((value, index) => {
+      const entry = object(value, `导入记忆 ${index + 1}`)
+      if (typeof entry.kind !== 'string' || !AGENT_RP_MEMORY_KINDS.includes(entry.kind as AgentRpMemoryKind)
+        || typeof entry.subject !== 'string' || typeof entry.text !== 'string'
+        || Object.keys(entry).some(key => !['kind', 'subject', 'text'].includes(key))) {
+        throw new Error(`导入记忆 ${index + 1} 字段无效`)
+      }
+      return {
+        kind: entry.kind as AgentRpMemoryKind,
+        subject: normalizeText(entry.subject, 'subject', SUBJECT_MAX_LENGTH),
+        text: normalizeText(entry.text, 'text', TEXT_MAX_LENGTH),
+      }
+    })
+    const duplicate = findAgentRpMemoryImportDuplicate(entries)
+    if (duplicate !== undefined) throw new Error(`导入内容里“${duplicate}”出现多次，请先合并成一条`)
+    return { format: 0, operation: 'import', entries }
   }
   if (typeof record.id !== 'string') throw new Error('记忆操作请求字段无效')
   const id = AgentRpMemoryId(record.id)
@@ -192,6 +246,14 @@ function memoryCommandMatches(
         && request.subject === command.subject && request.text === command.text
     case 'forget':
       return command.operation === 'forget' && request.id === command.id
+    case 'import':
+      return command.operation === 'import'
+        && request.entries.length === command.entries.length
+        && request.entries.every((entry, index) => {
+          const recorded = command.entries[index]
+          return recorded !== undefined && entry.kind === recorded.kind
+            && entry.subject === recorded.subject && entry.text === recorded.text
+        })
   }
 }
 
@@ -363,7 +425,7 @@ function applyCommandRecord(
   done: SessionEvent<'command/done'>,
   command: AgentRpMemoryCommandRecord,
   active: Map<AgentRpMemoryId, AgentRpMemoryRecord>,
-): AgentRpMemoryRecord | undefined {
+): readonly AgentRpMemoryRecord[] {
   const source = events[command.sourceEventSeq]
   if (source?.type !== 'command/run' || source.seq !== command.sourceEventSeq
     || source.data.name !== 'rp-memory' || String(source.data.commandId) !== String(done.data.commandId)) {
@@ -391,11 +453,36 @@ function applyCommandRecord(
     }
     if (active.has(added.id)) throw new Error(`重复的 Agent RP 记忆编号 ${added.id}`)
     active.set(added.id, added)
-    return added
+    return [added]
+  }
+  if (command.operation === 'import') {
+    // One command/done carries the whole batch, so an import either lands
+    // completely or not at all — there is no half-applied state to unwind.
+    // The batch id shape matches the seed event's for the same reason it
+    // exists there: several records minted by one event, indexed within it.
+    // A given seq is one event, so a command batch and a seed can never
+    // collide on an id.
+    const imported = command.entries.map((entry, index) => {
+      const conflict = findAgentRpMemorySubjectConflict([...active.values()], entry.subject)
+      if (conflict !== undefined) throw new Error(`记忆导入产生了重复主题 ${JSON.stringify(entry.subject)}`)
+      const record: AgentRpMemoryRecord = {
+        version: 0,
+        id: AgentRpMemoryId(`memory-seed-${command.sourceEventSeq}-${index}`),
+        kind: entry.kind,
+        subject: entry.subject,
+        text: entry.text,
+        sourceEventSeq: command.sourceEventSeq,
+        origin: 'imported',
+      }
+      if (active.has(record.id)) throw new Error(`重复的 Agent RP 记忆编号 ${record.id}`)
+      active.set(record.id, record)
+      return record
+    })
+    return imported
   }
   if (!active.has(command.id)) throw new Error(`记忆操作引用了不存在或已失效的记录 ${JSON.stringify(command.id)}`)
   active.delete(command.id)
-  if (command.operation === 'forget') return undefined
+  if (command.operation === 'forget') return []
   const replacement: AgentRpMemoryRecord = {
     version: 0,
     id: AgentRpMemoryId(`memory-${command.sourceEventSeq}`),
@@ -407,7 +494,7 @@ function applyCommandRecord(
   }
   if (active.has(replacement.id)) throw new Error(`重复的 Agent RP 记忆编号 ${replacement.id}`)
   active.set(replacement.id, replacement)
-  return replacement
+  return [replacement]
 }
 
 function applySeedRecord(
@@ -463,8 +550,7 @@ export function readAgentRpMemoryHistory(events: readonly SessionEvent[]): Agent
     if (event.type !== 'command/done' || event.data.kind !== 'success') continue
     const command = decodeAgentRpMemoryCommandRecord(event.data.text)
     if (command === undefined) continue
-    const replacement = applyCommandRecord(events, event, command, active)
-    if (replacement !== undefined) all.push(replacement)
+    all.push(...applyCommandRecord(events, event, command, active))
   }
   return { all: Object.freeze(all), active: Object.freeze([...active.values()]) }
 }

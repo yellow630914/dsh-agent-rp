@@ -341,3 +341,98 @@ test('rejects a durable record that diverges from its source call arguments', ()
 
   assert.throws(() => readAgentRpMemoryHistory(session.events), /does not match its source call arguments/u)
 })
+
+test('imports a memory batch as one atomic record that stays editable', () => {
+  const agent = { session: Session.create(SessionId('agent-rp-memory-import')) } as Agent
+  runMemoryCommand(agent, JSON.stringify({
+    format: 0, operation: 'add', kind: 'relationship', subject: '称呼', text: '角色称呼用户为小满',
+  }), 1)
+  const before = agent.session.events.length
+
+  const importRequest = {
+    format: 0,
+    operation: 'import',
+    entries: [
+      { kind: 'preference', subject: '  饮品  ', text: '  用户喝红茶不加糖  ' },
+      { kind: 'event', subject: '初遇', text: '两人在海城钟楼下第一次见面。' },
+    ],
+  } as const
+  // Parsing normalizes and drops nothing else; ids in a file are never read.
+  assert.deepEqual(parseAgentRpMemoryCommandRequest(JSON.stringify(importRequest)), {
+    format: 0,
+    operation: 'import',
+    entries: [
+      { kind: 'preference', subject: '饮品', text: '用户喝红茶不加糖' },
+      { kind: 'event', subject: '初遇', text: '两人在海城钟楼下第一次见面。' },
+    ],
+  })
+  runMemoryCommand(agent, JSON.stringify(importRequest), 2)
+
+  const history = readAgentRpMemoryHistory(agent.session.events)
+  assert.deepEqual(history.active.map(record => [record.subject, record.origin]), [
+    ['称呼', undefined],
+    ['饮品', 'imported'],
+    ['初遇', 'imported'],
+  ])
+  // One command/run + one command/done carried the whole batch.
+  assert.equal(agent.session.events.length - before, 2)
+  const imported = history.active.filter(record => record.origin === 'imported')
+  assert.equal(new Set(imported.map(record => record.sourceEventSeq)).size, 1)
+  assert.match(renderMemoryContext(agent.session.events), /用户喝红茶不加糖/u)
+
+  // Imported records are ordinary active memories afterwards.
+  runMemoryCommand(agent, JSON.stringify({
+    format: 0, operation: 'forget', id: String(imported[0]!.id),
+  }), 3)
+  assert.deepEqual(
+    readAgentRpMemoryHistory(agent.session.events).active.map(record => record.subject),
+    ['称呼', '初遇'],
+  )
+})
+
+test('rejects a whole import batch instead of applying part of it', () => {
+  const agent = { session: Session.create(SessionId('agent-rp-memory-import-reject')) } as Agent
+  runMemoryCommand(agent, JSON.stringify({
+    format: 0, operation: 'add', kind: 'relationship', subject: '称呼', text: '角色称呼用户为小满',
+  }), 1)
+  const settled = agent.session.events.length
+  const activeBefore = readAgentRpMemoryHistory(agent.session.events).active.length
+
+  const collides = {
+    format: 0,
+    operation: 'import',
+    entries: [
+      { kind: 'event', subject: '初遇', text: '两人在海城钟楼下第一次见面。' },
+      // Topic conflicts fold case and surrounding space, exactly like adds do.
+      { kind: 'relationship', subject: ' 称呼 ', text: '角色改口叫用户满满' },
+    ],
+  }
+  assert.throws(() => { runMemoryCommand(agent, JSON.stringify(collides), 2) }, /已经有有效记忆/u)
+  // The failed command left its own lifecycle events but changed no memory.
+  assert.equal(readAgentRpMemoryHistory(agent.session.events).active.length, activeBefore)
+  assert.equal(agent.session.events.length, settled + 1)
+
+  assert.throws(() => parseAgentRpMemoryCommandRequest(JSON.stringify({
+    format: 0,
+    operation: 'import',
+    entries: [
+      { kind: 'event', subject: '初遇', text: '第一次见面。' },
+      { kind: 'event', subject: '初遇 ', text: '重复主题。' },
+    ],
+  })), /出现多次/u)
+  assert.throws(() => parseAgentRpMemoryCommandRequest(JSON.stringify({
+    format: 0,
+    operation: 'import',
+    entries: Array.from({ length: 201 }, (_value, index) => ({
+      kind: 'fact', subject: `主题${index}`, text: '内容',
+    })),
+  })), /最多导入 200 条/u)
+  assert.throws(() => parseAgentRpMemoryCommandRequest(JSON.stringify({
+    format: 0,
+    operation: 'import',
+    entries: [{ kind: 'fact', subject: '主题', text: '内容', id: 'memory-9' }],
+  })), /字段无效/u)
+  assert.throws(() => parseAgentRpMemoryCommandRequest(JSON.stringify({
+    format: 0, operation: 'import', entries: [],
+  })), /字段无效/u)
+})

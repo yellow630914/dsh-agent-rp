@@ -116,9 +116,28 @@ interface CandidateDecision {
   readonly templateError?: LorebookEntryActivation['templateError']
 }
 
+let lowerCaseSource: string | undefined
+let lowerCaseValue = ''
+
+/**
+ * Lower-case one scan text at most once per distinct value.
+ * Case-insensitive matching lower-cases the same haystack for every key of
+ * every entry, so a conversation-sized text was walked hundreds of times per
+ * activation pass; the single-slot cache keeps that to one pass.
+ * @param text - scan text shared by every key of one activation pass.
+ * @returns the locale-lower-cased text.
+ */
+function lowerCased(text: string): string {
+  if (lowerCaseSource !== text) {
+    lowerCaseSource = text
+    lowerCaseValue = text.toLocaleLowerCase()
+  }
+  return lowerCaseValue
+}
+
 function includesKey(text: string, key: string, caseSensitive: boolean, matchWholeWords: boolean): boolean {
   if (key.length === 0) return false
-  const haystack = caseSensitive ? text : text.toLocaleLowerCase()
+  const haystack = caseSensitive ? text : lowerCased(text)
   const needle = caseSensitive ? key : key.toLocaleLowerCase()
   if (!matchWholeWords) return haystack.includes(needle)
   if (/\s/u.test(needle)) return haystack.includes(needle)
@@ -173,16 +192,37 @@ function regexMatches(
   entry: ImportedLorebookEntry,
   matcher: LorebookRegexMatcher | undefined,
 ): RegexMatchDecision {
-  if (matcher === undefined) {
-    const matchedKeys = literalRegexMatches(keys, text, entry)
-    return matchedKeys === undefined
-      ? { ok: false, reason: 'regex-runtime-unavailable' }
-      : { ok: true, matchedKeys }
-  }
+  // Keys without regex operators are a bounded substring lookup, so the native
+  // path answers them exactly as the isolated runtime would — at a fraction of
+  // the cost, and without marshalling the whole scan text into WebAssembly.
+  const literalMatchedKeys = literalRegexMatches(keys, text, entry)
+  if (literalMatchedKeys !== undefined) return { ok: true, matchedKeys: literalMatchedKeys }
+  if (matcher === undefined) return { ok: false, reason: 'regex-runtime-unavailable' }
   const result = matcher.match(keys, text, entry.caseSensitive)
   if (result.ok) return { ok: true, matchedKeys: result.matchedKeys }
   return { ok: false, reason: result.kind === 'invalid' ? 'regex-invalid'
     : result.kind === 'execution-limit' ? 'regex-execution-limit' : 'regex-resource-limit' }
+}
+
+let scanTextMessages: readonly string[] | undefined
+let scanTextDepth: number | undefined
+let scanTextValue = ''
+
+/**
+ * Build the depth-limited scan text once per (messages, depth) pair.
+ * Every entry of a book resolves the same depth in the common case where no
+ * entry overrides it, so joining the window per entry rebuilt one
+ * conversation-sized string for each of them.
+ * @param messages - model-visible conversation text in chronological order.
+ * @param depth - resolved scan depth in messages.
+ * @returns the joined scan window.
+ */
+function scanText(messages: readonly string[], depth: number): string {
+  if (scanTextMessages === messages && scanTextDepth === depth) return scanTextValue
+  scanTextMessages = messages
+  scanTextDepth = depth
+  scanTextValue = depth === 0 ? '' : messages.slice(-Math.max(0, Math.trunc(depth))).join('\n')
+  return scanTextValue
 }
 
 function candidate(
@@ -210,7 +250,7 @@ function candidate(
     activation = decision(true, 'active-constant')
   } else {
     const depth = entry.scanDepth ?? bookDepth ?? messages.length
-    const text = depth === 0 ? '' : messages.slice(-Math.max(0, Math.trunc(depth))).join('\n')
+    const text = scanText(messages, depth)
     if (entry.useRegex) {
       const primary = regexMatches(entry.keys, text, entry, regexMatcher)
       if (!primary.ok) {

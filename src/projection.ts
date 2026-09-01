@@ -370,7 +370,53 @@ function promptRegexTrace(event: SessionEvent): AgentRpProjection['promptRegex']
   )?.trace
 }
 
+let worldInfoCacheKey: string | undefined
+let worldInfoCacheValue: AgentRpProjection['worldInfo'] | undefined
+
+/**
+ * Identity of every input the World Info view depends on, excluding the text of
+ * the reply being streamed. A streamed reply grows one surface node in place,
+ * so this signature is stable for the whole generation and changes at the turn
+ * boundaries — the prompt is submitted, and the reply settles.
+ * @param state - the projection state being viewed.
+ * @returns a comparable signature string.
+ */
+function worldInfoCacheSignature(state: AgentRpProjectionState): string {
+  return [
+    state.worldInfoConfiguration.revision,
+    state.worldInfoConfiguration.overrides.length,
+    Object.keys(state.standaloneWorldInfos).join(','),
+    state.cardLorebook === undefined ? 0 : 1,
+    state.character.characterName,
+    state.surface.length,
+    state.currentReplySeq ?? -1,
+    state.tavern === undefined ? 0 : 1,
+  ].join('|')
+}
+
+/**
+ * Activation view for the World Info panel, recomputed only when its inputs
+ * change. The view is client-visible, so the Host drives it once per appended
+ * event — including every streamed chunk — while a full activation pass walks
+ * every key of every entry across the scan window. The prompt does not read
+ * this view: `prepareRoleplayTurn` resolves lorebooks independently, so a panel
+ * that settles at turn boundaries cannot change what the model receives.
+ * @param state - the projection state being viewed.
+ * @param ejsTemplateEngine - isolated template runtime, when available.
+ * @returns the World Info activation view.
+ */
 function worldInfoProjection(
+  state: AgentRpProjectionState,
+  ejsTemplateEngine?: EjsTemplateEngine,
+): AgentRpProjection['worldInfo'] {
+  const signature = worldInfoCacheSignature(state)
+  if (signature === worldInfoCacheKey && worldInfoCacheValue !== undefined) return worldInfoCacheValue
+  worldInfoCacheKey = signature
+  worldInfoCacheValue = worldInfoProjectionUncached(state, ejsTemplateEngine)
+  return worldInfoCacheValue
+}
+
+function worldInfoProjectionUncached(
   state: AgentRpProjectionState,
   ejsTemplateEngine?: EjsTemplateEngine,
 ): AgentRpProjection['worldInfo'] {

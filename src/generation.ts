@@ -88,6 +88,12 @@ export type GenerationRequest =
   | { readonly operation: 'regenerate'; readonly replySeq: number }
   | { readonly operation: 'continue'; readonly replySeq: number }
   | { readonly operation: 'select'; readonly replySeq: number; readonly versionIndex: number }
+  /**
+   * Replace the last turn's user message and answer it again. Unlike the
+   * `rewrite` Session launch this edits the current Session in place, and
+   * unlike `regenerate` it keeps no version of the discarded reply.
+   */
+  | { readonly operation: 'rewrite-input'; readonly replySeq: number; readonly text: string }
 
 /** A validated reply-version group reconstructed from the latest snapshot event. */
 export interface ActiveGenerationGroup extends GenerationStateRecord {
@@ -124,6 +130,13 @@ export function parseGenerationRequest(source: string): GenerationRequest {
       throw new Error('回复操作请求包含未知字段')
     }
     return { operation: 'select', replySeq, versionIndex }
+  }
+  if (request.operation === 'rewrite-input') {
+    if (typeof request.text !== 'string' || request.text.trim() === '' || request.text.length > 8_000
+      || Object.keys(request).some(key => key !== 'operation' && key !== 'replySeq' && key !== 'text')) {
+      throw new Error('修改输入请求字段无效')
+    }
+    return { operation: 'rewrite-input', replySeq, text: request.text }
   }
   throw new Error('未知的回复操作')
 }
@@ -433,13 +446,27 @@ function initialTavernState(agent: Agent): TavernHelperState | undefined {
     : prepareTavernHelperState(agent, undefined)
 }
 
-function instruction(operation: 'regenerate' | 'continue'): string {
-  return operation === 'regenerate'
-    ? 'Write a fresh alternative response to the latest user turn. Stay fully in character and preserve established facts, but do not mention, summarize, revise, or continue the previous response. Output only the replacement roleplay response.'
-    : 'Continue the latest in-character response seamlessly from its final sentence. Do not repeat or summarize any existing text. Output only the continuation.'
+type GenerateOperation = 'regenerate' | 'continue' | 'rewrite-input'
+
+function instruction(operation: GenerateOperation): string {
+  if (operation === 'continue') {
+    return 'Continue the latest in-character response seamlessly from its final sentence. Do not repeat or summarize any existing text. Output only the continuation.'
+  }
+  if (operation === 'rewrite-input') {
+    // The discarded reply answered the message the player just replaced, so
+    // this is a first answer to a new message, not an alternative to an
+    // existing one.
+    return 'The player has revised their latest message. Answer the revised message in character as if replying to it for the first time. Do not mention the revision, and do not reference or continue any earlier reply. Output only the roleplay response.'
+  }
+  return 'Write a fresh alternative response to the latest user turn. Stay fully in character and preserve established facts, but do not mention, summarize, revise, or continue the previous response. Output only the replacement roleplay response.'
 }
 
-async function generate(agent: Agent, operation: 'regenerate' | 'continue', signal: AbortSignal): Promise<number> {
+function generationSummary(operation: GenerateOperation): string {
+  if (operation === 'continue') return '正在续写角色回复'
+  return operation === 'rewrite-input' ? '正在按修改后的输入重新生成' : '正在重写角色回复'
+}
+
+async function generate(agent: Agent, operation: GenerateOperation, signal: AbortSignal): Promise<number> {
   if (agent.status !== 'idle' || agent.inbox.hasPending) throw new Error('请等待当前回复完成后再操作')
   const before = agent.session.seq
   const onAbort = (): void => { agent.cancel({ kind: 'user' }) }
@@ -452,7 +479,7 @@ async function generate(agent: Agent, operation: 'regenerate' | 'continue', sign
         plugin: 'dsh-agent-rp-generation',
         operation,
         form: 'notice',
-        summary: operation === 'regenerate' ? '正在重写角色回复' : '正在续写角色回复',
+        summary: generationSummary(operation),
       } as MessageSource,
     }))
     await agent.whenIdle()
@@ -467,6 +494,89 @@ async function generate(agent: Agent, operation: 'regenerate' | 'continue', sign
   return generated.seq
 }
 
+/**
+ * Replace the last turn's user message and answer it again in place.
+ *
+ * The discarded reply is shadowed on the surface rather than kept as a version:
+ * a version group holds alternative answers to the *same* message, and after an
+ * edit the old reply answers a message that no longer exists. The Session log
+ * still holds every original event; only the surface changes.
+ */
+async function executeInputRewrite(
+  agent: Agent,
+  request: Extract<GenerationRequest, { operation: 'rewrite-input' }>,
+  signal: AbortSignal,
+): Promise<{ readonly kind: 'success'; readonly text: string; readonly sourceEventSeq: number }> {
+  const nodes = agent.session.surface.nodes
+  const replyIndex = nodes.indexOf(request.replySeq)
+  if (replyIndex < 0 || replyIndex !== nodes.length - 1) throw new Error('只能修改对话末尾这一轮的输入')
+  const events = agent.session.events
+  const reply = assistantEvent(events, request.replySeq)
+  // Everything from the player's message to the end of the surface is replaced,
+  // so any notice or tool result this turn put on the surface goes with it.
+  const userIndex = nodes.slice(0, replyIndex).findLastIndex(seq => {
+    const event = events[seq]
+    return event?.type === 'user/message' && event.data.source.kind === 'user'
+  })
+  const userSeq = userIndex < 0 ? undefined : nodes[userIndex]
+  const userEvent = userSeq === undefined ? undefined : events[userSeq]
+  if (userSeq === undefined || userEvent?.type !== 'user/message') {
+    throw new Error('这一轮没有可修改的用户消息')
+  }
+  if (userEvent.data.content.some(block => block.type !== 'text')) {
+    throw new Error('这一轮的用户消息含附件，暂时不能修改')
+  }
+  const currentTavern = readTavernHelperStateSnapshot(events)
+  const currentMvu = mvuSnapshot(agent)
+  const baseMvu = mvuBeforeReply(agent, request.replySeq)
+  const baseTavern = readTavernHelperStateSnapshot(events, request.replySeq)?.state
+  if ((baseTavern !== undefined || baseMvu !== undefined) && !supportsAgentRpSessionEvents(agent.session)) {
+    throw new Error('当前 DSH Host 缺少安全插件事件能力，无法重新生成含状态的回复')
+  }
+  const shadowed = nodes.slice(userIndex)
+  const replacement = agent.session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: request.text }],
+    source: userEvent.data.source,
+  }), {
+    surfaceOp: { op: 'replace', start: userSeq, end: request.replySeq },
+    sourceEventSeqs: [...shadowed],
+  })
+  try {
+    // Answer the revised message from the state this turn started with, the
+    // same baseline `regenerate` restores.
+    restoreTavernState(agent, baseTavern ?? (currentTavern === undefined ? undefined : initialTavernState(agent)))
+    appendMvuSelection(agent, baseMvu)
+    const generatedSeq = await generate(agent, 'rewrite-input', signal)
+    const generated = assistantEvent(agent.session.events, generatedSeq)
+    const after = agent.session.surface.nodes
+    const shadowStart = after[after.indexOf(replacement.seq) + 1]
+    const surface = shadowStart === undefined
+      ? generated
+      : appendCurrentReplySurface(agent, shadowStart, generated)
+    return { kind: 'success', text: '已按修改后的输入重新生成', sourceEventSeq: surface.seq }
+  } catch (error: unknown) {
+    const current = agent.session.surface.nodes
+    const index = current.indexOf(replacement.seq)
+    if (index >= 0) {
+      const tail = current.slice(index)
+      const end = tail.at(-1)
+      if (end !== undefined) {
+        agent.session.append('user/message', userEvent.data, {
+          surfaceOp: { op: 'replace', start: replacement.seq, end },
+          sourceEventSeqs: [...tail],
+        })
+      }
+      agent.session.append('assistant/message', reply.data, {
+        surfaceOp: 'append',
+        sourceEventSeqs: [reply.seq],
+      })
+    }
+    restoreTavernState(agent, currentTavern?.state)
+    appendMvuSelection(agent, currentMvu)
+    throw error
+  }
+}
+
 /** Execute Regenerate, Swipe selection, or Continue against the current Roleplay reply. */
 export async function executeGenerationCommand(invocation: {
   readonly agent: Agent
@@ -474,6 +584,9 @@ export async function executeGenerationCommand(invocation: {
   readonly signal: AbortSignal
 }): Promise<{ readonly kind: 'success'; readonly text: string; readonly sourceEventSeq: number }> {
   const request = parseGenerationRequest(invocation.rawInput)
+  if (request.operation === 'rewrite-input') {
+    return await executeInputRewrite(invocation.agent, request, invocation.signal)
+  }
   const current = latestReply(invocation.agent, request.replySeq)
   const events = invocation.agent.session.events
   const existing = current.group

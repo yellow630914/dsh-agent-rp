@@ -76,12 +76,17 @@ function mvuCardSession(id: string) {
   return { card, session: Session.create(SessionId(id), seed) }
 }
 
-test('parses only the three private reply-version operations', () => {
+test('parses only the private reply-version operations', () => {
   assert.deepEqual(parseGenerationRequest('{"operation":"regenerate","replySeq":4}'), { operation: 'regenerate', replySeq: 4 })
   assert.deepEqual(parseGenerationRequest('{"operation":"continue","replySeq":4}'), { operation: 'continue', replySeq: 4 })
   assert.deepEqual(parseGenerationRequest('{"operation":"select","replySeq":4,"versionIndex":1}'), { operation: 'select', replySeq: 4, versionIndex: 1 })
   assert.throws(() => parseGenerationRequest('{"operation":"select","replySeq":4,"versionIndex":-1}'), /版本序号无效/)
   assert.throws(() => parseGenerationRequest('{"operation":"regenerate","replySeq":4,"extra":true}'), /未知字段/)
+  assert.deepEqual(parseGenerationRequest('{"operation":"rewrite-input","replySeq":4,"text":"换一句"}'), {
+    operation: 'rewrite-input', replySeq: 4, text: '换一句',
+  })
+  assert.throws(() => parseGenerationRequest('{"operation":"rewrite-input","replySeq":4,"text":"  "}'), /字段无效/)
+  assert.throws(() => parseGenerationRequest('{"operation":"rewrite-input","replySeq":4}'), /字段无效/)
 })
 
 test('folds latest selectable reply group snapshots across replacement events', () => {
@@ -510,4 +515,98 @@ test('refuses a bare Tavern trigger without a latest user message', async () => 
     } as never,
     rawInput: '', signal: new AbortController().signal,
   }), /需要先添加一条用户消息/u)
+})
+
+test('rewrites the last turn input in place and keeps no version of the discarded reply', async () => {
+  const session = Session.create(SessionId('generation-rewrite-input'))
+  session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: '我推开门。' }], source: { kind: 'user' },
+  }), { surfaceOp: 'append' })
+  const original = appendAssistant(session, 1, '门后是一条走廊。')
+  let requestTranscript: readonly string[] = []
+  const agent = {
+    session,
+    status: 'idle',
+    inbox: { hasPending: false },
+    followup(message: ReturnType<typeof createUserMessage>) {
+      session.append('user/message', message, { surfaceOp: 'append' })
+      requestTranscript = session.deriveMessages().map(item => item.content.flatMap(block =>
+        block.type === 'text' ? [block.text] : []).join('\n'))
+      appendAssistant(session, 2, '窗外正在下雨。')
+    },
+    whenIdle: async () => {},
+    cancel: () => {},
+  }
+
+  const result = await executeGenerationCommand({
+    agent: agent as never,
+    rawInput: JSON.stringify({ operation: 'rewrite-input', replySeq: original.seq, text: '我推开窗。' }),
+    signal: new AbortController().signal,
+  })
+
+  // The replaced input is what the model answered, and the discarded reply
+  // never reached the request.
+  assert.equal(requestTranscript.some(text => text.includes('我推开窗。')), true)
+  assert.equal(requestTranscript.some(text => text.includes('我推开门。')), false)
+  assert.equal(requestTranscript.some(text => text.includes('门后是一条走廊。')), false)
+  assert.deepEqual(session.deriveMessages().map(message => message.content.flatMap(block =>
+    block.type === 'text' ? [block.text] : []).join('\n')), [
+    '我推开窗。',
+    '窗外正在下雨。',
+  ])
+  // No version group: the old reply answered a message that no longer exists.
+  assert.deepEqual(readGenerationGroups(session.events), [])
+  assert.equal(result.text.startsWith('agent-rp-generation-v0:'), false)
+})
+
+test('refuses to rewrite the input of a turn that is not the last one', async () => {
+  const session = Session.create(SessionId('generation-rewrite-input-not-last'))
+  session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: '第一句' }], source: { kind: 'user' },
+  }), { surfaceOp: 'append' })
+  const first = appendAssistant(session, 1, '第一段回复')
+  session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: '第二句' }], source: { kind: 'user' },
+  }), { surfaceOp: 'append' })
+  appendAssistant(session, 2, '第二段回复')
+  const before = session.events.length
+  const agent = { session, status: 'idle', inbox: { hasPending: false } }
+
+  await assert.rejects(() => executeGenerationCommand({
+    agent: agent as never,
+    rawInput: JSON.stringify({ operation: 'rewrite-input', replySeq: first.seq, text: '改一句' }),
+    signal: new AbortController().signal,
+  }), /只能修改对话末尾这一轮的输入/u)
+  assert.equal(session.events.length, before)
+})
+
+test('restores the original input and reply when the rewritten turn produces nothing', async () => {
+  const session = Session.create(SessionId('generation-rewrite-input-recovery'))
+  session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: '我推开门。' }], source: { kind: 'user' },
+  }), { surfaceOp: 'append' })
+  appendAssistant(session, 1, '门后是一条走廊。')
+  const original = session.surface.nodes.at(-1)!
+  const agent = {
+    session,
+    status: 'idle',
+    inbox: { hasPending: false },
+    followup(message: ReturnType<typeof createUserMessage>) {
+      session.append('user/message', message, { surfaceOp: 'append' })
+      appendAssistant(session, 2, '')
+    },
+    whenIdle: async () => {},
+    cancel: () => {},
+  }
+
+  await assert.rejects(() => executeGenerationCommand({
+    agent: agent as never,
+    rawInput: JSON.stringify({ operation: 'rewrite-input', replySeq: original, text: '我推开窗。' }),
+    signal: new AbortController().signal,
+  }), /模型没有生成可用的角色回复/u)
+  assert.deepEqual(session.deriveMessages().map(message => message.content.flatMap(block =>
+    block.type === 'text' ? [block.text] : []).join('\n')), [
+    '我推开门。',
+    '门后是一条走廊。',
+  ])
 })

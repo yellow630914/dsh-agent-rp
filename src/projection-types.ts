@@ -52,6 +52,20 @@ export interface AgentRpProjection {
     readonly malformed: number
   }
   readonly worldInfoCount: number
+  /**
+   * Every chat floor in order, hidden ones first, carrying only a short preview.
+   * The floor panel needs identity and ordering, not bodies, and this list is
+   * re-sent on every projection update — so it deliberately does not repeat the
+   * full text already present in `tavern.messages`. Unlike that field it is
+   * always present, because a Session that never touched a Tavern script still
+   * has floors.
+   */
+  readonly floors: readonly {
+    readonly seq: number
+    readonly role: 'user' | 'assistant'
+    readonly preview: string
+    readonly hidden: boolean
+  }[]
   /** Imported lorebooks, current session overlays, and next-request activation evidence. */
   readonly worldInfo: {
     readonly revision: number

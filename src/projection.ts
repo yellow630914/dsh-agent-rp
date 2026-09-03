@@ -97,6 +97,11 @@ const projectionSchema = {
       || (record.userName !== undefined && typeof record.userName !== 'string')
       || (record.persona !== undefined && (typeof record.persona !== 'object' || record.persona === null))
       || !Array.isArray(record.generations)
+      || !Array.isArray(record.floors)
+      || record.floors.some(floor => typeof floor !== 'object' || floor === null
+        || typeof (floor as Record<string, unknown>).seq !== 'number'
+        || typeof (floor as Record<string, unknown>).preview !== 'string'
+        || typeof (floor as Record<string, unknown>).hidden !== 'boolean')
       || (record.currentReplySeq !== undefined && (typeof record.currentReplySeq !== 'number'
         || !Number.isSafeInteger(record.currentReplySeq) || record.currentReplySeq < 0))
       || (record.presentation !== undefined && (typeof record.presentation !== 'object'
@@ -153,7 +158,7 @@ type ImportCall = 'character-card' | 'world-info' | 'preset'
 interface AgentRpProjectionState {
   readonly character: Omit<AgentRpProjection, 'worldInfoCount' | 'worldInfo' | 'presetLibrary' | 'lastRequest'
   | 'generations' | 'auxiliaryGenerations' | 'presentation' | 'nativeStates' | 'turnMode' | 'hostCapabilities'
-  | 'regexPacks'>
+  | 'regexPacks' | 'floors'>
   readonly turnMode: RoleplayTurnMode
   readonly cardWorldInfoCount: number
   readonly cardLorebook?: SessionLorebookSource
@@ -304,6 +309,17 @@ function worldInfoLorebookSource(
     lorebook: parsed.lorebook,
     degradations: meta.result.degradations.filter(value => value !== 'entry-regex'),
   }
+}
+
+/**
+ * Longest floor preview the panel needs. The list is re-sent on every
+ * projection update, so it carries an excerpt rather than the body.
+ */
+const FLOOR_PREVIEW_LENGTH = 40
+
+function floorPreview(text: string): string {
+  const normalized = text.replace(/\s+/gu, ' ').trim()
+  return normalized.length > FLOOR_PREVIEW_LENGTH ? `${normalized.slice(0, FLOOR_PREVIEW_LENGTH)}…` : normalized
 }
 
 function surfaceText(event: SessionEvent): string | undefined {
@@ -1298,6 +1314,14 @@ export function createAgentRpProjectionDefinition(
       ? []
       : [{ seq, role, text, ...(reasoning === undefined ? {} : { reasoning }), isHidden: false as const }])
     const hiddenTavernMessages = state.tavern?.hiddenPrefix ?? []
+    const floors = [
+      ...hiddenTavernMessages.map(message => ({
+        seq: message.seq, role: message.role, preview: floorPreview(message.text), hidden: true,
+      })),
+      ...visibleTavernMessages.map(message => ({
+        seq: message.seq, role: message.role, preview: floorPreview(message.text), hidden: false,
+      })),
+    ]
     return {
       ...state.character,
       hostCapabilities: { sessionEvents },
@@ -1314,6 +1338,7 @@ export function createAgentRpProjectionDefinition(
         ? {}
         : { auxiliaryGenerations }),
       worldInfoCount: worldInfo.books.reduce((total, book) => total + book.entries.filter(entry => !entry.deleted).length, 0),
+      floors,
       worldInfo,
       regexPacks: state.regexPacks.map(pack => ({
         id: pack.id,

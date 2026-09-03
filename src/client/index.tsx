@@ -610,6 +610,8 @@ type HeaderProps = PropsRuntime<'conversation.session.header.actions'> & {
   readonly exportChat: (sessionId: SessionId) => Promise<void>
   readonly listMemory: (sessionId: SessionId) => Promise<readonly AgentRpMemoryView[]>
   readonly manageMemory: (sessionId: SessionId, request: AgentRpMemoryCommandRequest) => Promise<void>
+  /** Hide exactly `hidden` leading floors, restoring first when the count shrinks. */
+  readonly manageFloors: (sessionId: SessionId, hidden: number, current: number) => Promise<void>
   readonly manageState: (sessionId: SessionId, request: RoleplayStateCommandRequest) => Promise<void>
   readonly manageTurnMode: (sessionId: SessionId, mode: AgentRpProjection['turnMode']) => Promise<void>
   readonly startCharacterSession: (
@@ -643,7 +645,8 @@ type GenerationTailProps = TurnTailOwnerProps & {
   readonly runGeneration: (
     sessionId: SessionId,
     request: { readonly operation: 'regenerate' | 'continue'; readonly replySeq: number }
-      | { readonly operation: 'select'; readonly replySeq: number; readonly versionIndex: number },
+      | { readonly operation: 'select'; readonly replySeq: number; readonly versionIndex: number }
+      | { readonly operation: 'rewrite-input'; readonly replySeq: number; readonly text: string },
   ) => Promise<void>
   readonly rewriteTurn: (sessionId: SessionId, turn: number, draft: string) => Promise<void>
   readonly runImageGeneration: RunImageGeneration
@@ -1096,8 +1099,9 @@ function replySceneNote(value: string): string {
     .slice(0, 4_000)
 }
 
-function RewriteTurnDialog({ initialText, busy, error, onClose, onRewrite }: {
+function RewriteTurnDialog({ initialText, mode, busy, error, onClose, onRewrite }: {
   readonly initialText: string
+  readonly mode: 'branch' | 'regenerate'
   readonly busy: boolean
   readonly error?: string
   readonly onClose: () => void
@@ -1117,7 +1121,9 @@ function RewriteTurnDialog({ initialText, busy, error, onClose, onRewrite }: {
     }}>
       <h2 style={{ fontSize: '15px', margin: 0 }}>修改这轮输入</h2>
       <p style={{ fontSize: '12px', lineHeight: 1.6, margin: '7px 0 12px', opacity: .62 }}>
-        会保留当前对话，并从修改后的输入创建一个新分支。
+        {mode === 'branch'
+          ? '会保留当前对话，并从修改后的输入创建一个新分支。'
+          : '会在当前对话里直接替换这一轮的输入，并丢弃现有回复重新生成。旧回复不会保留为可切换的版本；本轮已经沉淀的状态与插图不会跟着回退。'}
       </p>
       <textarea autoFocus aria-label="修改后的输入" disabled={busy} maxLength={8_000} value={text} onChange={event => { setText(event.target.value) }}
         onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submit() }} style={{
@@ -1131,7 +1137,9 @@ function RewriteTurnDialog({ initialText, busy, error, onClose, onRewrite }: {
         <button type="button" disabled={busy || text.trim() === ''} onClick={submit} style={{
           ...generationButtonStyle, background: `color-mix(in srgb, ${color} 18%, transparent)`,
           borderColor: `color-mix(in srgb, ${color} 48%, transparent)`, fontSize: '12px', minHeight: '30px', opacity: 1,
-        }}>{busy ? '正在创建…' : '创建新分支'}</button>
+        }}>{busy
+          ? (mode === 'branch' ? '正在创建…' : '正在重新生成…')
+          : (mode === 'branch' ? '创建新分支' : '重新生成')}</button>
       </div>
     </section>
   </div>
@@ -1157,11 +1165,11 @@ function GenerationTail({
     if (node?.kind !== 'user' || node.content.length === 0 || node.content.some(block => block.type !== 'text')) return undefined
     return node.content.map(block => block.type === 'text' ? block.text : '').join('\n')
   })
-  const [busy, setBusy] = useState<'regenerate' | 'continue' | 'select-previous' | 'select-next' | 'rewrite'>()
+  const [busy, setBusy] = useState<'regenerate' | 'continue' | 'select-previous' | 'select-next' | 'rewrite' | 'rewrite-input'>()
   const [error, setError] = useState<string>()
   const [drawOpen, setDrawOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
-  const [rewriteOpen, setRewriteOpen] = useState(false)
+  const [rewriteMode, setRewriteMode] = useState<'branch' | 'regenerate'>()
   const group = projection?.generations.find(candidate => candidate.anchorSeq === replySeq)
   if (projection === undefined) return null
   const sessionEventsAvailable = projection.hostCapabilities?.sessionEvents === true
@@ -1244,22 +1252,38 @@ function GenerationTail({
       portal
       compact
       items={[{
+        id: 'rewrite-input',
+        label: '修改输入并重新生成',
+        icon: <IconRefreshOutline16 />,
+        // Editing in place answers the revised message again, which only the
+        // last turn can do: earlier turns already have replies after them.
+        disabled: regenerateDisabled || editableUserText === undefined || !currentReply,
+      }, {
         id: 'rewrite',
-        label: '修改输入',
+        label: '修改输入并另开分支',
         icon: <IconEditOutline16 />,
         disabled: disabled || editableUserText === undefined,
       }]}
       onSelect={(id) => {
         setMoreOpen(false)
-        if (id !== 'rewrite' || disabled || editableUserText === undefined) return
-        setError(undefined)
-        setRewriteOpen(true)
+        if (editableUserText === undefined) return
+        if (id === 'rewrite' && !disabled) {
+          setError(undefined)
+          setRewriteMode('branch')
+          return
+        }
+        if (id === 'rewrite-input' && !regenerateDisabled && currentReply) {
+          setError(undefined)
+          setRewriteMode('regenerate')
+        }
       }}
       anchor={<Tooltip label={editableUserText === undefined ? '这一轮含附件或没有可修改的用户消息' : disabled ? unavailableReason ?? '更多操作' : '更多操作'} side="bottom">
-        <button type="button" data-agent-rp-generation-action aria-label={busy === 'rewrite' ? '正在修改输入' : '更多操作'}
+        <button type="button" data-agent-rp-generation-action aria-label={busy === 'rewrite' || busy === 'rewrite-input' ? '正在修改输入' : '更多操作'}
           aria-haspopup="menu" aria-expanded={moreOpen} aria-disabled={disabled || undefined} data-unavailable={disabled || undefined}
           onClick={disabled ? undefined : () => { setMoreOpen(open => !open) }}>
-          {busy === 'rewrite' ? <IconLoadingOutline16 className="agent-rp-generation-loading" /> : <IconEllipsisOutline16 />}
+          {busy === 'rewrite' || busy === 'rewrite-input'
+            ? <IconLoadingOutline16 className="agent-rp-generation-loading" />
+            : <IconEllipsisOutline16 />}
         </button>
       </Tooltip>}
     />
@@ -1268,16 +1292,23 @@ function GenerationTail({
     </Tooltip>}
     {currentReply && drawOpen && <ImageGenerationDialog projection={projection} initialMode="scene" initialNote={sceneNote}
       onClose={() => { setDrawOpen(false) }} onGenerate={request => { runImageGeneration(sessionId, request) }} />}
-    {rewriteOpen && editableUserText !== undefined && <RewriteTurnDialog initialText={editableUserText}
-      busy={busy === 'rewrite'} {...error === undefined ? {} : { error }}
-      onClose={() => { if (busy !== 'rewrite') setRewriteOpen(false) }} onRewrite={text => {
-        setBusy('rewrite')
+    {rewriteMode !== undefined && editableUserText !== undefined && <RewriteTurnDialog
+      initialText={editableUserText} mode={rewriteMode}
+      busy={busy === 'rewrite' || busy === 'rewrite-input'} {...error === undefined ? {} : { error }}
+      onClose={() => { if (busy !== 'rewrite' && busy !== 'rewrite-input') setRewriteMode(undefined) }}
+      onRewrite={text => {
+        const pending = rewriteMode === 'branch' ? 'rewrite' as const : 'rewrite-input' as const
+        setBusy(pending)
         setError(undefined)
-        void rewriteTurn(sessionId, turn.turn, text).then(
-          () => { setBusy(undefined); setRewriteOpen(false) },
+        const operation = rewriteMode === 'branch'
+          ? rewriteTurn(sessionId, turn.turn, text)
+          : runGeneration(sessionId, { operation: 'rewrite-input', replySeq, text })
+        void operation.then(
+          () => { setBusy(undefined); setRewriteMode(undefined) },
           (reason: unknown) => {
             setBusy(undefined)
-            setError(reason instanceof Error ? reason.message : '无法创建改写对话')
+            setError(reason instanceof Error ? reason.message
+              : pending === 'rewrite' ? '无法创建改写对话' : '无法重新生成')
           },
         )
       }} />}
@@ -1350,6 +1381,7 @@ function roleplaySummary(
   }
   return {
     turnMode: 'conversation',
+    floors: [],
     characterName: summary.displayTitle,
     description: '',
     personality: '',
@@ -4257,7 +4289,7 @@ function RoleplayHeader({
   listCharacters, readCharacter, setCharacterArchived, importCharacterFile, listWorldInfos,
   prepareChatMigration, prepareRpDistributionChatMigration, launchPreparedChatMigration,
   startCharacterSession, exportChat,
-  listMemory, manageMemory, manageState, manageTurnMode,
+  listMemory, manageMemory, manageFloors, manageState, manageTurnMode,
   listPresets, listPersonas, savePersona, deletePersona, applyPersona, loadModelCapabilities, runtimeDiagnostics,
   workspaceSettings,
 }: HeaderProps) {
@@ -4277,6 +4309,7 @@ function RoleplayHeader({
   const [migrationOpen, setMigrationOpen] = useState(false)
   const [personaOpen, setPersonaOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
+  const [floorsOpen, setFloorsOpen] = useState(false)
   const [stateOpen, setStateOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -4468,6 +4501,8 @@ function RoleplayHeader({
             <a href="https://github.com/hewzhew/dsh-agent-rp#安装" target="_blank" rel="noreferrer" style={{ color, fontWeight: 600 }}>查看修复方式</a>
           </p>}
           <button type="button" role="menuitem" onClick={() => { setSettingsOpen(false); setMemoryOpen(true) }} style={headerMenuItemStyle}>记忆</button>
+          <button type="button" role="menuitem" data-agent-rp-action="open-floors"
+            onClick={() => { setSettingsOpen(false); setFloorsOpen(true) }} style={headerMenuItemStyle}>楼层</button>
           <button type="button" role="menuitem" onClick={() => { setSettingsOpen(false); setStateOpen(true) }} style={headerMenuItemStyle}>
             状态数据{projection.nativeStates.length === 0 ? '' : ` · ${projection.nativeStates.length}`}
           </button>
@@ -4513,6 +4548,10 @@ function RoleplayHeader({
       onApply={persona => applyPersona(sessionId, persona)}
       onClose={() => { setPersonaOpen(false) }}
     />}
+    {floorsOpen && <FloorVisibilityDialog
+      floors={projection?.floors ?? []}
+      onCommit={hidden => manageFloors(sessionId, hidden, (projection?.floors ?? []).filter(floor => floor.hidden).length)}
+      onClose={() => { setFloorsOpen(false) }} />}
     {memoryOpen && <MemoryManagerDialog
       onClose={() => { setMemoryOpen(false) }}
       load={() => listMemory(sessionId)}
@@ -4854,6 +4893,104 @@ const memoryKindLabels: Record<AgentRpMemoryView['kind'], string> = {
   relationship: '关系',
   preference: '偏好',
   event: '共同经历',
+}
+
+function FloorVisibilityDialog({ floors, onCommit, onClose }: {
+  readonly floors: AgentRpProjection['floors']
+  readonly onCommit: (hidden: number) => Promise<void>
+  readonly onClose: () => void
+}) {
+  const committed = floors.filter(floor => floor.hidden).length
+  const [hidden, setHidden] = useState(committed)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  // At least one floor has to stay in context for the character to answer.
+  const maximum = Math.max(0, floors.length - 1)
+  const target = Math.min(hidden, maximum)
+  const dirty = target !== committed
+  const confirm = (): void => {
+    if (busy || !dirty) return
+    setBusy(true)
+    setError(undefined)
+    void onCommit(target).then(onClose, (reason: unknown) => {
+      setBusy(false)
+      setError(reason instanceof Error ? reason.message : '无法调整隐藏范围')
+    })
+  }
+  return <div data-agent-rp-dialog data-agent-rp-floor-panel role="dialog" aria-modal="true" aria-label="楼层" style={{
+    alignItems: 'center', background: 'rgba(0,0,0,.62)', display: 'flex', inset: 0,
+    justifyContent: 'center', padding: '18px', position: 'fixed', zIndex: 1200,
+  }} onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}>
+    <section style={{
+      background: 'var(--dsw-alias-bg-base, #171719)', border: '1px solid var(--dsw-alias-border-l2, #3e3e43)',
+      borderRadius: '14px', boxShadow: '0 18px 58px rgba(0,0,0,.42)', display: 'flex', flexDirection: 'column',
+      maxHeight: 'min(720px, 86vh)', maxWidth: '640px', padding: '20px', width: '100%',
+    }}>
+      <header style={{ alignItems: 'start', display: 'flex', gap: '16px', justifyContent: 'space-between' }}>
+        <div>
+          <h2 style={{ fontSize: '17px', margin: 0 }}>楼层</h2>
+          <p style={{ fontSize: '12px', lineHeight: 1.55, margin: '5px 0 0', opacity: .58 }}>
+            隐藏的楼层不会进入下一次回复的上下文，只能从最前面开始隐藏
+          </p>
+        </div>
+        <button type="button" disabled={busy} onClick={onClose} style={{
+          background: 'transparent', border: 0, color: 'inherit', cursor: busy ? 'default' : 'pointer',
+          font: 'inherit', fontSize: '18px', opacity: .6, padding: '0 3px',
+        }} aria-label="关闭楼层面板">×</button>
+      </header>
+
+      {floors.length === 0 && <p role="status" style={{ fontSize: '13px', margin: '22px 0 4px', opacity: .58 }}>
+        这段会话还没有楼层
+      </p>}
+
+      {floors.length > 0 && <div style={{
+        background: 'var(--dsw-alias-bg-layer-1, #222226)', border: '1px solid var(--dsw-alias-border-l2, #3e3e43)',
+        borderRadius: '11px', display: 'grid', gap: '10px', marginTop: '16px', padding: '13px',
+      }}>
+        <label htmlFor="agent-rp-floor-slider" style={{ fontSize: '12px', fontWeight: 620 }}>
+          隐藏最前面 {target} 层
+        </label>
+        <input id="agent-rp-floor-slider" data-agent-rp-floor-slider type="range"
+          min={0} max={maximum} step={1} value={target} disabled={busy || maximum === 0}
+          onChange={event => { setHidden(Number(event.target.value)) }} style={{ width: '100%' }} />
+        <div style={{ display: 'flex', fontSize: '11px', gap: '10px', justifyContent: 'space-between', opacity: .55 }}>
+          <span>纳入上下文 {floors.length - target} 层</span>
+          <span>{dirty ? `当前已隐藏 ${committed} 层，确定后生效` : '与当前一致'}</span>
+        </div>
+      </div>}
+
+      {floors.length > 0 && <div style={{ display: 'grid', gap: '6px', marginTop: '14px', overflowY: 'auto' }}>
+        {floors.map((floor, index) => {
+          const willHide = index < target
+          return <div key={floor.seq} data-agent-rp-floor={willHide ? 'hidden' : 'context'} style={{
+            alignItems: 'baseline', display: 'flex', fontSize: '12px', gap: '8px',
+            opacity: willHide ? .42 : 1, padding: '4px 2px',
+          }}>
+            <span style={{ minWidth: '2.2em', opacity: .5, textAlign: 'right' }}>{index}</span>
+            <span style={{ minWidth: '2.6em', opacity: .55 }}>{floor.role === 'user' ? '玩家' : '角色'}</span>
+            <span style={{
+              flex: 1, overflow: 'hidden', textDecoration: willHide ? 'line-through' : 'none',
+              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>{floor.preview || '（空楼层）'}</span>
+          </div>
+        })}
+      </div>}
+
+      {error !== undefined && <p role="alert" style={{
+        color: 'var(--dsw-alias-state-danger, #e06470)', fontSize: '12px', lineHeight: 1.5, margin: '12px 0 0',
+      }}>{error}</p>}
+
+      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
+        <button type="button" disabled={busy} onClick={onClose} style={generationButtonStyle}>取消</button>
+        <button type="button" data-agent-rp-action="confirm-floors" disabled={busy || !dirty} onClick={confirm} style={{
+          ...generationButtonStyle,
+          background: `color-mix(in srgb, ${color} 18%, transparent)`,
+          borderColor: `color-mix(in srgb, ${color} 48%, transparent)`,
+          opacity: busy || !dirty ? .5 : 1,
+        }}>{busy ? '正在调整…' : '确定'}</button>
+      </div>
+    </section>
+  </div>
 }
 
 function MemoryManagerDialog({ load, onManage, onClose }: {
@@ -12928,6 +13065,25 @@ export function apply(ctx: ClientContext): void {
     const response = await executeAgentRpCommand(sessionId, `/rp-memory ${JSON.stringify(request)}`)
     if (!response.matched) throw new Error('当前 Host 未启用记忆管理')
   }
+  /**
+   * Hidden floors are stored as a prefix, and the Host only restores the whole
+   * prefix at once, so shrinking the range means restore-then-hide. Both steps
+   * rewrite the surface, which is why the panel commits once on confirm rather
+   * than while the slider moves.
+   */
+  const manageFloors = async (sessionId: SessionId, hidden: number, current: number): Promise<void> => {
+    if (hidden === current) return
+    if (hidden < current) {
+      await runTavernMutation(sessionId, {
+        format: 0, operation: 'set-chat-hidden', start: 0, end: current - 1, hidden: false,
+      })
+    }
+    if (hidden > 0) {
+      await runTavernMutation(sessionId, {
+        format: 0, operation: 'set-chat-hidden', start: 0, end: hidden - 1, hidden: true,
+      })
+    }
+  }
   const manageState = async (sessionId: SessionId, request: RoleplayStateCommandRequest): Promise<void> => {
     const response = await executeAgentRpCommand(sessionId, `/rp-state ${JSON.stringify(request)}`)
     if (!response.matched) throw new Error('当前 Host 未启用状态管理')
@@ -13400,7 +13556,8 @@ export function apply(ctx: ClientContext): void {
   const runGeneration = async (
     sessionId: SessionId,
     request: { readonly operation: 'regenerate' | 'continue'; readonly replySeq: number }
-      | { readonly operation: 'select'; readonly replySeq: number; readonly versionIndex: number },
+      | { readonly operation: 'select'; readonly replySeq: number; readonly versionIndex: number }
+      | { readonly operation: 'rewrite-input'; readonly replySeq: number; readonly text: string },
   ): Promise<void> => {
     const response = await executeAgentRpCommand(sessionId, `/rp-generation ${JSON.stringify(request)}`)
     if (!response.matched) throw new Error('当前 Host 未启用回复版本控制')
@@ -13553,7 +13710,7 @@ export function apply(ctx: ClientContext): void {
   }
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
     name: 'conversation.session.header.actions', id: 'agent-rp-character-header', order: -100,
-  }, props => <RoleplayHeader {...props} runtimeDiagnostics={runtimeDiagnostics} workspaceSettings={workspaceSettings} loadAvatar={loadAvatar} renameSession={renameSession} configurePreset={configurePreset} importPresetFile={importPresetFile} importPreset={importPreset} managePresetLibrary={managePresetLibrary} configureWorldInfo={configureWorldInfo} importWorldInfo={importWorldInfo} attachWorldInfo={attachWorldInfo} listWorldInfos={listWorldInfos} listCharacters={listCharacters} readCharacter={readCharacter} setCharacterArchived={setCharacterArchived} deleteCharacter={deleteCharacter} importCharacterFile={importCharacterFile} prepareChatMigration={prepareChatMigration} prepareRpDistributionChatMigration={prepareRpDistributionChatMigration} launchPreparedChatMigration={launchPreparedChatMigration} exportChat={exportChat} listMemory={listMemory} manageMemory={manageMemory} manageState={manageState} manageTurnMode={manageTurnMode} startCharacterSession={startCharacterFromCurrentSession} listPresets={listPresets} listRegexPacks={listRegexPacks} importRegexPackFile={importRegexPackFile} deleteRegexPack={deleteRegexPack} listAgentCapabilityPresets={listAgentCapabilityPresets} listPersonas={listPersonas} savePersona={savePersona} deletePersona={deletePersona} applyPersona={applyPersona} loadModelCapabilities={loadModelCapabilities} />))
+  }, props => <RoleplayHeader {...props} runtimeDiagnostics={runtimeDiagnostics} workspaceSettings={workspaceSettings} loadAvatar={loadAvatar} renameSession={renameSession} configurePreset={configurePreset} importPresetFile={importPresetFile} importPreset={importPreset} managePresetLibrary={managePresetLibrary} configureWorldInfo={configureWorldInfo} importWorldInfo={importWorldInfo} attachWorldInfo={attachWorldInfo} listWorldInfos={listWorldInfos} listCharacters={listCharacters} readCharacter={readCharacter} setCharacterArchived={setCharacterArchived} deleteCharacter={deleteCharacter} importCharacterFile={importCharacterFile} prepareChatMigration={prepareChatMigration} prepareRpDistributionChatMigration={prepareRpDistributionChatMigration} launchPreparedChatMigration={launchPreparedChatMigration} exportChat={exportChat} listMemory={listMemory} manageMemory={manageMemory} manageFloors={manageFloors} manageState={manageState} manageTurnMode={manageTurnMode} startCharacterSession={startCharacterFromCurrentSession} listPresets={listPresets} listRegexPacks={listRegexPacks} importRegexPackFile={importRegexPackFile} deleteRegexPack={deleteRegexPack} listAgentCapabilityPresets={listAgentCapabilityPresets} listPersonas={listPersonas} savePersona={savePersona} deletePersona={deletePersona} applyPersona={applyPersona} loadModelCapabilities={loadModelCapabilities} />))
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'agent-rp',

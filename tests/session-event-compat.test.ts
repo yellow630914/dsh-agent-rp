@@ -10,7 +10,7 @@ import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { resolveConfig } from '../src/config.ts'
-import { decodeGenerationState, encodeGenerationState, executeGenerationCommand } from '../src/generation.ts'
+import { encodeGenerationState, executeGenerationCommand } from '../src/generation.ts'
 import { parseCharacterCardJson } from '../src/import/character-card.ts'
 import { createCharacterCardSessionSeed } from '../src/import/character-card-seed.ts'
 import { readCurrentSessionMvuState } from '../src/mvu.ts'
@@ -156,7 +156,7 @@ test('persists a player state revision through command/done on the published Hos
   assert.deepEqual(readRoleplayStates(reopened.snapshotEvents()), readRoleplayStates(session.snapshotEvents()))
 })
 
-test('continues and switches MVU reply checkpoints through command/done on the published Host', async () => {
+test('refuses MVU reply-checkpoint commands on a Host without the plugin-event seam', async () => {
   const { card, session } = publishedMvuSession('published-host-mvu-versions')
   session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: '提升等级。' }], source: { kind: 'user' },
@@ -182,39 +182,31 @@ test('continues and switches MVU reply checkpoints through command/done on the p
     cancel: () => {},
   } as unknown as Agent
 
+  // Continue supersedes the reply it extends, which DSH 0.1.3 only lets Agent RP
+  // record in an ignorable plugin event. Without the seam the command is refused
+  // before it writes anything, so the Session keeps its single checkpoint.
   const continueId = CommandId('published-host-mvu-continue')
   session.append('command/run', { commandId: continueId, name: 'rp-generation', source: { kind: 'user' } })
-  const continued = await executeGenerationCommand({
-    agent,
-    rawInput: JSON.stringify({ operation: 'continue', replySeq: original.seq }),
-    signal: new AbortController().signal,
-  })
-  session.append('command/done', { commandId: continueId, ...continued })
-  assert.deepEqual(decodeGenerationState(continued.text)?.mvu, {
-    statData: { 角色: { 等级: 4 } }, updateCount: 2,
-  })
+  const before = session.snapshotEvents().length
+  await assert.rejects(
+    executeGenerationCommand({
+      agent,
+      rawInput: JSON.stringify({ operation: 'continue', replySeq: original.seq }),
+      signal: new AbortController().signal,
+    }),
+    /缺少安全插件事件能力/u,
+  )
   assert.equal(session.snapshotEvents().some(event => event.type === 'agent-rp/mvu-state'), false)
-  assert.deepEqual(readCurrentSessionMvuState(card, session), {
-    statData: { 角色: { 等级: 4 } }, updateCount: 2,
-  })
-
-  const selectId = CommandId('published-host-mvu-select-original')
-  session.append('command/run', { commandId: selectId, name: 'rp-generation', source: { kind: 'user' } })
-  const selected = await executeGenerationCommand({
-    agent,
-    rawInput: JSON.stringify({ operation: 'select', replySeq: original.seq, versionIndex: 0 }),
-    signal: new AbortController().signal,
-  })
-  session.append('command/done', { commandId: selectId, ...selected })
   assert.deepEqual(readCurrentSessionMvuState(card, session), {
     statData: { 角色: { 等级: 2 } }, updateCount: 1,
   })
 
   const reopened = Session.create(session.id, session.snapshotEvents())
   assert.deepEqual(readCurrentSessionMvuState(card, reopened), readCurrentSessionMvuState(card, session))
+  assert.ok(session.snapshotEvents().length >= before)
 })
 
-test('switches Tavern reply branches through command/done on the published Host', async () => {
+test('refuses to switch Tavern reply branches on a Host without the plugin-event seam', async () => {
   const session = Session.create(SessionId('published-host-tavern-versions'))
   session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: '选择一条路线。' }], source: { kind: 'user' },
@@ -261,35 +253,22 @@ test('switches Tavern reply branches through command/done on the published Host'
   })
   assert.deepEqual(readTavernHelperState(session.snapshotEvents())?.scopes.chat, { marker: 'alternative' })
 
+  // Selecting another branch must supersede the current surface reply, and DSH
+  // 0.1.3 only lets Agent RP record that in an ignorable plugin event. A Host
+  // without the seam is refused before the Session changes rather than left
+  // showing the model every branch at once.
   const agent = { session } as Agent
-  const originalSelectId = CommandId('published-tavern-select-original')
-  session.append('command/run', {
-    commandId: originalSelectId, name: 'rp-generation', source: { kind: 'user' },
-  })
-  const selectedOriginal = await executeGenerationCommand({
-    agent,
-    rawInput: JSON.stringify({ operation: 'select', replySeq: original.seq, versionIndex: 0 }),
-    signal: new AbortController().signal,
-  })
-  session.append('command/done', { commandId: originalSelectId, ...selectedOriginal })
-  assert.equal(session.snapshotEvents().some(event => event.type === 'agent-rp/tavern-state'), false)
-  assert.deepEqual(readTavernHelperState(session.snapshotEvents())?.scopes.chat, { marker: 'original' })
-  assert.deepEqual(readTavernHelperState(Session.create(session.id, session.snapshotEvents()).snapshotEvents())?.scopes.chat,
-    { marker: 'original' })
-
-  const alternativeSelectId = CommandId('published-tavern-select-alternative')
-  session.append('command/run', {
-    commandId: alternativeSelectId, name: 'rp-generation', source: { kind: 'user' },
-  })
-  const selectedAlternative = await executeGenerationCommand({
-    agent,
-    rawInput: JSON.stringify({ operation: 'select', replySeq: original.seq, versionIndex: 1 }),
-    signal: new AbortController().signal,
-  })
-  session.append('command/done', { commandId: alternativeSelectId, ...selectedAlternative })
+  const before = session.snapshotEvents().length
+  await assert.rejects(
+    executeGenerationCommand({
+      agent,
+      rawInput: JSON.stringify({ operation: 'select', replySeq: original.seq, versionIndex: 0 }),
+      signal: new AbortController().signal,
+    }),
+    /缺少安全插件事件能力/u,
+  )
+  assert.equal(session.snapshotEvents().length, before)
   assert.deepEqual(readTavernHelperState(session.snapshotEvents())?.scopes.chat, { marker: 'alternative' })
-  assert.deepEqual(readTavernHelperState(Session.create(session.id, session.snapshotEvents()).snapshotEvents())?.scopes.chat,
-    { marker: 'alternative' })
 })
 
 test('rejects unsafe Tavern regeneration before changing a published-host Session', async () => {

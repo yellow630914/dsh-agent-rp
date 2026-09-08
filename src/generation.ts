@@ -631,6 +631,13 @@ export async function executeGenerationCommand(invocation: {
   readonly signal: AbortSignal
 }): Promise<{ readonly kind: 'success'; readonly text: string; readonly sourceEventSeq: SessionSeq }> {
   const request = parseGenerationRequest(invocation.rawInput)
+  // Every reply-version operation supersedes a surface node, and DSH 0.1.3 only
+  // lets Agent RP record that in an ignorable plugin event. Refuse up front: the
+  // write happens after the new reply is generated, so a late failure would
+  // leave the Session half-changed.
+  if (!supportsAgentRpSessionEvents(invocation.agent.session)) {
+    throw new Error('当前 DSH Host 缺少安全插件事件能力，无法执行回复版本操作')
+  }
   if (request.operation === 'rewrite-input') {
     return await executeInputRewrite(invocation.agent, request, invocation.signal)
   }

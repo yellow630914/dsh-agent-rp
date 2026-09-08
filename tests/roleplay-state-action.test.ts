@@ -21,7 +21,7 @@ import { SessionSeq, Session, SessionId, type SessionEvent } from '@deepseek-ai/
 import { createScope } from '@deepseek-ai/dsh-scope'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRegistry, { defineTool } from '@deepseek-ai/dsh-tools'
-import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
+import { roleplayModelHistory, roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { resolveConfig } from '../src/config.ts'
 import { parseCharacterCardJson } from '../src/import/character-card.ts'
 import { createCharacterCardSessionSeed } from '../src/import/character-card-seed.ts'
@@ -355,7 +355,7 @@ test('keeps state arithmetic out of the actor step and does not migrate resumed 
     provider: 'fixture',
     model: 'fixture',
     sessionId: native.session.id,
-    messages: native.session.deriveMessages(),
+    messages: roleplayModelHistory(native.session),
   }) as GenerateOptions)) {
     // Exhaust the real provider stream so the recording adapter observes the final request.
   }

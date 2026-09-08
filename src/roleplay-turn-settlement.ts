@@ -2,6 +2,7 @@
 
 import { createHash } from 'node:crypto'
 import { SessionSeq, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { readRoleplaySurfaceOverlay } from './roleplay-surface-overlay.ts'
 import { readAgentRpMemoryHistory } from './memory.ts'
 import { MVU_ROLEPLAY_MODULE_ID, MVU_ROLEPLAY_STATE_ID } from './mvu.ts'
 import {
@@ -448,6 +449,7 @@ export function compileRoleplayActReceipt(
   plans: readonly RoleplayTurnPlanReference[],
 ): NonNullable<RoleplayTurnSettlement['act']> {
   const bounded = exactTurnEvents(events, turn, result)
+  const overlay = readRoleplaySurfaceOverlay(events)
   const eventsBySeq = new Map(events.map(event => [event.seq, event]))
   const plannedSteps = new Set(plans.map(plan => plan.step))
   const byStep = new Map(plans.map(plan => [plan.step, {
@@ -576,7 +578,12 @@ export function compileRoleplayActReceipt(
     const start = starts.get(event.data.step)
     const end = ends.get(event.data.step)
     if ((start !== undefined && event.seq <= start.seq) || (end !== undefined && event.seq >= end.seq)) {
-      if (event.type === 'assistant/message' && event.surfaceOp !== 'append'
+      // A reply restated after its step closed — a reviewed version or another
+      // Agent RP rewrite — is not part of the step's act. Before DSH 0.1.3 it
+      // was recognizable by its surface `replace`; the Host now bars that on an
+      // Assistant message, so the overlay's replacement set identifies it.
+      if (event.type === 'assistant/message'
+        && (event.surfaceOp !== 'append' || overlay.anchorOf.has(event.seq))
         && end !== undefined && event.seq > end.seq) {
         continue
       }

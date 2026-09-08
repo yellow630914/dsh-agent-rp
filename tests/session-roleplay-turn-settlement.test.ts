@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { ROLEPLAY_TURN_PHASES, type RoleplayRuntimeSnapshot } from '../src/roleplay-runtime.ts'
 import type { RoleplayTurnPlan } from '../src/roleplay-turn-plan.ts'
 import { prepareRoleplayToolPolicy } from '../src/roleplay-tool-guidance.ts'
@@ -57,12 +58,8 @@ function plan(session: Session, snapshot = runtime()): RoleplayTurnPlan {
   }
 }
 
-function appendReply(session: Session, text: string, surfaceOp: 'append' | {
-  readonly op: 'replace'
-  readonly start: SessionSeq
-  readonly end: SessionSeq
-} = 'append') {
-  return session.append('assistant/message', {
+function appendReply(session: Session, text: string, supersedes?: readonly SessionSeq[]) {
+  const appended = session.append('assistant/message', {
     turn: 1,
     step: 1,
     message: createAssistantMessage({
@@ -70,9 +67,13 @@ function appendReply(session: Session, text: string, surfaceOp: 'append' | {
       content: [{ type: 'text', text }],
     }),
     stream: [],
-  }, {
-    surfaceOp,
-  })
+  }, { surfaceOp: 'append' })
+  // DSH 0.1.3 forbids a surface replace on assistant/message; Agent RP records
+  // the supersession in its own overlay event instead.
+  if (supersedes !== undefined) {
+    session.append('agent-rp/surface-override', roleplaySurfaceOverride([appended.seq], supersedes))
+  }
+  return appended
 }
 
 test('collects failure and deferred work from their active modules', () => {
@@ -97,7 +98,7 @@ test('does not attribute a hidden old MVU failure to the selected reply', () => 
   session.append('turn/start', { turn: 1 })
   const turnPlan = plan(session, runtime([modules[0]!]))
   const invalid = appendReply(session, '<UpdateVariable>broken</UpdateVariable>')
-  appendReply(session, '当前选中的正常回复', { op: 'replace', start: invalid.seq, end: invalid.seq })
+  appendReply(session, '当前选中的正常回复', [invalid.seq])
 
   assert.deepEqual(collectSessionRoleplaySettlementContributions({
     session,

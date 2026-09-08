@@ -401,10 +401,50 @@ function surfaceRole(event: SessionEvent): 'user' | 'assistant' | undefined {
   return undefined
 }
 
+/**
+ * Fold one Agent RP supersession into the projected surface.
+ *
+ * DSH 0.1.3 bars an Assistant message from replacing surface nodes, so a
+ * rewrite appends and records the supersession separately. The projection must
+ * reproduce what a positional `replace` did: drop the superseded floors and
+ * move the replacements into the earliest superseded position, instead of
+ * leaving them stranded at the tail.
+ * @param surface - projected surface before this event.
+ * @param event - the `agent-rp/surface-override` event.
+ * @returns the surface with the supersession applied.
+ */
+function applySurfaceOverride(
+  surface: AgentRpProjectionState['surface'],
+  event: SessionEvent,
+): AgentRpProjectionState['surface'] {
+  const data = event.data as { readonly supersedes?: unknown; readonly replacements?: unknown }
+  if (!Array.isArray(data.supersedes) || !Array.isArray(data.replacements)) return surface
+  const superseded = new Set(data.supersedes.filter((seq): seq is number => typeof seq === 'number'))
+  const replacements = data.replacements.filter((seq): seq is number => typeof seq === 'number')
+  if (superseded.size === 0 || replacements.length === 0) return surface
+  const moving = new Set(replacements)
+  const moved = replacements.flatMap(seq => surface.filter(node => node.seq === seq))
+  const next: AgentRpProjectionState['surface'][number][] = []
+  let placed = false
+  for (const node of surface) {
+    if (superseded.has(node.seq)) {
+      if (!placed) { next.push(...moved); placed = true }
+      continue
+    }
+    if (moving.has(node.seq)) continue
+    next.push(node)
+  }
+  if (!placed) next.push(...moved)
+  return next
+}
+
 function applySurface(
   surface: AgentRpProjectionState['surface'],
   event: SessionEvent,
 ): AgentRpProjectionState['surface'] {
+  if (event.type === ('agent-rp/surface-override' as SessionEvent['type'])) {
+    return applySurfaceOverride(surface, event)
+  }
   if (event.type !== 'user/message' && event.type !== 'assistant/message' && event.type !== 'tool/result') return surface
   const message = event.type === 'user/message' ? event.data : event.data.message
   if (event.type !== 'tool/result'

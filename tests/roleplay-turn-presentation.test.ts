@@ -5,7 +5,6 @@ import { CommandId } from '@deepseek-ai/dsh-commands'
 import { ToolCallId, createAssistantMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
 import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { decodeGenerationState, encodeGenerationState, executeGenerationCommand } from '../src/generation.ts'
 import { agentRpProjectionDefinition } from '../src/projection.ts'
@@ -424,7 +423,7 @@ test('reply-version selection produces the current unified presentation', () => 
     }),
     stream: [],
   }, { surfaceOp: 'append' })
-  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+  session.append('agent-rp/surface-override',
     roleplaySurfaceOverride([surface.seq], [original.seq, alternative.seq]))
   const groupId = '00000000-0000-4000-8000-000000000183'
   const resultEvent = session.append('command/done', {
@@ -480,7 +479,7 @@ test('reply versions restore branch-local state and artifacts together after rep
     }),
     stream: [],
   }, { surfaceOp: 'append' })
-  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+  session.append('agent-rp/surface-override',
     roleplaySurfaceOverride([surface.seq], session.surface.nodes.slice(session.surface.nodes.indexOf(original.seq))))
   const alternativeState = applyTavernHelperMutation(originalBase, {
     format: 0, scope: 'chat', variables: { marker: 'alternative' },

@@ -11,7 +11,6 @@ import {
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
 import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { parseCharacterCardJson } from '../src/import/character-card.ts'
 import { applyMvuReply, appendMvuState, readCurrentMvuState, readCurrentSessionMvuState, readInitialMvuState } from '../src/mvu.ts'
@@ -129,7 +128,7 @@ test('excludes shadowed reply updates while retaining durable script state', () 
     }),
     stream: [],
   }, { surfaceOp: 'append' })
-  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+  session.append('agent-rp/surface-override',
     roleplaySurfaceOverride([supersedingReply.seq], [original.seq]))
 
   assert.deepEqual(readCurrentSessionMvuState(card, session), {
@@ -162,7 +161,7 @@ test('replays an exact MVU version checkpoint before applying the new visible re
     }),
     stream: [],
   }, { surfaceOp: 'append' })
-  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+  session.append('agent-rp/surface-override',
     roleplaySurfaceOverride([supersedingReply.seq], [rejected.seq]))
 
   assert.deepEqual(readCurrentSessionMvuState(card, session), {

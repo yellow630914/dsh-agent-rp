@@ -21,7 +21,6 @@ import { SessionSeq, Session, SessionId, type SessionEvent } from '@deepseek-ai/
 import { createScope } from '@deepseek-ai/dsh-scope'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRegistry, { defineTool } from '@deepseek-ai/dsh-tools'
-import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
 import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { resolveConfig } from '../src/config.ts'
 import { parseCharacterCardJson } from '../src/import/character-card.ts'
@@ -559,7 +558,7 @@ test('settles MVU after the visible reply through a replayable local-provider st
     }),
     stream: [],
   }, { surfaceOp: 'append' })
-  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+  session.append('agent-rp/surface-override',
     roleplaySurfaceOverride([reviewedNarrative.seq], [narrative.seq]))
   const requestTexts: string[] = []
   const requestSystems: string[] = []

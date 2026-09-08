@@ -11,7 +11,6 @@ import {
 } from '../src/generation.ts'
 import { CommandId } from '@deepseek-ai/dsh-commands'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
 import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { executeTavernTrigger } from '../src/tavern-trigger.ts'
 import {
@@ -39,7 +38,7 @@ function appendAssistant(session: Session, turn: number, text: string, supersede
   // DSH 0.1.3 forbids a surface replace on assistant/message; Agent RP records
   // the supersession in its own overlay event instead.
   if (supersedes !== undefined) {
-    appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+    session.append('agent-rp/surface-override',
       roleplaySurfaceOverride([appended.seq], supersedes))
   }
   return appended

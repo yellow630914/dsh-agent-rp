@@ -8,7 +8,6 @@ import {
   createUserMessage,
 } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
-import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
 import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { resolveConfig } from '../src/config.ts'
 import {
@@ -196,7 +195,7 @@ test('updates only present when a later reply version is selected', () => {
     }),
     stream: [],
   }, { surfaceOp: 'append' })
-  appendAgentRpSessionEvent(fixture.session, 'agent-rp/surface-override',
+  fixture.session.append('agent-rp/surface-override',
     roleplaySurfaceOverride([surface.seq], [fixture.reply.seq, alternative.seq]))
   const trigger = fixture.session.append('command/done', {
     commandId: CommandId('turn-record-version'),

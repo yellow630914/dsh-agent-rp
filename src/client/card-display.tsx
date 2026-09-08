@@ -1,6 +1,6 @@
 /** Isolated card-display rendering and remote-resource approval UI. */
 
-import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AgentRpProjection } from '../projection-types.ts'
 import type { CompiledCharacterDisplay } from '../frontend-regex.ts'
@@ -26,6 +26,12 @@ import {
   updateCharacterRemoteResource,
   updateCharacterRemoteResourcePolicy,
 } from './character-library-client.ts'
+
+/** Plugin-owned Markdown chrome copy; DSH 0.1.3 requires callers to supply it. */
+const MARKDOWN_LABELS: MarkdownLabels = {
+  code: { copyLabel: '复制', copiedLabel: '已复制' },
+  footnotes: '脚注',
+}
 
 const cardFrameRevealFallbackMs = 250
 
@@ -204,7 +210,7 @@ export function CharacterDisplay({
   return <div data-agent-rp-character-display data-agent-rp-display-diagnostics={cardFrameDiagnosticSummary(compiled.diagnostics)}
     style={{ display: 'grid', gap: '10px', minWidth: 0 }}>
     {compiled.segments.map((segment, index) => {
-      if (segment.kind === 'markdown') return <MarkdownText key={index} text={segment.text} />
+      if (segment.kind === 'markdown') return <MarkdownText key={index} text={segment.text} labels={MARKDOWN_LABELS} />
       if (preview && segment.interactive) return <div key={index} role="note" style={{
             alignItems: 'center', background: 'var(--dsw-alias-bg-layer-1, #202024)',
             border: '1px solid var(--dsw-alias-border-l2, #39393c)', borderRadius: '10px',

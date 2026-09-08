@@ -10,6 +10,9 @@ import type { PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-
 import type { CommandRowProps, TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-agent-presets/types'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import {
@@ -651,6 +654,7 @@ type GenerationTailProps = TurnTailOwnerProps & {
   ) => Promise<void>
   readonly rewriteTurn: (sessionId: SessionId, turn: number, draft: string) => Promise<void>
   readonly runImageGeneration: RunImageGeneration
+  readonly useChat: PropsRuntime<'conversation.composer.dock'>['useChat']
   readonly useProjection: PropsRuntime<'conversation.composer.dock'>['useProjection']
   readonly useSession: PropsRuntime<'conversation.composer.dock'>['useSession']
 }
@@ -1148,20 +1152,20 @@ function RewriteTurnDialog({ initialText, mode, busy, error, onClose, onRewrite 
 
 function GenerationTail({
   runGeneration, rewriteTurn, runImageGeneration, seq: replySeq,
-  sessionId, turn, useProjection, useSession,
+  sessionId, turn, useChat, useProjection, useSession,
 }: GenerationTailProps) {
   const projection = useProjection('agentRp') as AgentRpProjection | undefined
   const running = useSession(snapshot => snapshot.running)
-  const replyText = useSession(snapshot => {
-    const node = snapshot.chat.legacy.nodes.find(candidate => candidate.kind === 'assistant' && candidate.seq === replySeq)
+  const replyText = useChat(snapshot => {
+    const node = snapshot.legacy.nodes.find(candidate => candidate.kind === 'assistant' && candidate.seq === replySeq)
     return node?.kind === 'assistant' ? node.blocks
       .filter((block): block is Extract<typeof block, { readonly kind: 'text' }> => block.kind === 'text')
       .map(block => block.text)
       .join('\n') : ''
   })
-  const editableUserText = useSession(snapshot => {
+  const editableUserText = useChat(snapshot => {
     if (turn.start === undefined || turn.end === undefined) return undefined
-    const node = snapshot.chat.legacy.nodes.find(candidate => candidate.kind === 'user'
+    const node = snapshot.legacy.nodes.find(candidate => candidate.kind === 'user'
       && candidate.seq > turn.start!.seq && candidate.seq < turn.end!.seq)
     if (node?.kind !== 'user' || node.content.length === 0 || node.content.some(block => block.type !== 'text')) return undefined
     return node.content.map(block => block.type === 'text' ? block.text : '').join('\n')
@@ -1363,7 +1367,7 @@ function roleplaySummary(
   summary: SessionSummary | undefined,
   projection: AgentRpProjection | undefined,
 ): AgentRpProjection | undefined {
-  if (!isAgentRpCapabilityPresetId(summary?.agentPreset)) return undefined
+  if (!isAgentRpCapabilityPresetId(summary?.projectionValues?.agentPreset)) return undefined
   if (projection !== undefined) {
     // Client HMR can briefly pair a newer UI with the previous Host projection.
     // Keep that rolling upgrade usable until the Host process is restarted.
@@ -2956,7 +2960,7 @@ function SidebarRoleplayDestination({
     setStoryWorkspaceOpen(true)
   }
   const openCurrentSessionTools = (): void => {
-    if (currentSessionId === undefined || !isAgentRpCapabilityPresetId(currentSession?.agentPreset)) return
+    if (currentSessionId === undefined || !isAgentRpCapabilityPresetId(currentSession?.projectionValues?.agentPreset)) return
     closeWorkbench()
     window.dispatchEvent(new CustomEvent(openRoleplaySessionToolsEvent, { detail: String(currentSessionId) }))
   }
@@ -3042,7 +3046,7 @@ function SidebarRoleplayDestination({
           {accessError !== undefined && <p role="alert" style={{
             color: 'var(--dsw-alias-state-danger, #d64d5f)', fontSize: '11px', margin: '7px 2px 0',
           }}>{accessError}</p>}
-          {isAgentRpCapabilityPresetId(currentSession?.agentPreset) && <button type="button"
+          {isAgentRpCapabilityPresetId(currentSession?.projectionValues?.agentPreset) && <button type="button"
             data-agent-rp-action="open-session-tools" onClick={openCurrentSessionTools} style={{
               alignItems: 'center', background: `color-mix(in srgb, ${color} 10%, transparent)`,
               border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`, borderRadius: '12px',
@@ -3190,7 +3194,7 @@ function SidebarRoleplayDestination({
     />, document.body)}
     {storyWorkspaceOpen && createPortal(<StoryWorkspaceEditor
       accent={color}
-      {...(currentSessionId === undefined || !isAgentRpCapabilityPresetId(currentSession?.agentPreset)
+      {...(currentSessionId === undefined || !isAgentRpCapabilityPresetId(currentSession?.projectionValues?.agentPreset)
         ? {}
         : { sessionId: String(currentSessionId) })}
       onClose={() => { setStoryWorkspaceOpen(false) }}
@@ -4594,7 +4598,7 @@ function RoleplayHeader({
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '7px', marginTop: '20px' }}>
           {projection.userName !== undefined && <span style={chipStyle}>你是 {projection.userName}</span>}
           <span style={chipStyle}>回合 · {projection.turnMode === 'agent' ? 'Agent 分阶段' : '兼容对话'}</span>
-          {summary?.agentPreset !== undefined && <span style={chipStyle}>Agent 能力 · {summary.agentPreset}</span>}
+          {summary?.projectionValues?.agentPreset !== undefined && <span style={chipStyle}>Agent 能力 · {summary.projectionValues?.agentPreset}</span>}
           {projection.importedMessageCount > 0 && <span style={chipStyle}>{projection.importedMessageCount} 条历史消息</span>}
           {projection.worldInfoCount > 0 && <span style={chipStyle}>{projection.worldInfoCount} 条世界书设定</span>}
           {characterRegexScripts.length > 0 && <span style={chipStyle}>角色卡正则 · {characterRegexScripts.length} 条</span>}
@@ -4651,7 +4655,7 @@ function RoleplayHeader({
         <DetailSection title="当前场景" text={projection.scenario} />
         <DetailSection title="Agent 回合诊断" text={[
           `回合策略：${projection.turnMode === 'agent' ? '正文完成后独立结算状态' : '兼容正文内的旧式状态更新'}`,
-          `Agent 能力预设：${summary?.agentPreset ?? '未记录'}`,
+          `Agent 能力预设：${summary?.projectionValues?.agentPreset ?? '未记录'}`,
           projection.lastRequest === undefined
             ? '最近一次模型请求：尚无记录'
             : `最近一次模型工具：${projection.lastRequest.toolNames.length === 0 ? '无' : projection.lastRequest.toolNames.join('、')}`,
@@ -11577,12 +11581,12 @@ function roleplayComposerDockComponent(
   runPresetConfiguration: RunPresetConfiguration,
 ): (props: ComposerDockProps) => JSX.Element | null {
   return function RoleplayComposerDock({
-    inputActions, sessionId, useProjection, useSessions, useSession,
+    inputActions, sessionId, useChat, useProjection, useSessions, useSession,
   }: ComposerDockProps) {
   const summary = useSessions(state => state.byId[sessionId])
   const projected = useProjection('agentRp')
   const projection = roleplaySummary(summary, projected)
-  const chat = useSession(state => state.chat)
+  const chat = useChat(state => state)
   const agentRpSettings = useSyncExternalStore(
     workspaceSettings.subscribe,
     workspaceSettings.getSnapshot,
@@ -11619,7 +11623,7 @@ function roleplayComposerDockComponent(
   const characterDetail = useMemo(() => storedCharacterDetail === undefined ? undefined
     : withAgentRpSessionCardPermissions(storedCharacterDetail, sessionResourcePermissions),
   [sessionResourcePermissions, storedCharacterDetail])
-  const roleplayExpected = isAgentRpCapabilityPresetId(summary?.agentPreset)
+  const roleplayExpected = isAgentRpCapabilityPresetId(summary?.projectionValues?.agentPreset)
   const turnHealthRevision = [
     projection?.lastRequest?.eventSeq,
     projection?.presentation?.settlementSeq,
@@ -12868,11 +12872,11 @@ function importHintComponent(
       : jsonKind === 'world-info' ? '请导入这本世界书'
         : jsonKind === 'preset' ? '请导入这份预设' : undefined
     useEffect(() => {
-      if (isAgentRpCapabilityPresetId(summary?.agentPreset) && input.draft.trim() === '' && inferredDraft !== undefined) {
+      if (isAgentRpCapabilityPresetId(summary?.projectionValues?.agentPreset) && input.draft.trim() === '' && inferredDraft !== undefined) {
         inputActions.setDraft(inferredDraft)
       }
-    }, [inferredDraft, input.draft, inputActions, summary?.agentPreset])
-    if (!isAgentRpCapabilityPresetId(summary?.agentPreset)) return null
+    }, [inferredDraft, input.draft, inputActions, summary?.projectionValues?.agentPreset])
+    if (!isAgentRpCapabilityPresetId(summary?.projectionValues?.agentPreset)) return null
     if (selected === undefined) return null
     const blank = input.draft.trim() === ''
     const chat = selected.kind === 'chat'

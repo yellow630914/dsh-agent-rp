@@ -6,6 +6,7 @@ import type {
   ConversationNodeDefinition,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { useEffect, useState } from 'react'
 import {
   normalizeRoleplayTurnPresentation,

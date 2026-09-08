@@ -25,6 +25,7 @@ function createTranscript(...messages: readonly { readonly role: 'assistant' | '
         content: [{ type: 'text', text: message.text }],
         source: { provider: 'fixture', model: 'fixture' },
       }),
+      stream: [],
     }, { surfaceOp: 'append' })
   }
   return { session, agent: { session } as unknown as Agent }
@@ -173,11 +174,11 @@ test('re-mints message identity when a hidden-prefix rewrite re-appends the surf
     content: [{ type: 'text', text: '外部上下文' }],
     source: { kind: 'plugin', plugin: 'fixture', form: 'notice', summary: '外部上下文' },
   }), { surfaceOp: 'append' })
-  const pluginId = String((session.events.at(-1)!.data as { readonly id: unknown }).id)
+  const pluginId = String((session.snapshotEvents().at(-1)!.data as { readonly id: unknown }).id)
 
   executeTavernChatMutation(agent, { format: 0, operation: 'set-chat-hidden', start: 0, end: 1, hidden: true })
 
-  const ids = session.events.flatMap(event => event.type === 'user/message'
+  const ids = session.snapshotEvents().flatMap(event => event.type === 'user/message'
     ? [String((event.data as { readonly id: unknown }).id)]
     : [])
   assert.equal(new Set(ids).size, ids.length)
@@ -186,7 +187,7 @@ test('re-mints message identity when a hidden-prefix rewrite re-appends the surf
 
   // Provenance and content survive the re-mint.
   const replayed = session.surface.nodes
-    .map(seq => session.events[seq])
+    .map(seq => session.snapshotEvents()[seq])
     .filter(event => event?.type === 'user/message'
       && (event.data as { readonly source: { readonly kind: string } }).source.kind === 'plugin')
   assert.equal(replayed.length, 1)

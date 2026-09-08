@@ -33,8 +33,8 @@ function run(agent: Agent, rawInput: string, sequence: number): void {
 }
 
 function project(agent: Agent) {
-  let state = agentRpProjectionDefinition.init()
-  for (const event of agent.session.events) state = agentRpProjectionDefinition.apply(state, event)
+  let state = agentRpProjectionDefinition.init(agent.session.header, agent.session.inheritedEventCount)
+  for (const event of agent.session.snapshotEvents()) state = agentRpProjectionDefinition.apply(state, event)
   return agentRpProjectionDefinition.wire.view(state)
 }
 
@@ -48,8 +48,8 @@ test('selects and clears a Persona through a replayable model-free command', () 
   const agent = { session: Session.create(SessionId('persona-command')) } as Agent
   run(agent, JSON.stringify({ format: 0, persona }), 1)
 
-  assert.deepEqual(readSessionPersonaSelection(agent.session.events), { explicit: true, persona })
-  assert.deepEqual(resolveSessionPersonaIdentity(agent.session.events, '旧称呼'), {
+  assert.deepEqual(readSessionPersonaSelection(agent.session.snapshotEvents()), { explicit: true, persona })
+  assert.deepEqual(resolveSessionPersonaIdentity(agent.session.snapshotEvents(), '旧称呼'), {
     persona,
     userName: persona.name,
   })
@@ -58,8 +58,8 @@ test('selects and clears a Persona through a replayable model-free command', () 
 
   run(agent, JSON.stringify({ format: 0 }), 2)
 
-  assert.deepEqual(readSessionPersonaSelection(agent.session.events), { explicit: true })
-  assert.deepEqual(resolveSessionPersonaIdentity(agent.session.events, '旧称呼'), {})
+  assert.deepEqual(readSessionPersonaSelection(agent.session.snapshotEvents()), { explicit: true })
+  assert.deepEqual(resolveSessionPersonaIdentity(agent.session.snapshotEvents(), '旧称呼'), {})
   assert.equal(project(agent).persona, undefined)
   assert.equal(project(agent).userName, undefined)
 })
@@ -67,13 +67,13 @@ test('selects and clears a Persona through a replayable model-free command', () 
 test('rejects a Persona result that cites a different command source', () => {
   const agent = { session: Session.create(SessionId('persona-command-source')) } as Agent
   run(agent, JSON.stringify({ format: 0, persona }), 1)
-  const done = agent.session.events.at(-1)
+  const done = agent.session.snapshotEvents().at(-1)
   assert.equal(done?.type, 'command/done')
   if (done?.type !== 'command/done' || done.data.kind !== 'success') assert.fail('missing Persona result')
   const record = decodePersonaCommandRecord(done.data.text)
   assert.equal(record?.sourceEventSeq, 0)
 
-  const events = agent.session.events.map((event, index) => index === 0
+  const events = agent.session.snapshotEvents().map((event, index) => index === 0
     ? { ...event, data: { ...event.data, name: 'rp-world-info' } }
     : event) as SessionEvent[]
   assert.throws(() => readSessionPersonaSelection(events), /没有对应的命令来源/u)

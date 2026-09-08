@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { CallId, createToolResultMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { ToolCallId, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import { SessionSeq, Session, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRegistry from '@deepseek-ai/dsh-tools'
 import ApprovalService, { type ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
@@ -133,7 +133,7 @@ function appendCall(session: Session, callId: string, name: string, args: unknow
   return session.append('tool/call', {
     turn: 1,
     step: 1,
-    callId: CallId(callId),
+    callId: ToolCallId(callId),
     name,
     arguments: JSON.stringify(args),
   }).seq
@@ -149,12 +149,12 @@ function appendResult(
     turn: 1,
     step: 1,
     message: createToolResultMessage({
-      callId: CallId(callId),
+      callId: ToolCallId(callId),
       content: result.content,
       isError: result.isError,
     }),
     ...(result.meta === undefined ? {} : { meta: result.meta }),
-  }, { surfaceOp: 'append', sourceEventSeqs: [callSeq] })
+  }, { surfaceOp: 'append', sourceEventSeqs: [SessionSeq(callSeq)] })
 }
 
 test('reads the exact editable actor revision without mutating the provider', async (context) => {
@@ -165,7 +165,7 @@ test('reads the exact editable actor revision without mutating the provider', as
   appendCall(session, callId, ROLEPLAY_ACTOR_INSPECTION_TOOL, {})
 
   const result = await ctx.tools.execute({
-    callId: CallId(callId), name: ROLEPLAY_ACTOR_INSPECTION_TOOL,
+    callId: ToolCallId(callId), name: ROLEPLAY_ACTOR_INSPECTION_TOOL,
     arguments: {}, agent, signal: new AbortController().signal,
   })
 
@@ -178,7 +178,7 @@ test('reads the exact editable actor revision without mutating the provider', as
     definition: BASE_DEFINITION,
   })
   assert.equal(provider.reviseCount(), 0)
-  assert.equal(session.events.some(event => event.type === 'approval/asked'), false)
+  assert.equal(session.snapshotEvents().some(event => event.type === 'approval/asked'), false)
 })
 
 test('maps source-neutral actor fields onto a reversible CharacterLibrary overlay', (context) => {
@@ -233,7 +233,7 @@ test('native rejection leaves the actor untouched and replays as rejected', asyn
   const callSeq = appendCall(session, callId, ROLEPLAY_ACTOR_REVISION_TOOL, args)
 
   const result = await ctx.tools.execute({
-    callId: CallId(callId), name: ROLEPLAY_ACTOR_REVISION_TOOL,
+    callId: ToolCallId(callId), name: ROLEPLAY_ACTOR_REVISION_TOOL,
     arguments: args, agent, signal: new AbortController().signal,
   })
   appendResult(session, callId, callSeq, result)
@@ -241,14 +241,14 @@ test('native rejection leaves the actor untouched and replays as rejected', asyn
   assert.equal(result.isError, true)
   assert.equal(provider.reviseCount(), 0)
   assert.deepEqual(provider.current().definition, BASE_DEFINITION)
-  const asked = session.events.find(event => event.type === 'approval/asked')
+  const asked = session.snapshotEvents().find(event => event.type === 'approval/asked')
   assert.equal(asked?.type, 'approval/asked')
   if (asked?.type === 'approval/asked') {
     assert.equal(asked.data.toolName, ROLEPLAY_ACTOR_REVISION_TOOL)
     assert.equal(String(asked.data.callId), callId)
     assert.match(asked.data.reason ?? '', /角色描述、性格/u)
   }
-  assert.deepEqual(readRoleplayActorRevisionAttempts(session.events).map(value => value.settlement), ['rejected'])
+  assert.deepEqual(readRoleplayActorRevisionAttempts(session.snapshotEvents()).map(value => value.settlement), ['rejected'])
 })
 
 test('one-shot approval applies the exact diff and is reconstructable from the Session Log', async (context) => {
@@ -260,7 +260,7 @@ test('one-shot approval applies the exact diff and is reconstructable from the S
   const callSeq = appendCall(session, callId, ROLEPLAY_ACTOR_REVISION_TOOL, args)
 
   const result = await ctx.tools.execute({
-    callId: CallId(callId), name: ROLEPLAY_ACTOR_REVISION_TOOL,
+    callId: ToolCallId(callId), name: ROLEPLAY_ACTOR_REVISION_TOOL,
     arguments: args, agent, signal: new AbortController().signal,
   })
   appendResult(session, callId, callSeq, result)
@@ -270,7 +270,7 @@ test('one-shot approval applies the exact diff and is reconstructable from the S
   assert.equal(provider.current().revision, '2')
   assert.equal(provider.current().definition.description, CHANGES.description.after)
   assert.equal(provider.current().definition.personality, CHANGES.personality.after)
-  const attempts = readRoleplayActorRevisionAttempts(session.events)
+  const attempts = readRoleplayActorRevisionAttempts(session.snapshotEvents())
   assert.equal(attempts.length, 1)
   assert.deepEqual(attempts[0], {
     callId,
@@ -287,7 +287,7 @@ test('one-shot approval applies the exact diff and is reconstructable from the S
     },
   })
   assert.deepEqual(
-    readRoleplayActorRevisionAttempts(Session.create(SessionId('actor-revision-replay'), session.events).events),
+    readRoleplayActorRevisionAttempts(Session.create(SessionId('actor-revision-replay'), session.snapshotEvents()).snapshotEvents()),
     attempts,
   )
 })
@@ -304,7 +304,7 @@ test('a concurrent local revision after approval was shown settles as conflict w
   const callSeq = appendCall(session, callId, ROLEPLAY_ACTOR_REVISION_TOOL, args)
 
   const result = await ctx.tools.execute({
-    callId: CallId(callId), name: ROLEPLAY_ACTOR_REVISION_TOOL,
+    callId: ToolCallId(callId), name: ROLEPLAY_ACTOR_REVISION_TOOL,
     arguments: args, agent, signal: new AbortController().signal,
   })
   appendResult(session, callId, callSeq, result)
@@ -315,5 +315,5 @@ test('a concurrent local revision after approval was shown settles as conflict w
   assert.equal(provider.reviseCount(), 0)
   assert.equal(provider.current().definition.scenario, '已经由另一处改为晴天。')
   assert.equal(provider.current().definition.description, BASE_DEFINITION.description)
-  assert.deepEqual(readRoleplayActorRevisionAttempts(session.events).map(value => value.settlement), ['conflict'])
+  assert.deepEqual(readRoleplayActorRevisionAttempts(session.snapshotEvents()).map(value => value.settlement), ['conflict'])
 })

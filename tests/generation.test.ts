@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import {
   decodeGenerationState,
   encodeGenerationState,
@@ -27,12 +27,13 @@ import { installIgnorableSessionEventFixture } from './session-event-fixture.ts'
 
 installIgnorableSessionEventFixture()
 
-function appendAssistant(session: Session, turn: number, text: string, surfaceOp: 'append' | { op: 'replace'; start: number; end: number } = 'append') {
+function appendAssistant(session: Session, turn: number, text: string, surfaceOp: 'append' | { op: 'replace'; start: SessionSeq; end: SessionSeq } = 'append') {
   const sourceEventSeqs = surfaceOp === 'append' ? [] : [...session.surface.nodes]
   return session.append('assistant/message', {
     turn,
     step: 1,
     message: createAssistantMessage({ content: [{ type: 'text', text }], source: { provider: 'fixture', model: 'fixture' } }),
+    stream: [],
   }, { surfaceOp, sourceEventSeqs })
 }
 
@@ -94,7 +95,7 @@ test('folds latest selectable reply group snapshots across replacement events', 
   session.append('user/message', createUserMessage({ content: [{ type: 'text', text: '你好' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
   const original = appendAssistant(session, 1, '第一版')
   const generated = appendAssistant(session, 2, '第二版')
-  const replacement = appendAssistant(session, 2, '第二版', { op: 'replace', start: 0, end: generated.seq })
+  const replacement = appendAssistant(session, 2, '第二版', { op: 'replace', start: SessionSeq(0), end: generated.seq })
   const groupId = '00000000-0000-4000-8000-000000000001'
   const firstState = {
     format: 0,
@@ -122,7 +123,7 @@ test('folds latest selectable reply group snapshots across replacement events', 
   } as const
   session.append('command/done', { commandId: CommandId('generation-2'), kind: 'success', text: encodeGenerationState(selectedState) })
 
-  const [group] = readGenerationGroups(session.events)
+  const [group] = readGenerationGroups(session.snapshotEvents())
   assert.equal(group?.selectedVersionSeq, original.seq)
   assert.equal(group?.surfaceSeq, restored.seq)
   assert.deepEqual(session.deriveMessages().map(message => message.content[0]?.type === 'text' ? message.content[0].text : ''), ['第一版'])
@@ -150,7 +151,7 @@ test('rejects reply versions that reference a non-state event', () => {
     }),
   })
 
-  assert.throws(() => readGenerationGroups(session.events), /脚本状态不存在/u)
+  assert.throws(() => readGenerationGroups(session.snapshotEvents()), /脚本状态不存在/u)
 })
 
 test('regenerates without exposing the rejected reply to the replacement request', async () => {
@@ -204,6 +205,7 @@ test('keeps adapter replay state only while reply content remains exact', async 
         content: [{ type: 'text', text }],
         source: { provider: 'fixture', model: 'fixture', replayState: replay(id) },
       }),
+      stream: [],
     },
     { surfaceOp: 'append' },
   )
@@ -289,8 +291,8 @@ test('regenerates from pre-reply script state and restores each swipe state', as
     inbox: { hasPending: false },
     followup(message: ReturnType<typeof createUserMessage>) {
       session.append('user/message', message, { surfaceOp: 'append' })
-      requestState = readTavernHelperState(session.events)
-      requestWorldInfoRevision = readWorldInfoConfiguration(session.events).revision
+      requestState = readTavernHelperState(session.snapshotEvents())
+      requestWorldInfoRevision = readWorldInfoConfiguration(session.snapshotEvents()).revision
       requestMvu = readCurrentSessionMvuState(card, session)
       appendAssistant(session, 2,
         '干净的新版本<UpdateVariable><JSONPatch>[{"op":"delta","path":"/角色/等级","value":2}]</JSONPatch></UpdateVariable>')
@@ -321,7 +323,7 @@ test('regenerates from pre-reply script state and restores each swipe state', as
   assert.deepEqual(regeneratedState?.versions.map(version => version.artifactReplySeqs), [
     [original.seq], [replacementReplySeq],
   ])
-  assert.deepEqual(readTavernHelperState(session.events)?.scopes.message, { stat_data: { marker: 'before-reply' } })
+  assert.deepEqual(readTavernHelperState(session.snapshotEvents())?.scopes.message, { stat_data: { marker: 'before-reply' } })
 
   const accepted = scriptState('replacement-reply', 'replacement-context')
   appendTavernHelperState(session, accepted)
@@ -333,7 +335,7 @@ test('regenerates from pre-reply script state and restores each swipe state', as
   session.append('command/done', {
     commandId: CommandId('generation-script-state-original'), kind: 'success', text: originalSelected.text,
   })
-  assert.deepEqual(readTavernHelperState(session.events)?.scopes.message, { stat_data: { marker: 'rejected-reply' } })
+  assert.deepEqual(readTavernHelperState(session.snapshotEvents())?.scopes.message, { stat_data: { marker: 'rejected-reply' } })
   assert.deepEqual(readCurrentSessionMvuState(card, session), {
     statData: { 角色: { 等级: 9 } }, updateCount: 2,
   })
@@ -346,15 +348,15 @@ test('regenerates from pre-reply script state and restores each swipe state', as
   session.append('command/done', {
     commandId: CommandId('generation-script-state-replacement'), kind: 'success', text: replacementSelected.text,
   })
-  assert.deepEqual(readTavernHelperState(session.events)?.scopes.message, { stat_data: { marker: 'replacement-reply' } })
+  assert.deepEqual(readTavernHelperState(session.snapshotEvents())?.scopes.message, { stat_data: { marker: 'replacement-reply' } })
   assert.deepEqual(readCurrentSessionMvuState(card, session), {
     statData: { 角色: { 等级: 4 } }, updateCount: 2,
   })
   assert.equal(decodeGenerationState(replacementSelected.text)?.selectedVersionSeq,
     decodeGenerationState(regenerated.text)?.versions[1]?.seq)
-  const reopened = Session.create(session.id, session.events)
-  assert.deepEqual(readTavernHelperState(reopened.events)?.scopes.message, { stat_data: { marker: 'replacement-reply' } })
-  assert.equal(readGenerationGroups(reopened.events)[0]?.selectedVersionSeq,
+  const reopened = Session.create(session.id, session.snapshotEvents())
+  assert.deepEqual(readTavernHelperState(reopened.snapshotEvents())?.scopes.message, { stat_data: { marker: 'replacement-reply' } })
+  assert.equal(readGenerationGroups(reopened.snapshotEvents())[0]?.selectedVersionSeq,
     decodeGenerationState(regenerated.text)?.versions[1]?.seq)
 })
 
@@ -386,7 +388,7 @@ test('restores the selected reply when isolated regeneration produces no replace
 
   assert.deepEqual(session.deriveMessages().map(message => message.content.flatMap(block =>
     block.type === 'text' ? [block.text] : []).join('\n')), ['继续。', '保留这一版。'])
-  assert.deepEqual(readTavernHelperState(session.events)?.scopes.message, { stat_data: { marker: 'retained-reply' } })
+  assert.deepEqual(readTavernHelperState(session.snapshotEvents())?.scopes.message, { stat_data: { marker: 'retained-reply' } })
 })
 
 test('continues from the selected MVU checkpoint without applying its old patch twice', async () => {
@@ -578,7 +580,7 @@ test('refuses to rewrite the input of a turn that is not the last one', async ()
     content: [{ type: 'text', text: '第二句' }], source: { kind: 'user' },
   }), { surfaceOp: 'append' })
   appendAssistant(session, 2, '第二段回复')
-  const before = session.events.length
+  const before = session.snapshotEvents().length
   const agent = { session, status: 'idle', inbox: { hasPending: false } }
 
   await assert.rejects(() => executeGenerationCommand({
@@ -586,7 +588,7 @@ test('refuses to rewrite the input of a turn that is not the last one', async ()
     rawInput: JSON.stringify({ operation: 'rewrite-input', replySeq: first.seq, text: '改一句' }),
     signal: new AbortController().signal,
   }), /只能修改对话末尾这一轮的输入/u)
-  assert.equal(session.events.length, before)
+  assert.equal(session.snapshotEvents().length, before)
 })
 
 test('restores the original input and reply when the rewritten turn produces nothing', async () => {

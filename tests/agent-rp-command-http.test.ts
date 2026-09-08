@@ -5,7 +5,7 @@ import test from 'node:test'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { CommandId } from '@deepseek-ai/dsh-commands'
-import { Session, SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, Session, SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
 import { installAgentRpCommandHttp } from '../src/agent-rp-command-http.ts'
 import {
   AGENT_RP_COMMAND_PATH,
@@ -19,7 +19,8 @@ type RegisteredRoute = Parameters<AgentRpHttpServer['register']>[0]
 function roleplayAgent(id: string): Agent {
   const sessionId = SessionId(id)
   const header: SessionHeader = {
-    version: 0,
+    version: SESSION_FORMAT_VERSION,
+    isSeeded: false,
     id: sessionId,
     createdAt: 1_800_000_000_000,
     agentPreset: 'agent-rp',
@@ -142,7 +143,7 @@ test('routes published rc.2 commands through the four-argument executor and pres
   assert.deepEqual(result.json, { format: 0, matched: true, commandId })
   assert.deepEqual(receivedImages, [])
   assert.equal(receivedSignal?.aborted, false)
-  assert.deepEqual(agent.session.events
+  assert.deepEqual(agent.session.snapshotEvents()
     .filter(event => event.type === 'command/run' || event.type === 'command/done')
     .map(event => event.type), ['command/run', 'command/done'])
 })

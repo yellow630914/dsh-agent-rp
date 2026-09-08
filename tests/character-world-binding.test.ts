@@ -223,7 +223,7 @@ test('edits a character world composition across future launch, runtime, project
   assert.ok(worldSeeds.every(event => event.data.purpose === 'character-binding'))
 
   const session = Session.create(SessionId('character-world-binding-runtime'), prepared.seed)
-  const sources = readSessionLorebookSourcesFromEvents(session.events)
+  const sources = readSessionLorebookSourcesFromEvents(session.snapshotEvents())
   assert.deepEqual(sources.map(source => source.id), [
     `character:library:${primary.id}`,
     `character:library:${supporting.id}`,
@@ -240,14 +240,14 @@ test('edits a character world composition across future launch, runtime, project
   assert.ok(runtime.lorebooks.every(lorebook => lorebook.source.source === 'character'))
   assert.deepEqual(runtime.mvu?.statData, { 角色: { 等级: 1 } })
 
-  let projectionState = agentRpProjectionDefinition.init()
-  for (const event of session.events) projectionState = agentRpProjectionDefinition.apply(projectionState, event)
+  let projectionState = agentRpProjectionDefinition.init(session.header, session.inheritedEventCount)
+  for (const event of session.snapshotEvents()) projectionState = agentRpProjectionDefinition.apply(projectionState, event)
   const projection = agentRpProjectionDefinition.wire.view(projectionState)
   assert.equal(projection.worldInfo.books.length, 3)
   assert.ok(projection.worldInfo.books.every(book => book.source === 'character'))
   assert.deepEqual(projection.mvu?.statData, { 角色: { 等级: 1 } })
 
-  const oldSources = readSessionLorebookSourcesFromEvents(oldSession.events)
+  const oldSources = readSessionLorebookSourcesFromEvents(oldSession.snapshotEvents())
   assert.equal(oldSources.length, 1)
   assert.equal(oldSources[0]?.source, 'character')
   const oldRuntime = resolveSessionRoleplayRuntime({
@@ -255,8 +255,8 @@ test('edits a character world composition across future launch, runtime, project
     deployment: resolveConfig({ characterName: 'fallback' }),
   })
   assert.equal(oldRuntime.lorebooks.length, 1)
-  let oldProjectionState = agentRpProjectionDefinition.init()
-  for (const event of oldSession.events) {
+  let oldProjectionState = agentRpProjectionDefinition.init(oldSession.header, oldSession.inheritedEventCount)
+  for (const event of oldSession.snapshotEvents()) {
     oldProjectionState = agentRpProjectionDefinition.apply(oldProjectionState, event)
   }
   const oldProjection = agentRpProjectionDefinition.wire.view(oldProjectionState)
@@ -322,7 +322,7 @@ test('migrating a SillyTavern chat activates the same bound worlds a character l
     characterId: character.id,
   })
   const migratedSession = Session.create(SessionId('character-world-binding-migration'), migrated.seed)
-  const migratedSources = readSessionLorebookSourcesFromEvents(migratedSession.events)
+  const migratedSources = readSessionLorebookSourcesFromEvents(migratedSession.snapshotEvents())
 
   const launched = prepareAgentRpSession(characters, chats, presets, worlds, {
     format: 0,
@@ -332,7 +332,7 @@ test('migrating a SillyTavern chat activates the same bound worlds a character l
     greetingIndex: 0,
   })
   const launchedSession = Session.create(SessionId('character-world-binding-launch'), launched.seed)
-  const launchedSources = readSessionLorebookSourcesFromEvents(launchedSession.events)
+  const launchedSources = readSessionLorebookSourcesFromEvents(launchedSession.snapshotEvents())
 
   // Both entry points must resolve the same worlds, in the same actor order.
   assert.deepEqual(
@@ -346,12 +346,12 @@ test('migrating a SillyTavern chat activates the same bound worlds a character l
     `character:library:${supporting.id}`,
   ])
   assert.equal(
-    migratedSession.events.filter(event => event.type === 'agent-rp/world-info-library-seed').length,
+    migratedSession.snapshotEvents().filter(event => event.type === 'agent-rp/world-info-library-seed').length,
     2,
   )
   // The migrated history still replays after the world seeds are appended to it.
   assert.equal(
-    Session.create(SessionId('character-world-binding-migration-replay'), [...migratedSession.events]).events.length,
-    migratedSession.events.length,
+    Session.create(SessionId('character-world-binding-migration-replay'), [...migratedSession.snapshotEvents()]).snapshotEvents().length,
+    migratedSession.snapshotEvents().length,
   )
 })

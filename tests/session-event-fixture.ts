@@ -2,9 +2,12 @@
 
 import {
   Session,
+  SessionId,
   type SessionEvent,
   type SessionEventMap,
   type SessionEventType,
+  type SessionHeader,
+  type SessionLogOffset,
 } from '@deepseek-ai/dsh-session'
 
 interface SessionInternals {
@@ -43,3 +46,16 @@ export function installIgnorableSessionEventFixture(): void {
     },
   })
 }
+
+/**
+ * Empty-log seed for `ProjectionDefinition.init(header, inheritedEventCount)`.
+ * DSH 0.1.3 made both arguments required; a blank detached Session supplies the
+ * canonical pair without hand-rolling a header literal.
+ */
+const blankProjectionSession = Session.create(SessionId('agent-rp-projection-fixture'))
+
+/** Spread into `init(...)` wherever a test folds from the empty log. */
+export const blankProjectionSeed: readonly [SessionHeader, SessionLogOffset] = [
+  blankProjectionSession.header,
+  blankProjectionSession.inheritedEventCount,
+]

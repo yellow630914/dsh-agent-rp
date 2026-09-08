@@ -1,3 +1,4 @@
+import { blankProjectionSeed } from './session-event-fixture.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
@@ -27,7 +28,7 @@ function entry(
 
 test('builds one shared settings document and transports extension source without HTML termination', () => {
   const dangerous = 'globalThis.loaded = "</script><script>globalThis.injected = true</script>\u2028"'
-  const projection = agentRpProjectionDefinition.wire.view(agentRpProjectionDefinition.init())
+  const projection = agentRpProjectionDefinition.wire.view(agentRpProjectionDefinition.init(...blankProjectionSeed))
   const source = compileStExtensionDocument({
     entries: [entry('extension.dangerous', [], dangerous)],
     nonce: 'nonce_1234567890_safe',
@@ -219,7 +220,7 @@ test('runs generation events and declared interceptors before publishing durable
     settings: {},
     snapshot: {
       ...tavernPageSnapshot(
-        agentRpProjectionDefinition.wire.view(agentRpProjectionDefinition.init()),
+        agentRpProjectionDefinition.wire.view(agentRpProjectionDefinition.init(...blankProjectionSeed)),
         SessionId('session-a'),
       ),
       installedExtensionPrompts: [{

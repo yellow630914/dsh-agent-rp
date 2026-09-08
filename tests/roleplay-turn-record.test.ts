@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CommandId } from '@deepseek-ai/dsh-commands'
 import {
-  CallId,
+  ToolCallId,
   createAssistantMessage,
   createToolResultMessage,
   createUserMessage,
@@ -45,6 +45,7 @@ function appendModelMessage(
       source: { provider: 'fixture', model: 'fixture' },
       content,
     }),
+    stream: [],
   }, { surfaceOp: 'append', sourceEventSeqs: [] })
 }
 
@@ -63,7 +64,7 @@ function completeTwoStepTurn() {
   session.append('step/start', { turn, step: 1 })
   session.append('user/message', pending, { surfaceOp: 'append' })
   const firstPlanEvent = appendSessionRoleplayTurnPlan(session, turn, 1, firstPlan)
-  const callId = CallId('turn-record-probe')
+  const callId = ToolCallId('turn-record-probe')
   appendModelMessage(session, turn, 1, [{
     type: 'tool-call', id: callId, name: 'inspect', arguments: '{"area":"room"}',
   }])
@@ -95,7 +96,7 @@ function completeTwoStepTurn() {
     turn,
     result: 'completed',
     plans: [{ step: 1, plan: firstPlan }, { step: 2, plan: secondPlan }],
-    events: session.events,
+    events: session.snapshotEvents(),
     after: after.snapshot,
   })
   const settlementEvent = appendRoleplayTurnSettlement(session, settlement)
@@ -119,14 +120,14 @@ function completeTwoStepTurn() {
 
 test('joins prepare, recall, act, settle, and present without writing another event', () => {
   const fixture = completeTwoStepTurn()
-  const beforeRead = fixture.session.events.length
+  const beforeRead = fixture.session.snapshotEvents().length
   const records = readRoleplayTurnRecords(fixture.session)
-  assert.equal(fixture.session.events.length, beforeRead)
+  assert.equal(fixture.session.snapshotEvents().length, beforeRead)
   assert.equal(records.length, 1)
   const record = records[0]!
   assert.deepEqual(record.lifecycle, ['prepare', 'recall', 'act', 'settle', 'present'])
   assert.deepEqual(record.boundary, {
-    startSeq: fixture.session.events.find(event => event.type === 'turn/start')?.seq,
+    startSeq: fixture.session.snapshotEvents().find(event => event.type === 'turn/start')?.seq,
     endSeq: fixture.end.seq,
     result: 'completed',
   })
@@ -156,7 +157,7 @@ test('joins prepare, recall, act, settle, and present without writing another ev
   assert.equal(readRoleplayTurnRecord(fixture.session, fixture.turn + 1), undefined)
   assert.throws(() => readRoleplayTurnRecord(fixture.session, 0), /positive integer/u)
 
-  const reopened = Session.create(fixture.session.id, structuredClone(fixture.session.events))
+  const reopened = Session.create(fixture.session.id, structuredClone(fixture.session.snapshotEvents()))
   assert.deepEqual(readRoleplayTurnRecords(reopened), records)
 })
 
@@ -191,6 +192,7 @@ test('updates only present when a later reply version is selected', () => {
       source: { provider: 'fixture', model: 'fixture' },
       content: [{ type: 'text', text: '雨幕映亮了街灯。' }],
     }),
+    stream: [],
   }, {
     surfaceOp: { op: 'replace', start: fixture.reply.seq, end: alternative.seq },
     sourceEventSeqs: [fixture.reply.seq, alternative.seq],
@@ -222,7 +224,7 @@ test('updates only present when a later reply version is selected', () => {
 
 test('rejects a persisted act receipt that drifted from canonical Session actions', () => {
   const fixture = completeTwoStepTurn()
-  const tampered = fixture.session.events.map((event): SessionEvent => {
+  const tampered = fixture.session.snapshotEvents().map((event): SessionEvent => {
     if (event.type !== 'agent-rp/turn-settlement' || event.data.act === undefined) {
       return structuredClone(event)
     }
@@ -241,14 +243,14 @@ test('rejects a persisted act receipt that drifted from canonical Session action
       },
     }
   })
-  assert.equal(readRoleplayTurnRecord({ id: fixture.session.id, events: tampered }, 2), undefined)
-  assert.throws(() => readRoleplayTurnRecords({ id: fixture.session.id, events: tampered }), /act receipt drifted/u)
-  assert.throws(() => readRoleplayTurnRecord({ id: fixture.session.id, events: tampered }, 1), /act receipt drifted/u)
+  assert.equal(readRoleplayTurnRecord({ id: fixture.session.id, snapshotEvents: () => tampered }, 2), undefined)
+  assert.throws(() => readRoleplayTurnRecords({ id: fixture.session.id, snapshotEvents: () => tampered }), /act receipt drifted/u)
+  assert.throws(() => readRoleplayTurnRecord({ id: fixture.session.id, snapshotEvents: () => tampered }, 1), /act receipt drifted/u)
 })
 
 test('normalizes pre-audit act receipts whose steps omit modelCalls', () => {
   const fixture = completeTwoStepTurn()
-  const legacy = fixture.session.events.map((event): SessionEvent => {
+  const legacy = fixture.session.snapshotEvents().map((event): SessionEvent => {
     if (event.type !== 'agent-rp/turn-settlement' || event.data.act === undefined) {
       return structuredClone(event)
     }
@@ -266,7 +268,7 @@ test('normalizes pre-audit act receipts whose steps omit modelCalls', () => {
     }
   })
 
-  const records = readRoleplayTurnRecords({ id: fixture.session.id, events: legacy })
+  const records = readRoleplayTurnRecords({ id: fixture.session.id, snapshotEvents: () => legacy })
   assert.equal(records.length, 1)
   assert.deepEqual(records.at(-1)?.act?.steps.map(step => step.modelCalls), [[], []])
 })

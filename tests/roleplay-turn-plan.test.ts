@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionSeq, Session, SessionId } from '@deepseek-ai/dsh-session'
 import { resolveConfig } from '../src/config.ts'
 import { createEjsWorldInfoBooks, EjsTemplateEngine } from '../src/ejs-template.ts'
 import { parseCharacterCardJson } from '../src/import/character-card.ts'
@@ -222,7 +222,7 @@ test('plans the minimal deployment character without changing its native prompt'
     read: true,
     write: true,
     reads: [],
-    contextText: renderMemoryContext(session.events, true),
+    contextText: renderMemoryContext(session.snapshotEvents(), true),
   })
   assert.deepEqual(plan.recall.modules.find(module => module.moduleId === 'roleplay:memory'), {
     moduleId: 'roleplay:memory', outcome: 'idle', contributions: 0,
@@ -265,7 +265,7 @@ test('requires one explicit outcome from every active prepare and recall module'
 test('freezes exact durable memory reads and context into recall', () => {
   const session = Session.create(SessionId('turn-plan-memory'), [{
     type: 'agent-rp/memory-seed',
-    seq: 0,
+    seq: SessionSeq(0),
     time: 1,
     data: {
       format: 0,
@@ -278,7 +278,7 @@ test('freezes exact durable memory reads and context into recall', () => {
   const plan = prepareRoleplayTurn({ session, deployment, resolved })
 
   assert.deepEqual(plan.memory.reads, [{ id: 'memory-seed-0-0', sourceEventSeq: 0 }])
-  assert.equal(plan.memory.contextText, renderMemoryContext(session.events))
+  assert.equal(plan.memory.contextText, renderMemoryContext(session.snapshotEvents()))
   assert.match(plan.memory.contextText, /用户喝咖啡时不加糖/u)
   assert.ok(plan.recall.modules.some(module => module.moduleId === 'roleplay:memory'
     && module.outcome === 'applied' && module.contributions === 1))
@@ -288,7 +288,7 @@ test('freezes exact durable memory reads and context into recall', () => {
     sourceSessionId: 'later-roleplay-session',
     memories: [{ kind: 'fact', subject: '住处', text: '用户暂住海城' }],
   })
-  assert.match(renderMemoryContext(session.events), /用户暂住海城/u)
+  assert.match(renderMemoryContext(session.snapshotEvents()), /用户暂住海城/u)
   assert.doesNotMatch(plan.memory.contextText, /用户暂住海城/u)
 })
 
@@ -483,7 +483,7 @@ test('keeps charLoreBook on the character source when standalone World Info is a
   const engine = await EjsTemplateEngine.create()
   const resolved = resolveSessionRoleplayRuntime({ session, deployment, templateEngineAvailable: true })
   const plan = prepareRoleplayTurn({ session, deployment, resolved, templateEngine: engine })
-  const replayTime = session.events.at(-1)?.time ?? 0
+  const replayTime = session.snapshotEvents().at(-1)?.time ?? 0
 
   assert.deepEqual(plan.world.actorBefore, [`海城|角色绑定命中|${replayTime}`])
   assert.deepEqual(plan.world.experienceBeforeActor, ['独立世界书内容。'])

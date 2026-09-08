@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionSeq, Session, SessionId } from '@deepseek-ai/dsh-session'
 import { resolveConfig } from '../src/config.ts'
 import { parseCharacterCardJson } from '../src/import/character-card.ts'
 import { createCharacterCardSessionSeed } from '../src/import/character-card-seed.ts'
@@ -35,7 +35,7 @@ test('describes a fresh deployment character without an import-format dependency
 test('does not execute a recorded Agent preference on a Host that cannot persist its receipts', () => {
   const session = Session.create(SessionId('runtime-effective-turn-mode'), [{
     type: 'agent-rp/turn-mode',
-    seq: 0,
+    seq: SessionSeq(0),
     time: 1,
     ignorable: true,
     data: { format: 0, mode: 'agent', source: 'default' },

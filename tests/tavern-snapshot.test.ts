@@ -1,3 +1,4 @@
+import { blankProjectionSeed } from './session-event-fixture.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -21,7 +22,7 @@ const script = {
 } satisfies ImportedTavernHelperScript
 
 test('projects the initial Session without loading the React client entry', () => {
-  const projection = agentRpProjectionDefinition.wire.view(agentRpProjectionDefinition.init())
+  const projection = agentRpProjectionDefinition.wire.view(agentRpProjectionDefinition.init(...blankProjectionSeed))
   const page = tavernPageSnapshot(projection, SessionId('snapshot-session'))
   const snapshot = tavernScriptSnapshot(
     projection,

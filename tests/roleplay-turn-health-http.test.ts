@@ -5,7 +5,7 @@ import test from 'node:test'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, Session, SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
 import type { AgentRpHttpServer } from '../src/host-http.ts'
 import {
   AGENT_RP_TURN_HEALTH_PATH,
@@ -19,7 +19,7 @@ type RegisteredRoute = Parameters<AgentRpHttpServer['register']>[0]
 function roleplayAgent(id: string): Agent {
   const sessionId = SessionId(id)
   const header: SessionHeader = {
-    version: 0, id: sessionId, createdAt: 1_800_000_000_000, agentPreset: 'agent-rp',
+    version: SESSION_FORMAT_VERSION, isSeeded: false, id: sessionId, createdAt: 1_800_000_000_000, agentPreset: 'agent-rp',
   }
   return { session: Session.create(sessionId, [], header) } as Agent
 }

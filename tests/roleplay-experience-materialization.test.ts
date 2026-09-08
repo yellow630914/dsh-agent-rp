@@ -128,7 +128,7 @@ test('materializes five independent resources into one exact replayable characte
     value.catalog,
   )
   const first = Session.create(SessionId('native-experience-first'), prepared.seed)
-  const replay = Session.create(SessionId('native-experience-replay'), structuredClone(first.events))
+  const replay = Session.create(SessionId('native-experience-replay'), structuredClone(first.snapshotEvents()))
   const runtime = resolveSessionRoleplayRuntime({
     session: replay,
     deployment: resolveConfig({ characterName: 'fallback' }),
@@ -136,11 +136,11 @@ test('materializes five independent resources into one exact replayable characte
 
   assert.equal(prepared.title, '白露')
   assert.equal(JSON.stringify(first.deriveMessages()).includes('第二幕开始了，小满。'), true)
-  assert.equal(readActiveSessionCharacter(replay.events)?.result.greetingIndex, 1)
-  assert.equal(readSessionPersona(replay.events)?.description, value.persona.description)
-  assert.equal(readActiveSessionPreset(replay.events)?.libraryId, value.preset.id)
-  assert.deepEqual(readActiveSessionWorldInfos(replay.events).map(entry => entry.result.name), ['海城'])
-  assert.deepEqual(readRoleplayExperienceSelection(replay.events), {
+  assert.equal(readActiveSessionCharacter(replay.snapshotEvents())?.result.greetingIndex, 1)
+  assert.equal(readSessionPersona(replay.snapshotEvents())?.description, value.persona.description)
+  assert.equal(readActiveSessionPreset(replay.snapshotEvents())?.libraryId, value.preset.id)
+  assert.deepEqual(readActiveSessionWorldInfos(replay.snapshotEvents()).map(entry => entry.result.name), ['海城'])
+  assert.deepEqual(readRoleplayExperienceSelection(replay.snapshotEvents()), {
     format: 0,
     mode: 'character',
     actor: { kind: 'actor', id: actorId, variant: 'greeting:1' },
@@ -149,9 +149,9 @@ test('materializes five independent resources into one exact replayable characte
     promptPolicy: { kind: 'prompt-policy', id: promptPolicyId },
     regexPacks: [{ kind: 'regex', id: regexPackId }],
   })
-  assert.deepEqual(readSessionRegexPacks(replay.events).map(pack => pack.id), [value.regexPack.id])
-  let projectionState = agentRpProjectionDefinition.init()
-  for (const event of replay.events) projectionState = agentRpProjectionDefinition.apply(projectionState, event)
+  assert.deepEqual(readSessionRegexPacks(replay.snapshotEvents()).map(pack => pack.id), [value.regexPack.id])
+  let projectionState = agentRpProjectionDefinition.init(replay.header, replay.inheritedEventCount)
+  for (const event of replay.snapshotEvents()) projectionState = agentRpProjectionDefinition.apply(projectionState, event)
   assert.deepEqual(agentRpProjectionDefinition.wire.view(projectionState).regexPacks.map(pack => ({
     id: pack.id,
     scriptCount: pack.scriptCount,
@@ -206,7 +206,7 @@ test('keeps one snapshot when an actor-bound world is also selected explicitly',
   )
   const session = Session.create(SessionId('bound-world-selected-explicitly'), prepared.seed)
 
-  assert.deepEqual(readActiveSessionWorldInfos(session.events).map(entry => ({
+  assert.deepEqual(readActiveSessionWorldInfos(session.snapshotEvents()).map(entry => ({
     attachmentId: entry.result.sourceAttachmentId,
     placement: entry.placement,
     purpose: entry.purpose,
@@ -215,7 +215,7 @@ test('keeps one snapshot when an actor-bound world is also selected explicitly',
     placement: 'actor',
     purpose: 'character-binding',
   }])
-  assert.deepEqual(readRoleplayExperienceSelection(session.events)?.worlds, [{
+  assert.deepEqual(readRoleplayExperienceSelection(session.snapshotEvents())?.worlds, [{
     kind: 'world', id: worldId,
   }])
 })
@@ -265,8 +265,8 @@ test('materializes a scene without fabricating an actor and preserves its primar
   assert.equal(runtime.experience.mode, 'scene')
   assert.equal(runtime.experience.id, worldId)
   assert.equal(runtime.actor, undefined)
-  assert.equal(session.events.filter(event => event.type === 'turn/start').length, 1)
-  assert.equal(session.events.some(event => event.type === 'user/message' || event.type === 'assistant/message'), false)
+  assert.equal(session.snapshotEvents().filter(event => event.type === 'turn/start').length, 1)
+  assert.equal(session.snapshotEvents().some(event => event.type === 'user/message' || event.type === 'assistant/message'), false)
 })
 
 test('freezes and applies the built-in immersive story policy as one replayable experience resource', context => {
@@ -295,7 +295,7 @@ test('freezes and applies the built-in immersive story policy as one replayable 
     session,
     deployment: resolveConfig({ characterName: 'fallback' }),
   })
-  const policy = readNativePromptPolicy(session.events)
+  const policy = readNativePromptPolicy(session.snapshotEvents())
   assert.ok(policy !== undefined)
   const plan = prepareRoleplayTurn({
     session,

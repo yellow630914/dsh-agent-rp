@@ -1,3 +1,4 @@
+import { blankProjectionSeed } from './session-event-fixture.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -65,7 +66,7 @@ class FakeWindow {
 class FakeSessionSource {
   currentBinding: StExtensionSessionBinding | undefined = {
     sessionId: SessionId('session-a'),
-    projection: agentRpProjectionDefinition.wire.view(agentRpProjectionDefinition.init()),
+    projection: agentRpProjectionDefinition.wire.view(agentRpProjectionDefinition.init(...blankProjectionSeed)),
   }
   readonly listeners = new Set<() => void>()
 

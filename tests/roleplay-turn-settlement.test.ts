@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CallId, createAssistantMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { ToolCallId, createAssistantMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import { SessionSeq, Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { prepareAgentRpMemory, type AgentRpMemoryRecord } from '../src/memory.ts'
 import { preparedMvuResponseRepair } from '../src/mvu-stream.ts'
 import { ROLEPLAY_TURN_PHASES, type RoleplayRuntimeSnapshot } from '../src/roleplay-runtime.ts'
@@ -73,6 +73,7 @@ function appendReply(session: Session, turn: number, step: number, text: string)
       source: { provider: 'fixture', model: 'fixture' },
       content: [{ type: 'text', text }],
     }),
+    stream: [],
   }, { surfaceOp: 'append', sourceEventSeqs: [] })
 }
 
@@ -89,16 +90,17 @@ function appendRemember(
       source: { provider: 'fixture', model: 'fixture' },
       content: [{
         type: 'tool-call',
-        id: CallId(callId),
+        id: ToolCallId(callId),
         name: 'remember',
         arguments: argumentsText,
       }],
     }),
+    stream: [],
   }, { surfaceOp: 'append', sourceEventSeqs: [] })
   const call = session.append('tool/call', {
     turn: 1,
     step: 1,
-    callId: CallId(callId),
+    callId: ToolCallId(callId),
     name: 'remember',
     arguments: argumentsText,
   })
@@ -107,7 +109,7 @@ function appendRemember(
     turn: 1,
     step: 1,
     message: createToolResultMessage({
-      callId: CallId(callId),
+      callId: ToolCallId(callId),
       content: [{ type: 'text', text: JSON.stringify(record) }],
       isError: false,
     }),
@@ -143,7 +145,7 @@ test('settles state, memory, and deferred browser work from one prepared plan', 
     turn: 1,
     result: 'completed',
     plans: [{ step: 1, plan }],
-    events: session.events,
+    events: session.snapshotEvents(),
     after: runtime([
       { id: 'state:mvu', owner: 'session', revision: 3 },
       { id: 'state:tavern-helper', owner: 'session', revision: 7 },
@@ -160,7 +162,7 @@ test('settles state, memory, and deferred browser work from one prepared plan', 
     { moduleId: 'adapter:mvu', outcome: 'applied', changes: 1 },
     { moduleId: 'adapter:tavern-helper', outcome: 'deferred', changes: 0 },
   ])
-  assert.equal(settlement.reply?.eventSeq, session.events.find(event => event.type === 'assistant/message')?.seq)
+  assert.equal(settlement.reply?.eventSeq, session.snapshotEvents().find(event => event.type === 'assistant/message')?.seq)
 })
 
 test('records failed and removed state without hiding boundary revisions', () => {
@@ -194,7 +196,7 @@ test('records failed and removed state without hiding boundary revisions', () =>
 test('compares native memory history across the exact first-plan boundary', () => {
   const seed: SessionEvent[] = [{
     type: 'agent-rp/memory-seed',
-    seq: 0,
+    seq: SessionSeq(0),
     time: 1,
     data: {
       format: 0,
@@ -213,7 +215,7 @@ test('compares native memory history across the exact first-plan boundary', () =
 
   const settlement = compileRoleplayTurnSettlement({
     sessionId: String(session.id), turn: 1, result: 'completed', plans: [{ step: 1, plan }],
-    events: session.events, after: runtime(),
+    events: session.snapshotEvents(), after: runtime(),
   })
   assert.deepEqual(settlement.memory, {
     writeAvailable: true,
@@ -221,9 +223,9 @@ test('compares native memory history across the exact first-plan boundary', () =
     supersededIds: ['memory-seed-0-0'],
     activeCount: 1,
   })
-  const assistant = session.events.find(event => event.type === 'assistant/message')
-  const call = session.events.find(event => event.type === 'tool/call')
-  const result = session.events.find(event => event.type === 'tool/result')
+  const assistant = session.snapshotEvents().find(event => event.type === 'assistant/message')
+  const call = session.snapshotEvents().find(event => event.type === 'tool/call')
+  const result = session.snapshotEvents().find(event => event.type === 'tool/result')
   assert.equal(assistant?.type, 'assistant/message')
   assert.equal(call?.type, 'tool/call')
   assert.equal(result?.type, 'tool/result')
@@ -314,7 +316,7 @@ test('keeps each tool-loop step plan and the final visible reply', () => {
   const settlement = compileRoleplayTurnSettlement({
     sessionId: String(session.id), turn: 3, result: 'max-tokens',
     plans: [{ step: 2, plan: second }, { step: 1, plan: first }],
-    events: session.events, after: runtime(),
+    events: session.snapshotEvents(), after: runtime(),
   })
   assert.deepEqual(settlement.plans.map(reference => reference.step), [1, 2])
   assert.equal(settlement.plans[0]?.input.sessionSeq, first.input.sessionSeq)
@@ -383,7 +385,7 @@ test('rejects a tool result whose Session citation does not point to its call', 
   const session = Session.create(SessionId('settlement-invalid-tool-citation'))
   session.append('turn/start', { turn: 1 })
   const prepared = turnPlan({ sessionId: String(session.id), sessionSeq: session.seq })
-  const callId = CallId('invalid-citation-call')
+  const callId = ToolCallId('invalid-citation-call')
   session.append('assistant/message', {
     turn: 1,
     step: 1,
@@ -391,6 +393,7 @@ test('rejects a tool result whose Session citation does not point to its call', 
       source: { provider: 'fixture', model: 'fixture' },
       content: [{ type: 'tool-call', id: callId, name: 'inspect', arguments: '{}' }],
     }),
+    stream: [],
   }, { surfaceOp: 'append', sourceEventSeqs: [] })
   const call = session.append('tool/call', {
     turn: 1, step: 1, callId, name: 'inspect', arguments: '{}',
@@ -405,7 +408,7 @@ test('rejects a tool result whose Session citation does not point to its call', 
     }),
   }, { surfaceOp: 'append', sourceEventSeqs: [call.seq] })
   session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-  const events = structuredClone(session.events)
+  const events = structuredClone(session.snapshotEvents())
   const result = events.find(event => event.type === 'tool/result')
   assert.equal(result?.type, 'tool/result')
   if (result?.type === 'tool/result') result.sourceEventSeqs = []
@@ -424,7 +427,7 @@ test('correlates provider call ids within their step rather than across the whol
   const session = Session.create(SessionId('settlement-reused-call-id'))
   session.append('turn/start', { turn: 1 })
   const plans: { step: number; plan: RoleplayTurnPlan }[] = []
-  const callId = CallId('provider-reused-call-id')
+  const callId = ToolCallId('provider-reused-call-id')
   for (const step of [1, 2]) {
     plans.push({ step, plan: turnPlan({ sessionId: String(session.id), sessionSeq: session.seq }) })
     session.append('step/start', { turn: 1, step })
@@ -436,6 +439,7 @@ test('correlates provider call ids within their step rather than across the whol
         source: { provider: 'fixture', model: 'fixture' },
         content: [{ type: 'tool-call', id: callId, name: 'inspect', arguments: argumentsText }],
       }),
+      stream: [],
     }, { surfaceOp: 'append', sourceEventSeqs: [] })
     const call = session.append('tool/call', {
       turn: 1, step, callId, name: 'inspect', arguments: argumentsText,
@@ -458,7 +462,7 @@ test('correlates provider call ids within their step rather than across the whol
     turn: 1,
     result: 'completed',
     plans,
-    events: session.events,
+    events: session.snapshotEvents(),
     after: runtime(),
   })
   assert.deepEqual(settlement.act?.steps.map(step => ({
@@ -476,15 +480,15 @@ test('appends only one replayable settlement for a turn', () => {
   const plan = turnPlan({ sessionId: String(session.id), sessionSeq: 0 })
   const settlement = compileRoleplayTurnSettlement({
     sessionId: String(session.id), turn: 1, result: 'blocked', plans: [{ step: 1, plan }],
-    events: session.events, after: runtime(),
+    events: session.snapshotEvents(), after: runtime(),
   })
   const first = appendRoleplayTurnSettlement(session, settlement)
   const duplicate = appendRoleplayTurnSettlement(session, settlement)
   assert.equal(duplicate.seq, first.seq)
-  assert.equal(session.events.filter(event => event.type === 'agent-rp/turn-settlement').length, 1)
+  assert.equal(session.snapshotEvents().filter(event => event.type === 'agent-rp/turn-settlement').length, 1)
 
-  const reopened = Session.create(session.id, session.events)
-  assert.deepEqual(readRoleplayTurnSettlements(reopened.events), [settlement])
+  const reopened = Session.create(session.id, session.snapshotEvents())
+  assert.deepEqual(readRoleplayTurnSettlements(reopened.snapshotEvents()), [settlement])
 })
 
 test('resolves MVU completion only from one prepared act program and its frozen state read', () => {
@@ -536,7 +540,7 @@ test('attributes arbitrary runtime state through declared module ownership', () 
     turn: 1,
     result: 'completed',
     plans: [{ step: 1, plan: prepared }],
-    events: session.events,
+    events: session.snapshotEvents(),
     after: runtime([{ id: 'state:clock', owner: 'session', revision: 5 }], modules),
   })
 
@@ -557,13 +561,13 @@ test('rejects ambiguous state ownership and inactive module contributions', () =
   const ambiguous = turnPlan({ sessionId: String(session.id), sessionSeq: 0, modules: shared })
   assert.throws(() => compileRoleplayTurnSettlement({
     sessionId: String(session.id), turn: 1, result: 'completed',
-    plans: [{ step: 1, plan: ambiguous }], events: session.events, after: runtime([], shared),
+    plans: [{ step: 1, plan: ambiguous }], events: session.snapshotEvents(), after: runtime([], shared),
   }), /owned by both/u)
 
   const valid = turnPlan({ sessionId: String(session.id), sessionSeq: 0, modules: [] })
   assert.throws(() => compileRoleplayTurnSettlement({
     sessionId: String(session.id), turn: 1, result: 'completed',
-    plans: [{ step: 1, plan: valid }], events: session.events, after: runtime([], []),
+    plans: [{ step: 1, plan: valid }], events: session.snapshotEvents(), after: runtime([], []),
     contributions: [{ moduleId: 'adapter:missing', outcome: 'deferred' }],
   }), /inactive module/u)
 })

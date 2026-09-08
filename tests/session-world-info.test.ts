@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import { CallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId, type JsonValue } from '@deepseek-ai/dsh-session'
+import { ToolCallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { parseWorldInfoJson } from '../src/import/world-info.ts'
 import {
   prepareWorldInfoImportResult,
@@ -43,7 +44,7 @@ function appendImport(session: Session, callId: string, attachmentId = 'sha256:w
   const call = session.append('tool/call', {
     turn: 1,
     step: 1,
-    callId: CallId(callId),
+    callId: ToolCallId(callId),
     name: 'import_world_info',
     arguments: '{}',
   })
@@ -54,7 +55,7 @@ function appendImport(session: Session, callId: string, attachmentId = 'sha256:w
     turn: 1,
     step: 1,
     message: createToolResultMessage({
-      callId: CallId(callId),
+      callId: ToolCallId(callId),
       content: [{ type: 'text', text: `已导入世界书 ${value.name}` }],
       isError: false,
     }),
@@ -66,7 +67,7 @@ test('replays standalone World Info from lossless native tool metadata', () => {
   const session = Session.create(SessionId('world-info-import'))
   appendImport(session, 'world-info-1')
 
-  const [active] = readActiveSessionWorldInfos(session.events)
+  const [active] = readActiveSessionWorldInfos(session.snapshotEvents())
   assert.equal(active?.result.name, '海城')
   assert.equal(active?.worldInfo.lorebook.entries[0]?.content, '旧钟楼每天午夜停摆一分钟。')
   assert.deepEqual(active?.worldInfo.raw, raw)
@@ -78,7 +79,7 @@ test('keeps distinct books active and replaces a repeated source attachment', ()
   appendImport(session, 'world-info-2', 'sha256:second')
   appendImport(session, 'world-info-3', 'sha256:first')
 
-  assert.deepEqual(readActiveSessionWorldInfos(session.events).map(value => value.result.sourceAttachmentId), [
+  assert.deepEqual(readActiveSessionWorldInfos(session.snapshotEvents()).map(value => value.result.sourceAttachmentId), [
     'sha256:first',
     'sha256:second',
   ])
@@ -87,7 +88,7 @@ test('keeps distinct books active and replaces a repeated source attachment', ()
 test('keeps an older World Info import readable after compatibility improves', () => {
   const session = Session.create(SessionId('world-info-legacy-degradation'))
   appendImport(session, 'world-info-legacy')
-  const seed = structuredClone(session.events) as unknown as Array<(typeof session.events)[number]>
+  const seed = structuredClone(session.snapshotEvents()) as unknown as Array<ReturnType<typeof session.snapshotEvents>[number]>
   const result = seed.find(event => event.type === 'tool/result')!
   if (result.type !== 'tool/result' || typeof result.data.meta !== 'object'
     || result.data.meta === null || Array.isArray(result.data.meta)) assert.fail('fixture did not produce metadata')
@@ -100,12 +101,12 @@ test('keeps an older World Info import readable after compatibility improves', (
 test('rejects World Info replay detached from its source file', () => {
   const session = Session.create(SessionId('world-info-tamper'))
   appendImport(session, 'world-info-1')
-  const seed = structuredClone(session.events) as unknown as Array<(typeof session.events)[number]>
+  const seed = structuredClone(session.snapshotEvents()) as unknown as Array<ReturnType<typeof session.snapshotEvents>[number]>
   const result = seed.find(event => event.type === 'tool/result')!
   if (result.type !== 'tool/result' || typeof result.data.meta !== 'object'
     || result.data.meta === null || Array.isArray(result.data.meta)) assert.fail('fixture did not produce metadata')
   const summary = (result.data.meta as Record<string, JsonValue>).result as Record<string, JsonValue>
   summary.sourceAttachmentId = 'sha256:other'
 
-  assert.throws(() => readActiveSessionWorldInfos(Session.create(SessionId('world-info-tampered'), seed).events), /source attachment is absent/u)
+  assert.throws(() => readActiveSessionWorldInfos(Session.create(SessionId('world-info-tampered'), seed).snapshotEvents()), /source attachment is absent/u)
 })

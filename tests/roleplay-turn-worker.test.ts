@@ -43,7 +43,7 @@ test('runs review before settlement and isolates one Worker failure', async () =
     ['review', 'failed'],
     ['state', 'applied'],
   ])
-  assert.equal(session.events.every(event => event.type !== 'agent-rp/turn-worker-result'
+  assert.equal(session.snapshotEvents().every(event => event.type !== 'agent-rp/turn-worker-result'
     || event.ignorable === true), true)
   assert.deepEqual(await registry.run(input(session)), [])
 })
@@ -62,6 +62,7 @@ test('reviews one reply through an isolated request and preserves the original a
       source: { provider: 'fixture', model: 'fixture' },
       content: [{ type: 'text', text: '她向前走。她向前走，然后推开门。' }],
     }),
+    stream: [],
   }, { surfaceOp: 'append', sourceEventSeqs: [] })
   session.append('step/end', { turn: 1, step: 1 })
   let system = ''
@@ -92,12 +93,12 @@ test('reviews one reply through an isolated request and preserves the original a
   assert.doesNotMatch(messages, /世界书|预设模块/u)
   assert.deepEqual(session.deriveMessages().flatMap(message => message.content
     .flatMap(block => block.type === 'text' ? [block.text] : [])), ['她向前走去，然后推开门。'])
-  const group = readGenerationGroups(session.events)[0]
+  const group = readGenerationGroups(session.snapshotEvents())[0]
   assert.deepEqual(group?.versions.map(version => version.text), [
     '她向前走。她向前走，然后推开门。',
     '她向前走去，然后推开门。',
   ])
-  const resultEvent = session.events.find(event => event.type === 'agent-rp/narrative-review-result'
+  const resultEvent = session.snapshotEvents().find(event => event.type === 'agent-rp/narrative-review-result'
     && event.seq === outcome.resultEventSeq)
   assert.equal(resultEvent?.type, 'agent-rp/narrative-review-result')
   assert.equal(resultEvent?.type === 'agent-rp/narrative-review-result'

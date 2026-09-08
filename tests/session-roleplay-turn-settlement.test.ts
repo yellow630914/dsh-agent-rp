@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import { ROLEPLAY_TURN_PHASES, type RoleplayRuntimeSnapshot } from '../src/roleplay-runtime.ts'
 import type { RoleplayTurnPlan } from '../src/roleplay-turn-plan.ts'
 import { prepareRoleplayToolPolicy } from '../src/roleplay-tool-guidance.ts'
@@ -59,8 +59,8 @@ function plan(session: Session, snapshot = runtime()): RoleplayTurnPlan {
 
 function appendReply(session: Session, text: string, surfaceOp: 'append' | {
   readonly op: 'replace'
-  readonly start: number
-  readonly end: number
+  readonly start: SessionSeq
+  readonly end: SessionSeq
 } = 'append') {
   return session.append('assistant/message', {
     turn: 1,
@@ -69,6 +69,7 @@ function appendReply(session: Session, text: string, surfaceOp: 'append' | {
       source: { provider: 'fixture', model: 'fixture' },
       content: [{ type: 'text', text }],
     }),
+    stream: [],
   }, {
     surfaceOp,
     sourceEventSeqs: surfaceOp === 'append' ? [] : [surfaceOp.start],

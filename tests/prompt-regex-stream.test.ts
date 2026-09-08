@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import {
-  CallId,
+  ToolCallId,
   createAssistantMessage,
   createToolResultMessage,
   createUserMessage,
@@ -139,6 +139,7 @@ function openConversation(): Session {
       source: { provider: 'mock', model: 'mock' },
       content: [{ type: 'text', text: 'old answer' }],
     }),
+    stream: [],
   }, { surfaceOp: 'append' })
   session.append('step/end', { turn: 1, step: 1 })
   session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -173,7 +174,7 @@ function openFailedToolContinuation(): {
   readonly callId: string
 } {
   const session = Session.create(SessionId('prompt-regex-failed-tool'))
-  const callId = CallId('failed-image-call')
+  const callId = ToolCallId('failed-image-call')
   session.append('turn/start', { turn: 1 })
   session.append('step/start', { turn: 1, step: 1 })
   session.append('user/message', createUserMessage({
@@ -189,6 +190,7 @@ function openFailedToolContinuation(): {
         { type: 'tool-call', id: callId, name: 'generate_roleplay_image', arguments: '{}' },
       ],
     }),
+    stream: [],
   }, { surfaceOp: 'append', sourceEventSeqs: [] })
   const call = session.append('tool/call', {
     turn: 1, step: 1, callId, name: 'generate_roleplay_image', arguments: '{}',
@@ -242,13 +244,13 @@ test('logs prompt-only replacements while the visible projection keeps append-or
   const second = applyPromptRegexSurface(session, transformPlan(active.frontend.regexScripts))
   assert.equal(second?.replacementCount, 0)
   assert.deepEqual(textHistory(session), ['masked one', 'prior answer', 'masked two'])
-  assert.equal(session.events.some(event => String(event.type) === 'agent-rp/prompt-regex-trace'), false)
+  assert.equal(session.snapshotEvents().some(event => String(event.type) === 'agent-rp/prompt-regex-trace'), false)
 
-  const reopened = Session.create(SessionId('prompt-regex-reopened'), session.events)
+  const reopened = Session.create(SessionId('prompt-regex-reopened'), session.snapshotEvents())
   assert.deepEqual(textHistory(reopened), ['masked one', 'prior answer', 'masked two'])
 
-  let state = agentRpProjectionDefinition.init()
-  for (const event of reopened.events) state = agentRpProjectionDefinition.apply(state, event)
+  let state = agentRpProjectionDefinition.init(reopened.header, reopened.inheritedEventCount)
+  for (const event of reopened.snapshotEvents()) state = agentRpProjectionDefinition.apply(state, event)
   assert.deepEqual(state.surface.map(message => message.text), ['secret one', 'old answer', 'secret two'])
   const projection = agentRpProjectionDefinition.wire.view(state)
   assert.deepEqual(projection.promptRegex, second)
@@ -284,10 +286,10 @@ test('records a no-op trace without rewriting a tool-call assistant in the follo
   const pair = toolPair(messages, callId)
   assert.equal(pair.resultIndex, pair.assistantIndex + 1)
   assert.equal(String(messages[pair.assistantIndex]?.id), assistantId)
-  assert.equal(session.events.some(event => event.type === 'assistant/message'
+  assert.equal(session.snapshotEvents().some(event => event.type === 'assistant/message'
     && event.data.step === 2), false)
-  let state = agentRpProjectionDefinition.init()
-  for (const event of session.events) state = agentRpProjectionDefinition.apply(state, event)
+  let state = agentRpProjectionDefinition.init(session.header, session.inheritedEventCount)
+  for (const event of session.snapshotEvents()) state = agentRpProjectionDefinition.apply(state, event)
   assert.deepEqual(agentRpProjectionDefinition.wire.view(state).promptRegex, trace)
 })
 

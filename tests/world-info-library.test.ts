@@ -47,10 +47,10 @@ test('imports Host-owned World Info through a private command without a model tu
   const result = executeWorldInfoLibraryCommand(library, { agent, commandId, rawInput })
   session.append('command/done', { commandId, ...result })
 
-  const [active] = readActiveSessionWorldInfos(session.events)
+  const [active] = readActiveSessionWorldInfos(session.snapshotEvents())
   assert.equal(active?.result.name, '海城')
   assert.equal(active?.worldInfo.lorebook.entries[0]?.content, '旧钟楼每天午夜停摆一分钟。')
-  assert.equal(session.events.some(event => event.type === 'turn/start'), false)
+  assert.equal(session.snapshotEvents().some(event => event.type === 'turn/start'), false)
 
   const repeatedCommandId = CommandId('world-info-library-2')
   session.append('command/run', {
@@ -65,10 +65,10 @@ test('imports Host-owned World Info through a private command without a model tu
     rawInput,
   })
   session.append('command/done', { commandId: repeatedCommandId, ...repeated })
-  assert.equal(readActiveSessionWorldInfos(session.events).length, 1)
+  assert.equal(readActiveSessionWorldInfos(session.snapshotEvents()).length, 1)
 
-  let state = agentRpProjectionDefinition.init()
-  for (const event of session.events) state = agentRpProjectionDefinition.apply(state, event)
+  let state = agentRpProjectionDefinition.init(session.header, session.inheritedEventCount)
+  for (const event of session.snapshotEvents()) state = agentRpProjectionDefinition.apply(state, event)
   const projected = agentRpProjectionDefinition.wire.view(state)
   assert.equal(projected.worldInfo.books[0]?.name, '海城')
   assert.equal(projected.worldInfoCount, 1)
@@ -111,8 +111,8 @@ test('projects the isolated EJS runtime error for Debug-gated World Info reports
   session.append('command/done', { commandId, ...result })
 
   const definition = createAgentRpProjectionDefinition(await EjsTemplateEngine.create())
-  let state = definition.init()
-  for (const event of session.events) state = definition.apply(state, event)
+  let state = definition.init(session.header, session.inheritedEventCount)
+  for (const event of session.snapshotEvents()) state = definition.apply(state, event)
   const entry = definition.wire.view(state).worldInfo.books[0]?.entries[0]
   assert.equal(entry?.reason, 'template-error')
   assert.equal(entry?.template, 'runtime-error')
@@ -163,5 +163,5 @@ test('removes a reusable World Info source without invalidating an existing Sess
   assert.deepEqual(library.list(), [])
   assert.deepEqual(library.defaultIds(), [])
   assert.throws(() => library.resolve(upload.id), /不可用/u)
-  assert.equal(readActiveSessionWorldInfos(session.events)[0]?.result.name, '海城')
+  assert.equal(readActiveSessionWorldInfos(session.snapshotEvents())[0]?.result.name, '海城')
 })

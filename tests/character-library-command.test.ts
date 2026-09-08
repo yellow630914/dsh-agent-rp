@@ -30,5 +30,5 @@ test('rejects the obsolete live-Agent character launch command', (context) => {
     agent,
     rawInput: JSON.stringify({ format: 0, characterId: entry.id, greetingIndex: 1 }),
   }), /旧角色启动入口已停用/u)
-  assert.equal(agent.session.events.some(event => event.type === 'turn/start'), false)
+  assert.equal(agent.session.snapshotEvents().some(event => event.type === 'turn/start'), false)
 })

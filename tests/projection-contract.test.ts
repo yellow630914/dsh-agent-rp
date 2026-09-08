@@ -1,11 +1,12 @@
+import { blankProjectionSeed } from './session-event-fixture.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionSeq, Session, SessionId } from '@deepseek-ai/dsh-session'
 import { agentRpProjectionDefinition, createAgentRpProjectionDefinition } from '../src/projection.ts'
 
 test('serves the same Agent RP view through current and newer DSH projection contracts', () => {
-  const state = agentRpProjectionDefinition.init()
+  const state = agentRpProjectionDefinition.init(...blankProjectionSeed)
   const currentHostView = agentRpProjectionDefinition.schema.parse(
     agentRpProjectionDefinition.view(state),
   )
@@ -20,9 +21,9 @@ test('serves the same Agent RP view through current and newer DSH projection con
 test('projects the selected turn mode from the live Host capability instead of a package-local Session class', () => {
   const supported = createAgentRpProjectionDefinition(undefined, () => true)
   const unsupported = createAgentRpProjectionDefinition(undefined, () => false)
-  const selected = supported.apply(supported.init(), {
+  const selected = supported.apply(supported.init(...blankProjectionSeed), {
     type: 'agent-rp/turn-mode',
-    seq: 0,
+    seq: SessionSeq(0),
     time: 1,
     ignorable: true,
     data: { format: 0, mode: 'agent', source: 'default' },
@@ -42,8 +43,8 @@ test('reuses the floor list until the surface changes, and bounds how much text 
   session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: body }], source: { kind: 'user' },
   }), { surfaceOp: 'append' })
-  let state = agentRpProjectionDefinition.init()
-  for (const event of session.events) state = agentRpProjectionDefinition.apply(state, event)
+  let state = agentRpProjectionDefinition.init(session.header, session.inheritedEventCount)
+  for (const event of session.snapshotEvents()) state = agentRpProjectionDefinition.apply(state, event)
 
   const first = agentRpProjectionDefinition.wire.view(state)
   assert.equal(first.floors.length, 1)
@@ -64,7 +65,7 @@ test('reuses the floor list until the surface changes, and bounds how much text 
   session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: '短句' }], source: { kind: 'user' },
   }), { surfaceOp: 'append' })
-  const appended = agentRpProjectionDefinition.apply(modeChanged, session.events.at(-1)!)
+  const appended = agentRpProjectionDefinition.apply(modeChanged, session.snapshotEvents().at(-1)!)
   const second = agentRpProjectionDefinition.wire.view(appended)
   assert.notEqual(second.floors, first.floors)
   assert.deepEqual(second.floors.map(floor => floor.preview), [first.floors[0]!.preview, '短句'])
@@ -75,8 +76,8 @@ test('returns the same state for events it ignores, and stamps the replay clock 
   session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: '开场' }], source: { kind: 'user' },
   }), { surfaceOp: 'append' })
-  let state = agentRpProjectionDefinition.init()
-  for (const event of session.events) state = agentRpProjectionDefinition.apply(state, event)
+  let state = agentRpProjectionDefinition.init(session.header, session.inheritedEventCount)
+  for (const event of session.snapshotEvents()) state = agentRpProjectionDefinition.apply(state, event)
   const settled = state
 
   // The contract gates every downstream cost — view, schema validation, wire
@@ -96,8 +97,8 @@ test('returns the same state for events it ignores, and stamps the replay clock 
   session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: '第二句' }], source: { kind: 'user' },
   }), { surfaceOp: 'append' })
-  const changed = agentRpProjectionDefinition.apply(state, session.events.at(-1)!)
+  const changed = agentRpProjectionDefinition.apply(state, session.snapshotEvents().at(-1)!)
   assert.notEqual(changed, state)
-  assert.equal(changed.replayTime, session.events.at(-1)!.time)
+  assert.equal(changed.replayTime, session.snapshotEvents().at(-1)!.time)
   assert.equal(changed.surface.length, 2)
 })

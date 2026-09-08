@@ -367,9 +367,9 @@ test('imports a preset by forking the current roleplay Session before a model tu
     name: 'V18.json',
     mediaType: 'application/json',
   }
-  const imported = Session.create(SessionId('preset-imported'), createPresetSessionSeed(source.events, preset, attachment))
+  const imported = Session.create(SessionId('preset-imported'), createPresetSessionSeed(source.snapshotEvents(), preset, attachment))
 
-  assert.equal(readActiveSessionPreset(imported.events)?.preset.name, 'V18')
-  assert.equal(readActiveSessionPreset(imported.events)?.result.enabledCount, 1)
+  assert.equal(readActiveSessionPreset(imported.snapshotEvents())?.preset.name, 'V18')
+  assert.equal(readActiveSessionPreset(imported.snapshotEvents())?.result.enabledCount, 1)
   assert.equal(imported.deriveMessages().length, 0)
 })

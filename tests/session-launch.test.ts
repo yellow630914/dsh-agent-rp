@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, Session, SessionId, type SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
 import { CharacterLibrary } from '../src/character-library.ts'
 import { readActiveSessionCharacter } from '../src/import/session-character.ts'
@@ -88,7 +88,8 @@ async function launchExperienceWithWorkspaces(
     create: async (options: {
       readonly sessionId: SessionId
       readonly seed: readonly import('@deepseek-ai/dsh-session').SessionEvent[]
-      readonly meta: { readonly cwd?: string; readonly agentPreset?: string }
+      readonly meta: { readonly cwd?: string; readonly agentPreset?: string; readonly isSeeded?: boolean }
+      readonly inheritedEventCount?: SessionLogOffset
     }) => {
       createdSession = Session.create(options.sessionId, options.seed, {
         version: SESSION_FORMAT_VERSION,
@@ -96,7 +97,7 @@ async function launchExperienceWithWorkspaces(
         id: options.sessionId,
         createdAt: 0,
         ...options.meta,
-      })
+      }, options.inheritedEventCount)
       return {
         agent: { id: options.sessionId, session: createdSession },
         dispose: async () => {},
@@ -106,11 +107,9 @@ async function launchExperienceWithWorkspaces(
   const ctx = {
     get: (name: string): unknown => {
       if (name === 'agents') return agents
-      if (name === 'apiProxy') return {
-        sessions: {
-          models: async () => ({ result: { ok: true, value: { current: { provider: 'fixture', model: 'fixture' } } } }),
-          selectModel: async () => ({ result: { ok: true, value: {} } }),
-        },
+      if (name === 'sessionController') return {
+        selectModel: async () => ({ selected: { provider: 'fixture', model: 'fixture' } }),
+        modelCatalog: async () => ({ default: { provider: 'fixture', model: 'fixture' } }),
       }
       if (name === 'agentPresets') return {
         resolve: async () => ({ id: 'agent-rp', trust: 'user' }),

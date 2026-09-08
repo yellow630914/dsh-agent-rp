@@ -753,6 +753,10 @@ export function installAgentRp(
   ctx.effect(() => () => {
     settlementRuntimeActive = false
   }, 'agent-rp: turn settlement lifetime')
+  // Optional Host capability, probed rather than required: neither published DSH
+  // 0.1.1-rc.2 nor 0.1.3 registers these prompt-attachment hooks, and 0.1.3
+  // retired the `apiProxy` service outright, so this stays inert unless a Host
+  // supplies them. Every call site below is optional-chained.
   const gateway = ctx.get('apiProxy') as PromptAttachmentGateway | undefined
   const commands = (ctx as Context & { commands: HumanCommandGateway }).commands
   const setRememberAvailable = (agent: Agent, available: boolean): void => {

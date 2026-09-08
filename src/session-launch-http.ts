@@ -6,7 +6,7 @@ import { normalize as normalizePath, win32 as win32Path } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { CharacterLibrary } from './character-library.ts'
 import {
   jsonResponse as json,
@@ -52,29 +52,31 @@ interface SessionTitleGateway {
   rename(session: Agent['session'], title: string): unknown
 }
 
-interface SessionModelsGateway {
-  sessions: {
-    models(request: { readonly rpcId: string; readonly payload: { readonly sessionId: SessionId } }): Promise<{
-      readonly result:
-      | { readonly ok: true; readonly value: {
-        readonly current: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }
-      } }
-      | { readonly ok: false; readonly error: { readonly message: string } }
-    }>
-    selectModel(request: {
-      readonly rpcId: string
-      readonly payload: {
-        readonly sessionId: SessionId
-        readonly provider: string
-        readonly model: string
-        readonly reasoningEffort?: string
-      }
-    }): Promise<{
-      readonly result:
-      | { readonly ok: true; readonly value: unknown }
-      | { readonly ok: false; readonly error: { readonly message: string } }
-    }>
-  }
+/** One resolved provider route as the Host records it on a Session. */
+interface LaunchModelSelection {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string
+}
+
+/**
+ * Durable model selection read from the Host's Session projection registry.
+ * DSH 0.1.3 retired the `apiProxy` service; the selection now lives in the
+ * `modelSelection` projection folded from `model/selection` events.
+ */
+interface SessionProjectionGateway {
+  stateOf(session: Agent['session'], key: 'modelSelection'): {
+    readonly lastUsed: LaunchModelSelection | null
+    readonly pending: LaunchModelSelection | null
+  } | undefined
+}
+
+/** Model selection and catalog through the Host's Session Controller. */
+interface SessionControllerGateway {
+  selectModel(request: LaunchModelSelection & { readonly sessionId: SessionId }): Promise<{
+    readonly selected: LaunchModelSelection
+  }>
+  modelCatalog(): Promise<{ readonly default: LaunchModelSelection }>
 }
 
 /** Normalize a workspace path for conservative same-directory fallback matching. */
@@ -126,15 +128,16 @@ export async function launchAgentRpSession(
   const sourceId = SessionId(request.sourceSessionId)
   const agents = ctx.get('agents') as Context['agents'] | undefined
   if (agents === undefined) throw new Error('当前 Host 无法创建角色会话')
-  const apiProxy = ctx.get('apiProxy') as SessionModelsGateway | undefined
-  if (apiProxy === undefined) throw new Error('当前 Host 无法读取来源会话')
-  const models = await apiProxy.sessions.models({
-    rpcId: `agent-rp-launch-${randomUUID()}`,
-    payload: { sessionId: sourceId },
-  })
-  if (!models.result.ok) throw new Error(models.result.error.message)
+  const sessionController = ctx.get('sessionController') as SessionControllerGateway | undefined
+  if (sessionController === undefined) throw new Error('当前 Host 无法读取来源会话')
   const source = agents.get(sourceId)
   if (source === undefined) throw new Error('来源会话当前不可用')
+  // A Session that never recorded a selection still answers with the deployment default.
+  const projections = ctx.get('sessionProjections') as SessionProjectionGateway | undefined
+  const sourceSelection = projections?.stateOf(source.session, 'modelSelection')
+  const currentModel = sourceSelection?.pending
+    ?? sourceSelection?.lastUsed
+    ?? (await sessionController.modelCatalog()).default
 
   const agentPresets = ctx.get('agentPresets') as AgentPresetGateway | undefined
   if (agentPresets === undefined) throw new Error('当前 Host 无法挂载角色会话预设')
@@ -164,8 +167,8 @@ export async function launchAgentRpSession(
   }
   const sessionId = SessionId(`session-${randomUUID()}`)
   const agentOptions: AgentOptions = {
-    provider: models.result.value.current.provider,
-    model: models.result.value.current.model,
+    provider: currentModel.provider,
+    model: currentModel.model,
   }
   const handle = await agents.create({
     sessionId,
@@ -173,29 +176,32 @@ export async function launchAgentRpSession(
     agentOptions,
     meta: {
       ...(source.session.header.cwd === undefined ? {} : { cwd: source.session.header.cwd }),
-      ...(request.kind === 'rewrite' ? { parentSession: source.id, seedLength: prepared.seed.length } : {}),
+      // A rewrite forks the source: DSH 0.1.3 marks that with `isSeeded` plus the
+      // exact inherited prefix length, replacing the retired `seedLength` field.
+      ...(request.kind === 'rewrite' ? { parentSession: source.id, isSeeded: true } : {}),
       agentPreset: preset.id,
     },
+    ...(request.kind === 'rewrite'
+      ? { inheritedEventCount: SessionLogOffset(prepared.seed.length) }
+      : {}),
     setup: async agentCtx => { await agentPresets.mount(agentCtx, preset.id) },
   })
   if (!agentHasAgentRpRuntime(agentPresets, handle.agent)) {
     await handle.dispose()
     throw new Error('所选 Agent 能力预设没有成功挂载 Agent RP 角色运行时')
   }
-  const selected = await apiProxy.sessions.selectModel({
-    rpcId: `agent-rp-select-${randomUUID()}`,
-    payload: {
+  try {
+    await sessionController.selectModel({
       sessionId,
-      provider: models.result.value.current.provider,
-      model: models.result.value.current.model,
-      ...(models.result.value.current.reasoningEffort === undefined
+      provider: currentModel.provider,
+      model: currentModel.model,
+      ...(currentModel.reasoningEffort === undefined
         ? {}
-        : { reasoningEffort: models.result.value.current.reasoningEffort }),
-    },
-  })
-  if (!selected.result.ok) {
+        : { reasoningEffort: currentModel.reasoningEffort }),
+    })
+  } catch (error: unknown) {
     await handle.dispose()
-    throw new Error(selected.result.error.message)
+    throw error instanceof Error ? error : new Error('无法为新的角色会话选择模型')
   }
 
   if (titles !== undefined) {

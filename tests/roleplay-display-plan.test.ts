@@ -220,10 +220,12 @@ test('renders a superseded reply on the row that replaced it', () => {
   // regenerated reply is appended (seq 22) and the row it replaced (seq 20)
   // stays in the transcript. The switcher and the rendered text belong to the
   // replacement row; the superseded rows disappear.
+  // 20 is the original reply, 21 the regenerated one, 22 the blanking message
+  // Agent RP appended over 20, and 23 the live replacement carrying the choice.
   const withReplacement: RoleplayDisplayProjection = {
     ...projection,
-    surfaceAnchors: { 22: 20 },
-    supersededSeqs: [20, 21],
+    surfaceAnchors: { 22: 20, 23: 20 },
+    supersededSeqs: [20, 21, 22],
     generations: [{
       anchorSeq: 20,
       selectedVersionSeq: 21,
@@ -234,13 +236,17 @@ test('renders a superseded reply on the row that replaced it', () => {
   const planner = createRoleplayDisplayPlanner({
     projection: withReplacement, immersive: true, overrides: new Map(),
   })
-  assert.deepEqual(planner.assistant({ finalSeq: 20, blockText: '原回复' }), {
+  // The node Agent RP blanked ends on its own replacement, so it disappears.
+  assert.deepEqual(planner.assistant({ finalSeq: 22, blockText: '' }), {
     kind: 'hidden', reason: 'superseded-reply',
   })
+  // A shadowed model reply is not an Agent RP replacement: the unselected rule
+  // decides it, so it stays hidden without the planner erasing the only row
+  // that carries the turn's text.
   assert.deepEqual(planner.assistant({ finalSeq: 21, blockText: '备选回复' }), {
-    kind: 'hidden', reason: 'superseded-reply',
+    kind: 'hidden', reason: 'unselected-generation',
   })
-  const plan = planner.assistant({ finalSeq: 22, blockText: '备选回复' })
+  const plan = planner.assistant({ finalSeq: 23, blockText: '备选回复' })
   assert.equal(plan.kind, 'render')
   if (plan.kind !== 'render') return
   assert.equal(plan.source, 'selected-generation')
@@ -250,8 +256,8 @@ test('renders a superseded reply on the row that replaced it', () => {
 test('hides a superseded player row so its rewrite is not shown twice', () => {
   const withReplacement: RoleplayDisplayProjection = {
     ...projection,
-    surfaceAnchors: { 31: 30 },
-    supersededSeqs: [30],
+    surfaceAnchors: { 30: 29, 31: 29 },
+    supersededSeqs: [29, 30],
     generations: [],
   }
   const planner = createRoleplayDisplayPlanner({

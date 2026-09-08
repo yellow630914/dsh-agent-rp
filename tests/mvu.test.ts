@@ -11,6 +11,8 @@ import {
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
+import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { parseCharacterCardJson } from '../src/import/character-card.ts'
 import { applyMvuReply, appendMvuState, readCurrentMvuState, readCurrentSessionMvuState, readInitialMvuState } from '../src/mvu.ts'
 import { installMvuStreamCompletion } from '../src/mvu-stream.ts'
@@ -113,23 +115,22 @@ test('excludes shadowed reply updates while retaining durable script state', () 
       source: { provider: 'fixture', model: 'fixture' },
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
 
   assert.deepEqual(readCurrentSessionMvuState(card, session), {
     statData: { 角色: { 等级: 5 } }, updateCount: 2,
   })
 
-  session.append('assistant/message', {
+  const supersedingReply = session.append('assistant/message', {
     turn: 1,
     step: 1,
     message: createAssistantMessage({
       content: [], source: { provider: 'fixture', model: 'fixture' },
     }),
     stream: [],
-  }, {
-    surfaceOp: { op: 'replace', start: original.seq, end: original.seq },
-    sourceEventSeqs: [original.seq],
-  })
+  }, { surfaceOp: 'append' })
+  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+    roleplaySurfaceOverride(supersedingReply.seq, [original.seq]))
 
   assert.deepEqual(readCurrentSessionMvuState(card, session), {
     statData: { 角色: { 等级: 4 } }, updateCount: 1,
@@ -150,9 +151,9 @@ test('replays an exact MVU version checkpoint before applying the new visible re
       source: { provider: 'fixture', model: 'fixture' },
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   appendMvuState(session, { statData: { 角色: { 等级: 3 } }, updateCount: 2 })
-  session.append('assistant/message', {
+  const supersedingReply = session.append('assistant/message', {
     turn: 2,
     step: 1,
     message: createAssistantMessage({
@@ -160,10 +161,9 @@ test('replays an exact MVU version checkpoint before applying the new visible re
       source: { provider: 'fixture', model: 'fixture' },
     }),
     stream: [],
-  }, {
-    surfaceOp: { op: 'replace', start: rejected.seq, end: rejected.seq },
-    sourceEventSeqs: [rejected.seq],
-  })
+  }, { surfaceOp: 'append' })
+  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+    roleplaySurfaceOverride(supersedingReply.seq, [rejected.seq]))
 
   assert.deepEqual(readCurrentSessionMvuState(card, session), {
     statData: { 角色: { 等级: 5 } }, updateCount: 3,
@@ -296,7 +296,7 @@ test('repairs a missing MVU block from only the frozen act plan in a cardless Se
       source: { provider: 'fixture', model: 'fixture' }, content: [{ type: 'text', text: outputText }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   session.append('step/end', { turn: 1, step: 1 })
   session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
   const receipt = compileRoleplayActReceipt(session.snapshotEvents(), 1, 'completed', [planEvent.data.reference])

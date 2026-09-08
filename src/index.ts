@@ -15,6 +15,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView } from '@deepseek-ai/dsh-tools'
+import { roleplayModelHistory } from './roleplay-surface-overlay.ts'
 import { WorkspaceSettingsStore } from './workspace-settings-store.ts'
 import { installWorkspaceSettingsHttp } from './workspace-settings-http.ts'
 import { installStoryWorkspaceHttp } from './story-workspace-http.ts'
@@ -1385,7 +1386,7 @@ export function installAgentRp(
       ? turnCoordinator.bindStep(agent, turn, step, plan => bindRoleplayExternalContext({
         plan,
         events: agent.session.snapshotEvents(),
-        visibleMessages: agent.session.deriveMessages(),
+        visibleMessages: roleplayModelHistory(agent.session),
         turn,
         step,
       }))

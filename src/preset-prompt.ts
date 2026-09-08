@@ -8,6 +8,7 @@ import type {
   SillyTavernPresetContinuation,
   SillyTavernPresetPrompt,
 } from './import/sillytavern-preset.ts'
+import { roleplayModelHistory } from './roleplay-surface-overlay.ts'
 import type { EjsTemplateResult } from './ejs-template.ts'
 import {
   hasTurnVariantRoleplaySyntax,
@@ -113,7 +114,7 @@ function macroMessageText(message: ReturnType<Session['deriveMessages']>[number]
 }
 
 function macroMessages(session: Session, pending: readonly UserMessage[]): readonly RoleplayMacroMessage[] {
-  const history = session.deriveMessages()
+  const history = roleplayModelHistory(session)
   const historyIds = new Set(history.map(message => message.id))
   return [...history, ...pending.filter(message => !historyIds.has(message.id))].flatMap((message) => {
     if ((message.role !== 'user' && message.role !== 'assistant')

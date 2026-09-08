@@ -5,6 +5,8 @@ import { CommandId } from '@deepseek-ai/dsh-commands'
 import { ToolCallId, createAssistantMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
+import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { decodeGenerationState, encodeGenerationState, executeGenerationCommand } from '../src/generation.ts'
 import { agentRpProjectionDefinition } from '../src/projection.ts'
 import { ROLEPLAY_TURN_PHASES, type RoleplayRuntimeSnapshot } from '../src/roleplay-runtime.ts'
@@ -98,7 +100,7 @@ function appendReply(session: Session, turn: number, text: string) {
       content: [{ type: 'text', text }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
 }
 
 function appendAutoStagedArtifact(session: Session, turn: number, id: string) {
@@ -118,7 +120,7 @@ function appendAutoStagedArtifact(session: Session, turn: number, id: string) {
       content: [{ type: 'tool-call', id: callId, name: 'generate_image', arguments: '{}' }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   const call = session.append('tool/call', {
     turn, step: 1, callId, name: 'generate_image', arguments: '{}',
   })
@@ -218,7 +220,7 @@ test('binds only explicitly staged durable artifacts to the settled reply', () =
       ],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   const sourceCall = session.append('tool/call', {
     turn: 1, step: 1, callId: ToolCallId('image-source'), name: 'generate_image', arguments: '{}',
   })
@@ -242,7 +244,7 @@ test('binds only explicitly staged durable artifacts to the settled reply', () =
       }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   const stageCall = session.append('tool/call', {
     turn: 1, step: 1, callId: ToolCallId('image-stage'), name: 'stage_roleplay_artifact', arguments: '{}',
   })
@@ -301,7 +303,7 @@ test('binds Thetail-compatible automatic publication artifacts to the settled re
       }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   const publishCall = session.append('tool/call', {
     turn: 1, step: 1, callId: ToolCallId('image-publish'), name: 'publish_roleplay_image', arguments: '{}',
   })
@@ -421,10 +423,9 @@ test('reply-version selection produces the current unified presentation', () => 
       content: [{ type: 'text', text: '第二版' }],
     }),
     stream: [],
-  }, {
-    surfaceOp: { op: 'replace', start: original.seq, end: alternative.seq },
-    sourceEventSeqs: [original.seq, alternative.seq],
-  })
+  }, { surfaceOp: 'append' })
+  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+    roleplaySurfaceOverride(surface.seq, [original.seq, alternative.seq]))
   const groupId = '00000000-0000-4000-8000-000000000183'
   const resultEvent = session.append('command/done', {
     commandId: CommandId('presentation-version'),
@@ -478,10 +479,9 @@ test('reply versions restore branch-local state and artifacts together after rep
       source: { provider: 'fixture', model: 'fixture' }, content: [{ type: 'text', text: '第二版' }],
     }),
     stream: [],
-  }, {
-    surfaceOp: { op: 'replace', start: original.seq, end: alternative.seq },
-    sourceEventSeqs: session.surface.nodes.slice(session.surface.nodes.indexOf(original.seq)),
-  })
+  }, { surfaceOp: 'append' })
+  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+    roleplaySurfaceOverride(surface.seq, session.surface.nodes.slice(session.surface.nodes.indexOf(original.seq))))
   const alternativeState = applyTavernHelperMutation(originalBase, {
     format: 0, scope: 'chat', variables: { marker: 'alternative' },
   })

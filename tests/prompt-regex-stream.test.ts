@@ -191,7 +191,7 @@ function openFailedToolContinuation(): {
       ],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   const call = session.append('tool/call', {
     turn: 1, step: 1, callId, name: 'generate_roleplay_image', arguments: '{}',
   })

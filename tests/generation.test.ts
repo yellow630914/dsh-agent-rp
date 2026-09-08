@@ -11,6 +11,8 @@ import {
 } from '../src/generation.ts'
 import { CommandId } from '@deepseek-ai/dsh-commands'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
+import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { executeTavernTrigger } from '../src/tavern-trigger.ts'
 import {
   appendTavernHelperState,
@@ -27,14 +29,20 @@ import { installIgnorableSessionEventFixture } from './session-event-fixture.ts'
 
 installIgnorableSessionEventFixture()
 
-function appendAssistant(session: Session, turn: number, text: string, surfaceOp: 'append' | { op: 'replace'; start: SessionSeq; end: SessionSeq } = 'append') {
-  const sourceEventSeqs = surfaceOp === 'append' ? [] : [...session.surface.nodes]
-  return session.append('assistant/message', {
+function appendAssistant(session: Session, turn: number, text: string, supersedes?: readonly SessionSeq[]) {
+  const appended = session.append('assistant/message', {
     turn,
     step: 1,
     message: createAssistantMessage({ content: [{ type: 'text', text }], source: { provider: 'fixture', model: 'fixture' } }),
     stream: [],
-  }, { surfaceOp, sourceEventSeqs })
+  }, { surfaceOp: 'append' })
+  // DSH 0.1.3 forbids a surface replace on assistant/message; Agent RP records
+  // the supersession in its own overlay event instead.
+  if (supersedes !== undefined) {
+    appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+      roleplaySurfaceOverride(appended.seq, supersedes))
+  }
+  return appended
 }
 
 function scriptState(marker: string, prompt: string): TavernHelperState {
@@ -95,7 +103,7 @@ test('folds latest selectable reply group snapshots across replacement events', 
   session.append('user/message', createUserMessage({ content: [{ type: 'text', text: '你好' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
   const original = appendAssistant(session, 1, '第一版')
   const generated = appendAssistant(session, 2, '第二版')
-  const replacement = appendAssistant(session, 2, '第二版', { op: 'replace', start: SessionSeq(0), end: generated.seq })
+  const replacement = appendAssistant(session, 2, '第二版', [...session.surface.nodes])
   const groupId = '00000000-0000-4000-8000-000000000001'
   const firstState = {
     format: 0,
@@ -109,7 +117,7 @@ test('folds latest selectable reply group snapshots across replacement events', 
     surfaceSeq: replacement.seq,
   } as const
   session.append('command/done', { commandId: CommandId('generation-1'), kind: 'success', text: encodeGenerationState(firstState) })
-  const restored = appendAssistant(session, 1, '第一版', { op: 'replace', start: replacement.seq, end: replacement.seq })
+  const restored = appendAssistant(session, 1, '第一版', [replacement.seq])
   const selectedState = {
     format: 0,
     groupId,

@@ -72,7 +72,6 @@ function appendReply(session: Session, text: string, surfaceOp: 'append' | {
     stream: [],
   }, {
     surfaceOp,
-    sourceEventSeqs: surfaceOp === 'append' ? [] : [surfaceOp.start],
   })
 }
 

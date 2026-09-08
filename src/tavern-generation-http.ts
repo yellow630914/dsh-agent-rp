@@ -19,6 +19,7 @@ import {
   trustedBrowserRequest,
   type AgentRpHttpServer,
 } from './host-http.ts'
+import { roleplayModelHistory } from './roleplay-surface-overlay.ts'
 import { AGENT_RP_CAPABILITIES } from './extension-capability.ts'
 import { readActiveSessionPreset } from './import/session-preset.ts'
 import { injectSillyTavernInChatPrompts } from './preset-prompt.ts'
@@ -486,7 +487,7 @@ function userInput(text: string): Message {
 
 function dialogueHistory(agent: Agent, config: ParsedGenerationConfig): readonly Message[] {
   const imported = config.overrideHistory?.map(scriptMessage)
-  const history = imported ?? agent.session.deriveMessages().filter(message =>
+  const history = imported ?? roleplayModelHistory(agent.session).filter(message =>
     (message.role === 'user' || message.role === 'assistant')
     && (message.source.kind === 'user' || message.source.kind === 'model'))
   if (config.maxChatHistory === undefined) return history

@@ -379,7 +379,7 @@ test('resolves replay-safe card, persona, dialogue, and utility macros in preset
       source: { provider: 'fixture', model: 'fixture' }, content: [{ type: 'text', text: '旧回答' }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   const pending = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '新问题' }] })
 
   const assembled = assembleSillyTavernPreset(compatPreset, {

@@ -23,6 +23,8 @@ import {
   type PromptRegexSourceMarker,
   type PromptRegexTraceRecord,
 } from './frontend-regex.ts'
+import { appendAgentRpSessionEvent } from './session-event-compat.ts'
+import { roleplayModelHistory, roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
 import type { ImportedRegexScript } from './import/types.ts'
 import {
   prepareSillyTavernProviderMessages,
@@ -141,7 +143,10 @@ function appendReplacement(
     }), { surfaceOp, sourceEventSeqs })
     return
   }
-  session.append('assistant/message', {
+  // DSH 0.1.3 reserves the Assistant message's provenance slot for its embedded
+  // stream, so this rewrite appends and records the supersession for Agent RP's
+  // own model-visible overlay instead of replacing the surface node.
+  const replacement = session.append('assistant/message', {
     ...position,
     message: createMessage({
       role: 'assistant',
@@ -150,7 +155,12 @@ function appendReplacement(
     }) as Extract<SessionEvent, { type: 'assistant/message' }>['data']['message'],
     // Regex rewriting replaces the visible text, so the original timed stream no longer describes it.
     stream: [],
-  }, { surfaceOp, sourceEventSeqs })
+  }, { surfaceOp: 'append' })
+  appendAgentRpSessionEvent(
+    session,
+    'agent-rp/surface-override',
+    roleplaySurfaceOverride(replacement.seq, [node.current.seq]),
+  )
 }
 
 function outcomeRank(value: PromptRegexOutcome): number {
@@ -227,7 +237,7 @@ function preparePromptRegexStreamOptions(
   let messages = options.messages
   if (hasPromptScripts || hasManagedSurface) {
     const trace = applyPromptRegexSurface(agent.session, plan.transforms)
-    if (trace !== undefined && trace.replacementCount > 0) messages = [...agent.session.deriveMessages()]
+    if (trace !== undefined && trace.replacementCount > 0) messages = roleplayModelHistory(agent.session)
   }
   return {
     ...options,

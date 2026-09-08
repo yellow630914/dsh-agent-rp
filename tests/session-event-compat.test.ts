@@ -8,6 +8,7 @@ import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { CommandId } from '@deepseek-ai/dsh-commands'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { resolveConfig } from '../src/config.ts'
 import { decodeGenerationState, encodeGenerationState, executeGenerationCommand } from '../src/generation.ts'
 import { parseCharacterCardJson } from '../src/import/character-card.ts'
@@ -233,10 +234,9 @@ test('switches Tavern reply branches through command/done on the published Host'
     step: alternative.data.step,
     message: alternative.data.message,
     stream: [],
-  }, {
-    surfaceOp: { op: 'replace', start: original.seq, end: alternative.seq },
-    sourceEventSeqs: [original.seq, alternative.seq],
-  })
+  }, { surfaceOp: 'append' })
+  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+    roleplaySurfaceOverride(surface.seq, [original.seq, alternative.seq]))
   const groupId = '00000000-0000-4000-8000-000000000201'
   const seedId = CommandId('published-tavern-generation-seed')
   session.append('command/run', { commandId: seedId, name: 'rp-generation', source: { kind: 'user' } })

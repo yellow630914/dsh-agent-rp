@@ -21,6 +21,7 @@ export const AGENT_RP_SESSION_EVENT_TYPES = [
   'agent-rp/sillytavern-chat-import',
   'agent-rp/sillytavern-preset-seed',
   'agent-rp/story-workspace-selection',
+  'agent-rp/surface-override',
   'agent-rp/story-stage-request',
   'agent-rp/story-stage-result',
   'agent-rp/story-turn-brief',

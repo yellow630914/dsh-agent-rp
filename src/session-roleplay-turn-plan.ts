@@ -1,6 +1,7 @@
 /** Pre-dispatch Roleplay plan receipts persisted independently from volatile Agent ownership. */
 
 import { Session, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
+import { roleplayModelHistory } from './roleplay-surface-overlay.ts'
 import type { ResolvedConfig } from './config.ts'
 import type { EjsTemplateEngine } from './ejs-template.ts'
 import { prepareRoleplayTurn, type RoleplayTurnPlan } from './roleplay-turn-plan.ts'
@@ -172,7 +173,7 @@ export function replaySessionRoleplayTurnPlan(input: {
   const replayed = bindRoleplayExternalContext({
     plan: prepared,
     events: session.snapshotEvents(),
-    visibleMessages: replayBoundary(session, session.snapshotEvents().slice(0, record.seq)).deriveMessages(),
+    visibleMessages: roleplayModelHistory(replayBoundary(session, session.snapshotEvents().slice(0, record.seq))),
     turn: record.data.turn,
     step: reference.step,
     beforeSeq: record.seq,

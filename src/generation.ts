@@ -40,6 +40,7 @@ import type {
   RoleplayTurnPresentation,
 } from './roleplay-turn-presentation-types.ts'
 import { appendAgentRpSessionEvent, supportsAgentRpSessionEvents } from './session-event-compat.ts'
+import { roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
 
 /** A complete reply-version group snapshot stored after every mutation. */
 export interface GenerationStateRecord {
@@ -292,21 +293,25 @@ function appendCurrentReplySurface(
   const nodes = [...agent.session.surface.nodes]
   const startIndex = nodes.indexOf(SessionSeq(currentSurfaceSeq))
   if (startIndex < 0) throw new Error('回复已不在当前对话末尾')
-  const shadowed = nodes.slice(startIndex)
-  const start = shadowed[0]
-  const end = shadowed.at(-1)
-  if (start === undefined || end === undefined) throw new Error('当前回复不可替换')
-  return agent.session.append('assistant/message', {
+  const superseded = sourceSeqs(nodes.slice(startIndex), selected.seq)
+  if (superseded.length === 0) throw new Error('当前回复不可替换')
+  // DSH 0.1.3 forbids sourceEventSeqs on assistant/message, so a reply can no
+  // longer replace surface nodes. Append the version and record the
+  // supersession for Agent RP's own model-visible overlay instead.
+  const replacement = agent.session.append('assistant/message', {
     turn: selected.data.turn,
     step: selected.data.step,
     message: replacementMessage(selected.data.message, content),
     // The v2 embedded stream only describes the original text, so replaced content drops it.
     stream: content === undefined ? selected.data.stream : [],
     ...(selected.data.usage === undefined || content !== undefined ? {} : { usage: selected.data.usage }),
-  }, {
-    surfaceOp: { op: 'replace', start, end },
-    sourceEventSeqs: sourceSeqs(shadowed, selected.seq),
-  })
+  }, { surfaceOp: 'append' })
+  appendAgentRpSessionEvent(
+    agent.session,
+    'agent-rp/surface-override',
+    roleplaySurfaceOverride(replacement.seq, superseded),
+  )
+  return replacement
 }
 
 /** Return the final visible non-empty assistant reply produced in one turn. */
@@ -609,10 +614,9 @@ async function executeInputRewrite(
           sourceEventSeqs: [...tail],
         })
       }
-      agent.session.append('assistant/message', reply.data, {
-        surfaceOp: 'append',
-        sourceEventSeqs: [reply.seq],
-      })
+      // An append cites no source events: DSH 0.1.3 reserves the Assistant
+      // message's provenance slot for its embedded stream.
+      agent.session.append('assistant/message', reply.data, { surfaceOp: 'append' })
     }
     restoreTavernState(agent, currentTavern?.state)
     appendMvuSelection(agent, currentMvu)

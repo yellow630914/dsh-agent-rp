@@ -63,7 +63,7 @@ test('reviews one reply through an isolated request and preserves the original a
       content: [{ type: 'text', text: '她向前走。她向前走，然后推开门。' }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   session.append('step/end', { turn: 1, step: 1 })
   let system = ''
   let messages = ''

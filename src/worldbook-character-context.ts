@@ -2,6 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, type Message, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { roleplayModelHistory } from './roleplay-surface-overlay.ts'
 import type { CharacterImportMeta } from './import/session-character.ts'
 
 export const WORLDBOOK_CHARACTER_CONTEXT_KEY = 'worldbook.characterContext'
@@ -155,7 +156,7 @@ export function installWorldbookSnapshotCoalescing(
       if (!(options.snapshotChannels ?? supportsSnapshotChannels(agent.session))) return decision
       const snapshot = coalesceWorldbookSnapshot(decision.messages, {
         directUserTurn: messages.some(message => message.source.kind === 'user'),
-        previousChannels: activeWorldbookSnapshotChannels(agent.session.deriveMessages()),
+        previousChannels: activeWorldbookSnapshotChannels(roleplayModelHistory(agent.session)),
       })
       return snapshot === decision.messages ? decision : { ...decision, messages: snapshot }
     }, { prepend: true })

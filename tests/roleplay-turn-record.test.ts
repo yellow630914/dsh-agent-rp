@@ -8,6 +8,8 @@ import {
   createUserMessage,
 } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
+import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { resolveConfig } from '../src/config.ts'
 import {
   appendRoleplayTurnPresentation,
@@ -46,7 +48,7 @@ function appendModelMessage(
       content,
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
 }
 
 function completeTwoStepTurn() {
@@ -193,10 +195,9 @@ test('updates only present when a later reply version is selected', () => {
       content: [{ type: 'text', text: '雨幕映亮了街灯。' }],
     }),
     stream: [],
-  }, {
-    surfaceOp: { op: 'replace', start: fixture.reply.seq, end: alternative.seq },
-    sourceEventSeqs: [fixture.reply.seq, alternative.seq],
-  })
+  }, { surfaceOp: 'append' })
+  appendAgentRpSessionEvent(fixture.session, 'agent-rp/surface-override',
+    roleplaySurfaceOverride(surface.seq, [fixture.reply.seq, alternative.seq]))
   const trigger = fixture.session.append('command/done', {
     commandId: CommandId('turn-record-version'),
     kind: 'success',

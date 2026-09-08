@@ -412,7 +412,7 @@ test('replaces the full roleplay prompt with a narrow artifact handoff after vis
       }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   session.append('tool/call', {
     turn: 1,
     step: 1,

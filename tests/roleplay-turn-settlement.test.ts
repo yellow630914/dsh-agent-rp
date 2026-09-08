@@ -74,7 +74,7 @@ function appendReply(session: Session, turn: number, step: number, text: string)
       content: [{ type: 'text', text }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
 }
 
 function appendRemember(
@@ -96,7 +96,7 @@ function appendRemember(
       }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   const call = session.append('tool/call', {
     turn: 1,
     step: 1,
@@ -394,7 +394,7 @@ test('rejects a tool result whose Session citation does not point to its call', 
       content: [{ type: 'tool-call', id: callId, name: 'inspect', arguments: '{}' }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   const call = session.append('tool/call', {
     turn: 1, step: 1, callId, name: 'inspect', arguments: '{}',
   })
@@ -440,7 +440,7 @@ test('correlates provider call ids within their step rather than across the whol
         content: [{ type: 'tool-call', id: callId, name: 'inspect', arguments: argumentsText }],
       }),
       stream: [],
-    }, { surfaceOp: 'append', sourceEventSeqs: [] })
+    }, { surfaceOp: 'append' })
     const call = session.append('tool/call', {
       turn: 1, step, callId, name: 'inspect', arguments: argumentsText,
     })

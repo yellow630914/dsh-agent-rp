@@ -302,7 +302,7 @@ test('carries native state changes through settle and present without a format-s
       content: [{ type: 'text', text: '钟声响过，已经十点。' }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   appendRoleplayState(session, {
     id: 'state:scene', expectedRevision: 1, writerModuleId: 'roleplay:fixture', value: { hour: 22 },
   })

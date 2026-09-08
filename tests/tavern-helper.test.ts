@@ -6,6 +6,8 @@ import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { CommandId } from '@deepseek-ai/dsh-commands'
+import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
+import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { AGENT_RP_CAPABILITIES } from '../src/extension-capability.ts'
 import {
   applyTavernHelperMutation,
@@ -732,10 +734,9 @@ test('keeps script-owned message annotations across reloads and reply-version se
       content: [{ type: 'text', text: '新回复' }], source: { provider: 'fixture', model: 'fixture' },
     }),
     stream: [],
-  }, {
-    surfaceOp: { op: 'replace', start: original.seq, end: original.seq },
-    sourceEventSeqs: [original.seq],
-  })
+  }, { surfaceOp: 'append' })
+  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+    roleplaySurfaceOverride(alternative.seq, [original.seq]))
   const groupId = '12345678-1234-4234-8234-123456789abc'
   const versions = [
     { seq: original.seq, text: '原回复' },
@@ -762,10 +763,9 @@ test('keeps script-owned message annotations across reloads and reply-version se
   })
   assert.equal(project(session).tavern?.messages.at(-1)?.annotations, undefined)
 
-  const selectedOriginal = session.append('assistant/message', original.data, {
-    surfaceOp: { op: 'replace', start: alternative.seq, end: alternative.seq },
-    sourceEventSeqs: [alternative.seq, original.seq],
-  })
+  const selectedOriginal = session.append('assistant/message', original.data, { surfaceOp: 'append' })
+  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+    roleplaySurfaceOverride(selectedOriginal.seq, [alternative.seq, original.seq]))
   const selectCommand = CommandId('restore-original-annotation-branch')
   session.append('command/run', {
     commandId: selectCommand, name: 'rp-generation', source: { kind: 'user' },

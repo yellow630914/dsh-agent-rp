@@ -4,6 +4,8 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { isSurfaceEvent, type SessionEvent, type SurfaceEvent, type SurfaceIntent } from '@deepseek-ai/dsh-session'
+import { appendAgentRpSessionEvent } from './session-event-compat.ts'
+import { roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
 import type { TavernChatMessageInput, TavernChatMutationRequest, TavernHiddenMessage } from './tavern-helper.ts'
 
 type JsonRecord = Readonly<Record<string, JsonValue>>
@@ -132,20 +134,20 @@ function rewriteSurface(agent: Agent, before: readonly SurfaceEntry[], after: re
     for (const entry of after) appendEntry(agent, entry, { surfaceOp: 'append' })
     return
   }
-  const sourceEventSeqs = before.map(entry => entry.kind === 'existing' ? entry.event.seq : -1).filter(seq => seq >= 0)
-  const start = sourceEventSeqs[0]
-  const end = sourceEventSeqs.at(-1)
-  if (start === undefined || end === undefined) throw new Error('当前角色会话没有可重写的聊天楼层')
-  after.forEach((entry, index) => {
-    if (index === 0) {
-      appendEntry(agent, entry, { surfaceOp: { op: 'replace', start, end }, sourceEventSeqs })
-      return
-    }
-    appendEntry(agent, entry, {
-      surfaceOp: 'append',
-      ...(entry.kind === 'existing' ? { sourceEventSeqs: [entry.event.seq] } : {}),
-    })
-  })
+  const superseded = before.flatMap(entry => entry.kind === 'existing' ? [entry.event.seq] : [])
+  if (superseded.length === 0) throw new Error('当前角色会话没有可重写的聊天楼层')
+  // A rewritten floor may be an Assistant message, and DSH 0.1.3 reserves that
+  // event's provenance slot for its embedded stream — so no surface `replace`
+  // is available. Append the whole rewritten range and record one supersession
+  // for Agent RP's model-visible overlay.
+  const appended = after.map(entry => appendEntry(agent, entry, { surfaceOp: 'append' }))
+  const replacement = appended[0]
+  if (replacement === undefined) throw new Error('脚本没有写入任何聊天楼层')
+  appendAgentRpSessionEvent(
+    agent.session,
+    'agent-rp/surface-override',
+    roleplaySurfaceOverride(replacement.seq, superseded),
+  )
 }
 
 function empty(record: JsonRecord | undefined): boolean {

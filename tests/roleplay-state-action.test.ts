@@ -21,6 +21,8 @@ import { SessionSeq, Session, SessionId, type SessionEvent } from '@deepseek-ai/
 import { createScope } from '@deepseek-ai/dsh-scope'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRegistry, { defineTool } from '@deepseek-ai/dsh-tools'
+import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
+import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { resolveConfig } from '../src/config.ts'
 import { parseCharacterCardJson } from '../src/import/character-card.ts'
 import { createCharacterCardSessionSeed } from '../src/import/character-card-seed.ts'
@@ -187,7 +189,7 @@ function appendActionCall(
       }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   const call = session.append('tool/call', {
     turn: 1,
     step: 1,
@@ -443,7 +445,7 @@ test('applies one semantic action after turn end and keeps its narrative message
       content: [],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [event.seq] })
+  }, { surfaceOp: 'append' })
   session.append('step/end', { turn: 1, step: 1 })
   session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
   const restarted = Session.create(session.id, session.snapshotEvents())
@@ -515,7 +517,7 @@ test('settles MVU after the visible reply through a replayable local-provider st
       content: [{ type: 'text', text: '门还没锁。这是同一回合中已经结束的角色开场白。' }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   session.append('step/end', { turn: 1, step: 1 })
   const pending = createUserMessage({
     source: { kind: 'user' },
@@ -546,7 +548,7 @@ test('settles MVU after the visible reply through a replayable local-provider st
       content: [{ type: 'text', text: '白露合上修行笔记，确认自己已经跨过两级门槛。' }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   session.append('step/end', { turn: 1, step: 2 })
   const reviewedNarrative = session.append('assistant/message', {
     turn: 1,
@@ -556,10 +558,9 @@ test('settles MVU after the visible reply through a replayable local-provider st
       content: [{ type: 'text', text: '白露合上修行笔记，确认自己已经稳稳跨过两级门槛。' }],
     }),
     stream: [],
-  }, {
-    surfaceOp: { op: 'replace', start: narrative.seq, end: narrative.seq },
-    sourceEventSeqs: [narrative.seq],
-  })
+  }, { surfaceOp: 'append' })
+  appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
+    roleplaySurfaceOverride(reviewedNarrative.seq, [narrative.seq]))
   const requestTexts: string[] = []
   const requestSystems: string[] = []
   const requestReasoning: (string | undefined)[] = []
@@ -814,7 +815,7 @@ function preparedEmptyStagedSettlement(input: {
       content: [{ type: 'text', text: '白露检查了一遍，状态没有发生变化。' }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
   session.append('step/end', { turn: 1, step: 1 })
   return { card, session, plan, reference }
 }

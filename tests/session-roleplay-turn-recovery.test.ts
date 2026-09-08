@@ -63,7 +63,7 @@ function reply(session: Session, turn: number, text: string, step = 1) {
       content: [{ type: 'text', text }],
     }),
     stream: [],
-  }, { surfaceOp: 'append', sourceEventSeqs: [] })
+  }, { surfaceOp: 'append' })
 }
 
 function appendRecoverableTextTurn(session: Session, turn: number, text: string): void {

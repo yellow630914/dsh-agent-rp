@@ -41,6 +41,17 @@ export interface RoleplayDisplayProjection {
   readonly tavern?: {
     readonly messages: readonly RoleplayDisplayMessage[]
   }
+  /**
+   * Appended replacement seq → the transcript row it stands in for, and the
+   * rows those replacements superseded.
+   *
+   * DSH 0.1.3 bars an Assistant message from replacing surface nodes, so a
+   * regenerated reply is appended and owns its own row while the row it
+   * replaced stays in the transcript. Both maps are absent for Sessions that
+   * never superseded a reply.
+   */
+  readonly surfaceAnchors?: Readonly<Record<string, number>>
+  readonly supersededSeqs?: readonly number[]
   readonly generations: readonly {
     readonly anchorSeq: number
     readonly selectedVersionSeq: number
@@ -59,7 +70,7 @@ export interface RoleplayDisplayProjection {
 /** Result of deciding how one DSH message row should be presented. */
 export type RoleplayDisplayPlan =
   | { readonly kind: 'host' }
-  | { readonly kind: 'hidden'; readonly reason: 'unselected-generation' }
+  | { readonly kind: 'hidden'; readonly reason: 'unselected-generation' | 'superseded-reply' }
   | {
     readonly kind: 'render'
     readonly source: 'override' | 'selected-generation' | 'display-regex' | 'rewritten-input'
@@ -126,11 +137,16 @@ export function createRoleplayDisplayPlanner(input: {
     ...(projection.preset?.regexScripts ?? []),
   ]
   const hasDisplayRules = immersive && activeFrontend.regexScripts.length + sharedRegexScripts.length > 0
+  // A superseded row is still append-origin, so the Host keeps rendering it.
+  // Hide it and let its replacement carry the turn.
+  const superseded = new Set(projection.supersededSeqs ?? [])
+  const anchorOf = (seq: number): number => projection.surfaceAnchors?.[String(seq)] ?? seq
   const rewrittenInputBySeq = new Map(projection.generations
     .flatMap(group => group.rewrittenInput === undefined ? [] : [[group.rewrittenInput.seq, group.rewrittenInput.text] as const]))
 
   return {
     user: ({ seq, alignedMessage }) => {
+      if (superseded.has(seq)) return { kind: 'hidden', reason: 'superseded-reply' }
       const message = alignedMessage ?? messageBySeq.get(seq)
       const messageId = message?.messageId ?? messageIdBySeq.get(seq)
       const override = messageId === undefined ? undefined : overrides.get(messageId)
@@ -164,9 +180,16 @@ export function createRoleplayDisplayPlanner(input: {
         : { kind: 'render', source: 'display-regex', compilation: compileCharacterDisplay(rendered), messageId: message.messageId }
     },
     assistant: ({ finalSeq, blockText, alignedMessage }) => {
-      const generation = finalSeq === undefined
+      if (finalSeq !== undefined && superseded.has(finalSeq)) {
+        return { kind: 'hidden', reason: 'superseded-reply' }
+      }
+      // A replacement row answers for the row it superseded, so the version
+      // group is found and compared through that anchor, not the row's own seq.
+      const anchoredSeq = finalSeq === undefined ? undefined : anchorOf(finalSeq)
+      const generation = anchoredSeq === undefined
         ? undefined
-        : projection.generations.find(group => group.assistantSeqs.includes(finalSeq))
+        : projection.generations.find(group => group.assistantSeqs.includes(anchoredSeq)
+          || group.anchorSeq === anchoredSeq)
       const selected = generation?.versions.find(version => version.seq === generation.selectedVersionSeq)
       const messageId = (selected === undefined ? undefined : messageIdBySeq.get(selected.seq))
         ?? alignedMessage?.messageId
@@ -174,7 +197,7 @@ export function createRoleplayDisplayPlanner(input: {
       const override = messageId === undefined ? undefined : overrides.get(messageId)
       if (override !== undefined) return overridePlan(override, messageId!)
       if (immersive && generation !== undefined) {
-        if (finalSeq !== generation.anchorSeq) return { kind: 'hidden', reason: 'unselected-generation' }
+        if (anchoredSeq !== generation.anchorSeq) return { kind: 'hidden', reason: 'unselected-generation' }
         if (selected !== undefined) {
           const rendered = renderCharacterDisplay(selected.text.replaceAll(ROLEPLAY_STATUS_PLACEHOLDER, ''), {
             name: projection.characterName,

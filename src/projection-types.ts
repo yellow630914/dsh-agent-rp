@@ -167,6 +167,22 @@ export interface AgentRpProjection {
       readonly text: string
     }
   }[]
+  /**
+   * Appended replacement seq → the transcript row it stands in for.
+   *
+   * DSH 0.1.3 bars an Assistant message from replacing surface nodes, so a
+   * regenerated reply is appended and owns its own transcript row. Resolve a
+   * row's seq through this map before matching it against `anchorSeq` or
+   * `currentReplySeq`; absent for Sessions that never superseded a reply.
+   */
+  readonly surfaceAnchors?: Readonly<Record<string, number>>
+  /**
+   * Transcript rows a replacement superseded, in ascending seq order.
+   *
+   * The Host still renders them — they are append-origin — so the display
+   * planner hides them and renders on the replacement row instead.
+   */
+  readonly supersededSeqs?: readonly number[]
   /** Stable transcript anchor of the model-visible final Roleplay reply. */
   readonly currentReplySeq?: number
   /** Unified present-phase selection behind the visible reply and its runtime state. */

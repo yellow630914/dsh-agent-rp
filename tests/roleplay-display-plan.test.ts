@@ -214,3 +214,49 @@ test('renders a rewritten turn into the rows the transcript already showed', () 
   // Rows outside the rewritten turn are untouched.
   assert.deepEqual(planner.user({ seq: 999 }), { kind: 'host' })
 })
+
+test('renders a superseded reply on the row that replaced it', () => {
+  // DSH 0.1.3 bars an Assistant message from replacing surface nodes, so a
+  // regenerated reply is appended (seq 22) and the row it replaced (seq 20)
+  // stays in the transcript. The switcher and the rendered text belong to the
+  // replacement row; the superseded rows disappear.
+  const withReplacement: RoleplayDisplayProjection = {
+    ...projection,
+    surfaceAnchors: { 22: 20 },
+    supersededSeqs: [20, 21],
+    generations: [{
+      anchorSeq: 20,
+      selectedVersionSeq: 21,
+      assistantSeqs: [20, 21],
+      versions: [{ seq: 20, text: '原回复' }, { seq: 21, text: '备选回复' }],
+    }],
+  }
+  const planner = createRoleplayDisplayPlanner({
+    projection: withReplacement, immersive: true, overrides: new Map(),
+  })
+  assert.deepEqual(planner.assistant({ finalSeq: 20, blockText: '原回复' }), {
+    kind: 'hidden', reason: 'superseded-reply',
+  })
+  assert.deepEqual(planner.assistant({ finalSeq: 21, blockText: '备选回复' }), {
+    kind: 'hidden', reason: 'superseded-reply',
+  })
+  const plan = planner.assistant({ finalSeq: 22, blockText: '备选回复' })
+  assert.equal(plan.kind, 'render')
+  if (plan.kind !== 'render') return
+  assert.equal(plan.source, 'selected-generation')
+  assert.deepEqual(plan.compilation.segments, [{ kind: 'markdown', text: '备选回复' }])
+})
+
+test('hides a superseded player row so its rewrite is not shown twice', () => {
+  const withReplacement: RoleplayDisplayProjection = {
+    ...projection,
+    surfaceAnchors: { 31: 30 },
+    supersededSeqs: [30],
+    generations: [],
+  }
+  const planner = createRoleplayDisplayPlanner({
+    projection: withReplacement, immersive: true, overrides: new Map(),
+  })
+  assert.deepEqual(planner.user({ seq: 30 }), { kind: 'hidden', reason: 'superseded-reply' })
+  assert.deepEqual(planner.user({ seq: 31 }), { kind: 'host' })
+})

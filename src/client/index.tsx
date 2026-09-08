@@ -1175,10 +1175,16 @@ function GenerationTail({
   const [drawOpen, setDrawOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [rewriteMode, setRewriteMode] = useState<'branch' | 'regenerate'>()
-  const group = projection?.generations.find(candidate => candidate.anchorSeq === replySeq)
+  // DSH 0.1.3 bars an Assistant message from replacing surface nodes, so a
+  // regenerated reply is appended and owns its own transcript row — this tail
+  // binds to that row, not to the one the version group is anchored on.
+  // Resolve back to the anchor before matching, or the switcher disappears and
+  // a second regeneration starts a fresh group instead of adding a version.
+  const anchoredSeq = projection?.surfaceAnchors?.[String(replySeq)] ?? replySeq
+  const group = projection?.generations.find(candidate => candidate.anchorSeq === anchoredSeq)
   if (projection === undefined) return null
   const sessionEventsAvailable = projection.hostCapabilities?.sessionEvents === true
-  const currentReply = projection.currentReplySeq === replySeq
+  const currentReply = projection.currentReplySeq === anchoredSeq
   const sceneNote = replySceneNote(replyText)
   const selectedIndex = group?.versions.findIndex(version => version.seq === group.selectedVersionSeq) ?? 0
   const invoke = (
@@ -1212,7 +1218,7 @@ function GenerationTail({
         <button type="button" data-agent-rp-generation-action aria-label={busy === 'select-previous' ? '正在切换到上一版回复' : '上一版回复'}
           aria-disabled={previousUnavailable || undefined} data-unavailable={previousUnavailable || undefined}
           onClick={previousUnavailable ? undefined : () => {
-            invoke({ operation: 'select', replySeq, versionIndex: selectedIndex - 1 }, 'select-previous')
+            invoke({ operation: 'select', replySeq: anchoredSeq, versionIndex: selectedIndex - 1 }, 'select-previous')
           }}>
           {busy === 'select-previous' ? <IconLoadingOutline16 className="agent-rp-generation-loading" /> : <IconChevronLeftOutline14 />}
         </button>
@@ -1222,7 +1228,7 @@ function GenerationTail({
         <button type="button" data-agent-rp-generation-action aria-label={busy === 'select-next' ? '正在切换到下一版回复' : '下一版回复'}
           aria-disabled={nextUnavailable || undefined} data-unavailable={nextUnavailable || undefined}
           onClick={nextUnavailable ? undefined : () => {
-            invoke({ operation: 'select', replySeq, versionIndex: selectedIndex + 1 }, 'select-next')
+            invoke({ operation: 'select', replySeq: anchoredSeq, versionIndex: selectedIndex + 1 }, 'select-next')
           }}>
           {busy === 'select-next' ? <IconLoadingOutline16 className="agent-rp-generation-loading" /> : <IconChevronRightOutline14 />}
         </button>
@@ -1231,14 +1237,14 @@ function GenerationTail({
     {currentReply && <Tooltip label={regenerateDisabled ? regenerateUnavailableReason ?? '重新生成' : '重新生成'} side="bottom">
       <button type="button" data-agent-rp-generation-action aria-label={busy === 'regenerate' ? '正在重新生成' : '重新生成'}
         aria-disabled={regenerateDisabled || undefined} data-unavailable={regenerateDisabled || undefined}
-        onClick={regenerateDisabled ? undefined : () => { invoke({ operation: 'regenerate', replySeq }) }}>
+        onClick={regenerateDisabled ? undefined : () => { invoke({ operation: 'regenerate', replySeq: anchoredSeq }) }}>
         {busy === 'regenerate' ? <IconLoadingOutline16 className="agent-rp-generation-loading" /> : <IconRefreshOutline16 />}
       </button>
     </Tooltip>}
     {currentReply && <Tooltip label={disabled ? unavailableReason ?? '继续生成' : '继续生成'} side="bottom">
       <button type="button" data-agent-rp-generation-action aria-label={busy === 'continue' ? '正在继续生成' : '继续生成'}
         aria-disabled={disabled || undefined} data-unavailable={disabled || undefined}
-        onClick={disabled ? undefined : () => { invoke({ operation: 'continue', replySeq }) }}>
+        onClick={disabled ? undefined : () => { invoke({ operation: 'continue', replySeq: anchoredSeq }) }}>
         {busy === 'continue' ? <IconLoadingOutline16 className="agent-rp-generation-loading" /> : <IconPlayOutline16 />}
       </button>
     </Tooltip>}
@@ -1307,7 +1313,7 @@ function GenerationTail({
         setError(undefined)
         const operation = rewriteMode === 'branch'
           ? rewriteTurn(sessionId, turn.turn, text)
-          : runGeneration(sessionId, { operation: 'rewrite-input', replySeq, text })
+          : runGeneration(sessionId, { operation: 'rewrite-input', replySeq: anchoredSeq, text })
         void operation.then(
           () => { setBusy(undefined); setRewriteMode(undefined) },
           (reason: unknown) => {

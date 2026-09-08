@@ -182,6 +182,10 @@ interface AgentRpProjectionState {
   readonly lastRequest?: AgentRpProjection['lastRequest']
   readonly promptRegex?: AgentRpProjection['promptRegex']
   readonly generations: Readonly<Record<string, GenerationStateRecord>>
+  /** Appended replacement seq → the transcript row it stands in for. */
+  readonly surfaceAnchors: Readonly<Record<string, number>>
+  /** Transcript rows a replacement superseded; the planner hides them. */
+  readonly supersededSeqs: readonly number[]
   readonly currentReplySeq?: number
   readonly presentation?: RoleplayTurnPresentation
   readonly tavern?: TavernHelperState
@@ -413,6 +417,63 @@ function surfaceRole(event: SessionEvent): 'user' | 'assistant' | undefined {
  * @param event - the `agent-rp/surface-override` event.
  * @returns the surface with the supersession applied.
  */
+/**
+ * Fold the transcript anchor of each Agent RP replacement.
+ *
+ * The Host builds transcript rows from append-origin events, and DSH 0.1.3
+ * forces Agent RP's replacements to be appends — so a regenerated reply now
+ * owns its own row instead of quietly taking over the original one. Readers
+ * that key off the anchor (the version switcher, `currentReplySeq`, the reply
+ * a new generation targets) resolve a replacement's row back through this map.
+ * Anchors resolve transitively, so a chain of regenerations still points at
+ * the first reply's row.
+ * @param anchors - map before this event.
+ * @param event - the `agent-rp/surface-override` event.
+ * @returns the map with this supersession recorded.
+ */
+/**
+ * Fold the set of transcript rows an Agent RP replacement superseded.
+ *
+ * A superseded row is still append-origin, so the Host keeps rendering it; the
+ * display planner hides it and renders on the replacement instead. Mirrors the
+ * overlay fold: a replacement leaves the set when a later record supersedes it.
+ * @param superseded - set before this event, in ascending seq order.
+ * @param event - the `agent-rp/surface-override` event.
+ * @returns the set with this supersession recorded.
+ */
+function applySupersededSeqs(
+  superseded: AgentRpProjectionState['supersededSeqs'],
+  event: SessionEvent,
+): AgentRpProjectionState['supersededSeqs'] {
+  if (event.type !== ('agent-rp/surface-override' as SessionEvent['type'])) return superseded
+  const data = event.data as { readonly supersedes?: unknown; readonly replacements?: unknown }
+  if (!Array.isArray(data.supersedes) || !Array.isArray(data.replacements)) return superseded
+  const supersedes = data.supersedes.filter((seq): seq is number => typeof seq === 'number')
+  const replacements = data.replacements.filter((seq): seq is number => typeof seq === 'number')
+  if (supersedes.length === 0 || replacements.length === 0) return superseded
+  const next = new Set(superseded)
+  for (const seq of supersedes) next.add(seq)
+  for (const seq of replacements) next.delete(seq)
+  return [...next].sort((left, right) => left - right)
+}
+
+function applySurfaceAnchors(
+  anchors: AgentRpProjectionState['surfaceAnchors'],
+  event: SessionEvent,
+): AgentRpProjectionState['surfaceAnchors'] {
+  if (event.type !== ('agent-rp/surface-override' as SessionEvent['type'])) return anchors
+  const data = event.data as { readonly supersedes?: unknown; readonly replacements?: unknown }
+  if (!Array.isArray(data.supersedes) || !Array.isArray(data.replacements)) return anchors
+  const supersedes = data.supersedes.filter((seq): seq is number => typeof seq === 'number')
+  const replacements = data.replacements.filter((seq): seq is number => typeof seq === 'number')
+  if (supersedes.length === 0 || replacements.length === 0) return anchors
+  const earliest = Math.min(...supersedes)
+  const anchor = anchors[String(earliest)] ?? earliest
+  const next = { ...anchors }
+  for (const seq of replacements) next[String(seq)] = anchor
+  return next
+}
+
 function applySurfaceOverride(
   surface: AgentRpProjectionState['surface'],
   event: SessionEvent,
@@ -888,10 +949,13 @@ function foldAgentRpProjectionEvent(
   event: SessionEvent,
 ): AgentRpProjectionState {
   const surface = applySurface(state.surface, event)
+  const surfaceAnchors = applySurfaceAnchors(state.surfaceAnchors, event)
+  const supersededSeqs = applySupersededSeqs(state.supersededSeqs, event)
   const auxiliaryGenerations = applyTavernAuxiliaryGenerationEvent(state.auxiliaryGenerations, event)
   const withSurface = surface === state.surface && auxiliaryGenerations === state.auxiliaryGenerations
+    && surfaceAnchors === state.surfaceAnchors && supersededSeqs === state.supersededSeqs
     ? state
-    : { ...state, surface, auxiliaryGenerations }
+    : { ...state, surface, surfaceAnchors, supersededSeqs, auxiliaryGenerations }
   const tavernMessageAnnotations = applyTavernMessageAnnotationEvent(withSurface.tavernMessageAnnotations, event)
   if (tavernMessageAnnotations !== withSurface.tavernMessageAnnotations) {
     return { ...withSurface, tavernMessageAnnotations }
@@ -1412,6 +1476,8 @@ export function createAgentRpProjectionDefinition(
     nativeStates: [],
     presetLibrary: [],
     generations: {},
+    surfaceAnchors: {},
+    supersededSeqs: [],
     tavernMessageAnnotations: {},
     auxiliaryGenerations: EMPTY_TAVERN_AUXILIARY_GENERATION_REPLAY,
     regexPacks: [],
@@ -1483,6 +1549,10 @@ export function createAgentRpProjectionDefinition(
         versions: group.versions,
         ...(group.rewrittenInput === undefined ? {} : { rewrittenInput: group.rewrittenInput }),
       })),
+      ...(Object.keys(state.surfaceAnchors).length === 0
+        ? {}
+        : { surfaceAnchors: state.surfaceAnchors }),
+      ...(state.supersededSeqs.length === 0 ? {} : { supersededSeqs: state.supersededSeqs }),
       ...(state.currentReplySeq === undefined ? {} : { currentReplySeq: state.currentReplySeq }),
       ...(state.presentation === undefined ? {} : { presentation: state.presentation }),
       ...(state.tavern === undefined ? {} : {

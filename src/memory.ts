@@ -1,7 +1,8 @@
 /** Durable Agent RP memory reconstructed from native tool events. */
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
-import { Session, SessionId, type JsonValue, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { SessionSeq, Session, SessionId, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
 
 const PERSISTENT_MEMORY_INTENT = /(?:记住|记得|别忘|不要忘|以后|今后|下次|从现在起|remember|do(?:n['’]?t| not) forget|from now on|next time)/iu
 
@@ -585,7 +586,7 @@ export function appendAgentRpMemorySeed(
   const time = Math.max(Date.now(), (seed.at(-1)?.time ?? 0) + 1)
   const events: SessionEvent[] = [...seed, {
     type: 'agent-rp/memory-seed',
-    seq: seed.length,
+    seq: SessionSeq(seed.length),
     time,
     data: {
       format: 0,
@@ -594,11 +595,11 @@ export function appendAgentRpMemorySeed(
     },
     ignorable: true,
   }]
-  return Object.freeze(Session.create(SessionId('agent-rp-memory-seed-validation'), events).events.slice(0, events.length))
+  return Object.freeze(Session.create(SessionId('agent-rp-memory-seed-validation'), events).snapshotEvents().slice(0, events.length))
 }
 
 function findRememberCall(session: Session, callId: string): SessionEvent<'tool/call'> {
-  const call = session.events.findLast(event => event.type === 'tool/call' && event.data.callId === callId)
+  const call = session.snapshotEvents().findLast(event => event.type === 'tool/call' && event.data.callId === callId)
   if (call?.type !== 'tool/call' || call.data.name !== 'remember') {
     throw new Error('remember execution has no matching direct Session tool call')
   }
@@ -617,7 +618,7 @@ export function prepareAgentRpMemory(
   callId: string,
   input: AgentRpMemoryInput,
 ): AgentRpMemoryRecord {
-  const history = readAgentRpMemoryHistory(session.events)
+  const history = readAgentRpMemoryHistory(session.snapshotEvents())
   const call = findRememberCall(session, callId)
   const sourceInput = sourceArguments(call)
   if (sourceInput.kind !== input.kind

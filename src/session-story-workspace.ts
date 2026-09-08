@@ -2,7 +2,7 @@
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandId } from '@deepseek-ai/dsh-commands'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { appendAgentRpSessionEvent, supportsAgentRpSessionEvents } from './session-event-compat.ts'
 import { StoryWorkspaceStore } from './story-workspace.ts'
 
@@ -68,13 +68,13 @@ export function executeStoryWorkspaceCommand(
     readonly agent: Agent
     readonly rawInput: string
   },
-): { readonly kind: 'success'; readonly sourceEventSeq: number } {
+): { readonly kind: 'success'; readonly sourceEventSeq: SessionSeq } {
   if (!supportsAgentRpSessionEvents(invocation.agent.session)) {
     throw new Error('当前 DSH Host 缺少安全插件事件能力，无法启用故事工作区')
   }
   const request = parseRequest(invocation.rawInput)
   if (request.workspaceId !== null) store.get(request.workspaceId)
-  const source = invocation.agent.session.events.findLast(event => event.type === 'command/run'
+  const source = invocation.agent.session.snapshotEvents().findLast(event => event.type === 'command/run'
     && String(event.data.commandId) === String(invocation.commandId))
   if (source?.type !== 'command/run' || source.data.name !== 'rp-story-workspace'
     || source.data.source.kind !== 'user') {

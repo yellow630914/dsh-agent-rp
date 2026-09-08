@@ -1,5 +1,6 @@
 /** Model-free player editing of durable native Roleplay state. */
 
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandId } from '@deepseek-ai/dsh-commands'
 import {
@@ -15,9 +16,9 @@ export function executeRoleplayStateCommand(invocation: {
   readonly commandId: CommandId
   readonly agent: Agent
   readonly rawInput: string
-}): { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: number } {
+}): { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: SessionSeq } {
   const request = parseRoleplayStateCommandRequest(invocation.rawInput)
-  const source = invocation.agent.session.events.findLast(event =>
+  const source = invocation.agent.session.snapshotEvents().findLast(event =>
     event.type === 'command/run' && String(event.data.commandId) === String(invocation.commandId))
   if (source?.type !== 'command/run' || source.data.name !== 'rp-state'
     || source.data.source.kind !== 'user'
@@ -27,7 +28,7 @@ export function executeRoleplayStateCommand(invocation: {
   }
   if (supportsAgentRpSessionEvents(invocation.agent.session)) {
     const written = appendUserRoleplayState(invocation.agent.session, request, source.seq)
-    return { kind: 'success', sourceEventSeq: written.eventSeq }
+    return { kind: 'success', sourceEventSeq: SessionSeq(written.eventSeq) }
   }
   const record = prepareUserRoleplayState(invocation.agent.session, request, source.seq)
   return { kind: 'success', text: encodeRoleplayStateRecord(record) }

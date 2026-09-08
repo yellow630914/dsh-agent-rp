@@ -4,12 +4,8 @@ import {
   createAssistantMessage,
   createUserMessage,
 } from '@deepseek-ai/dsh-llm'
-import {
-  Session,
-  SessionId,
-  type JsonValue,
-  type SessionEvent,
-} from '@deepseek-ai/dsh-session'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { SessionSeq, Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type { FileAttachmentRef } from './session-character.ts'
 import { decodeCharacterLibraryLaunch } from './session-character.ts'
 import {
@@ -165,6 +161,8 @@ function appendMessageEvents(
           content: [{ type: 'text', text: message.text }],
           source: { provider: 'sillytavern-import', model: 'history' },
         }),
+        // Imported history never streamed from a model, so the v2 embedded stream is empty.
+        stream: [],
       },
       surfaceOp: 'append',
     })
@@ -198,7 +196,7 @@ export function createSillyTavernChatSeed(
   if (!/\.jsonl$/iu.test(attachment.name)) throw new Error('SillyTavern chat source must be a .jsonl file')
   const events: SessionEvent[] = [{
     type: 'agent-rp/sillytavern-chat-import',
-    seq: 0,
+    seq: SessionSeq(0),
     time: Date.now(),
     data: metadata(chat, attachment),
     ignorable: true,
@@ -212,5 +210,5 @@ export function createSillyTavernChatSeed(
     appendMessageEvents(events, message, turn, eventTime(message, fallbackTime))
   }
   const validated = Session.create(SessionId('agent-rp-sillytavern-import-validation'), events)
-  return Object.freeze(validated.events.slice(0, events.length))
+  return Object.freeze(validated.snapshotEvents().slice(0, events.length))
 }

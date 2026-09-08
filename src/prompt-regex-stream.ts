@@ -61,10 +61,10 @@ function dialogueEvent(event: SessionEvent | undefined): event is DialogueNode['
 
 function dialogueNodes(session: Session): DialogueNode[] {
   return session.surface.nodes.flatMap(seq => {
-    const current = session.events[seq]
+    const current = session.snapshotEvents()[seq]
     if (!dialogueEvent(current)) return []
     const marker = sourceMarker(messageOf(current).source)
-    const candidate = marker === undefined ? current : session.events[marker.originalSeq]
+    const candidate = marker === undefined ? current : session.snapshotEvents()[marker.originalSeq]
     const original = dialogueEvent(candidate) && candidate.type === current.type ? candidate : current
     return [{ current, original, role: current.type === 'user/message' ? 'user' as const : 'assistant' as const }]
   })
@@ -148,6 +148,8 @@ function appendReplacement(
       content,
       source: sourceWithMarker(originalMessage.source, node.original.seq, trace),
     }) as Extract<SessionEvent, { type: 'assistant/message' }>['data']['message'],
+    // Regex rewriting replaces the visible text, so the original timed stream no longer describes it.
+    stream: [],
   }, { surfaceOp, sourceEventSeqs })
 }
 
@@ -256,7 +258,7 @@ export function applyPromptRegexSurface(
   session: Session,
   plan: RoleplayPromptTransformPlan,
 ): PromptRegexTraceRecord | undefined {
-  const position = openStep(session.events)
+  const position = openStep(session.snapshotEvents())
   if (position === undefined) return undefined
   const { card, scripts } = executionProgram(plan)
   const nodes = dialogueNodes(session)

@@ -13,7 +13,7 @@ function visibleRole(event: SessionEvent | undefined): 'assistant' | 'user' | un
 
 function latestVisibleRole(agent: Agent): 'assistant' | 'user' | undefined {
   for (let index = agent.session.surface.nodes.length - 1; index >= 0; index -= 1) {
-    const role = visibleRole(agent.session.events[agent.session.surface.nodes[index]!])
+    const role = visibleRole(agent.session.snapshotEvents()[agent.session.surface.nodes[index]!])
     if (role !== undefined) return role
   }
   return undefined
@@ -46,7 +46,7 @@ export async function executeTavernTrigger(invocation: {
       }))
       await agent.whenIdle()
       invocation.signal.throwIfAborted()
-      const generated = agent.session.events.slice(before)
+      const generated = agent.session.snapshotEvents().slice(before)
         .findLast((event): event is Extract<SessionEvent, { type: 'assistant/message' }> =>
           event.type === 'assistant/message' && event.surfaceOp === 'append')
       const text = generated?.data.message.content

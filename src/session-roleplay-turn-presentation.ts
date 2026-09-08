@@ -69,8 +69,8 @@ function initialTavernContribution(input: {
   const replySeq = input.settlementEvent.data.reply?.eventSeq
   const causal = replySeq === undefined
     ? undefined
-    : causalTavernState(input.session.events, replySeq, input.settlementEvent.seq)
-  const baseline = causal ?? readTavernHelperStateSnapshot(input.session.events, input.settlementEvent.seq)
+    : causalTavernState(input.session.snapshotEvents(), replySeq, input.settlementEvent.seq)
+  const baseline = causal ?? readTavernHelperStateSnapshot(input.session.snapshotEvents(), input.settlementEvent.seq)
   const deferred = input.settlementEvent.data.settle.modules.some(module =>
     module.moduleId === TAVERN_HELPER_ROLEPLAY_MODULE_ID && module.outcome === 'deferred')
   const status = causal !== undefined ? 'attached' as const
@@ -102,7 +102,7 @@ export function compileInitialSessionRoleplayTurnPresentation(input: {
 }): RoleplayTurnPresentation {
   const tavern = initialTavernContribution(input)
   const artifacts = readPresentedRoleplayArtifacts(
-    input.session.events,
+    input.session.snapshotEvents(),
     input.settlementEvent.data.turn,
     input.settlementEvent.seq,
   )
@@ -125,16 +125,16 @@ function generationArtifacts(
 ): readonly RoleplayPresentedArtifact[] | undefined {
   const selected = generation.versions.find(version => version.seq === generation.selectedVersionSeq)
   if (selected?.artifactReplySeqs === undefined) {
-    return readLatestRoleplayPresentationForReply(session.events, generation.selectedVersionSeq)?.present.artifacts
+    return readLatestRoleplayPresentationForReply(session.snapshotEvents(), generation.selectedVersionSeq)?.present.artifacts
   }
   const artifacts = new Map<string, RoleplayPresentedArtifact>()
   for (const replySeq of selected.artifactReplySeqs) {
-    const reply = eventAt(session.events, replySeq)
+    const reply = eventAt(session.snapshotEvents(), replySeq)
     if (reply?.type !== 'assistant/message') throw new Error('Roleplay artifact source reply is missing')
-    const closing = session.events.find(event => event.seq > reply.seq
+    const closing = session.snapshotEvents().find(event => event.seq > reply.seq
       && event.type === 'turn/end' && event.data.turn === reply.data.turn)
     for (const artifact of readPresentedRoleplayArtifacts(
-      session.events,
+      session.snapshotEvents(),
       reply.data.turn,
       closing === undefined ? Number.POSITIVE_INFINITY : closing.seq + 1,
     )) artifacts.set(artifact.artifactId, artifact)
@@ -148,7 +148,7 @@ function presentationForGeneration(
   generation: GenerationStateRecord,
 ): RoleplayTurnPresentation | undefined {
   selectedGenerationVersion(generation)
-  const baseline = readLatestRoleplayPresentationForReply(session.events, generation.anchorSeq)
+  const baseline = readLatestRoleplayPresentationForReply(session.snapshotEvents(), generation.anchorSeq)
   if (baseline === undefined) return undefined
   const contributions: RoleplayPresentationContribution[] = []
   if (generation.mvu !== undefined || roleplayPresentedState(baseline, MVU_ROLEPLAY_STATE_ID) !== undefined) {
@@ -158,7 +158,7 @@ function presentationForGeneration(
       ...(generation.mvu === undefined ? {} : { eventSeq: event.seq }),
     }] })
   }
-  const replayedTavern = readTavernHelperStateSnapshot(session.events, event.seq)
+  const replayedTavern = readTavernHelperStateSnapshot(session.snapshotEvents(), event.seq)
   const tavern = generation.tavern === undefined
     ? replayedTavern
     : { eventSeq: event.seq, state: generation.tavern }
@@ -208,7 +208,7 @@ function presentationForTavernMutation(
     ? event.data.cause
     : commandAttachment?.cause ?? tavern?.lastMutation?.cause
   if (tavern === undefined || cause === undefined || cause.sessionId !== String(session.id)) return undefined
-  const reply = eventAt(session.events, cause.replySeq)
+  const reply = eventAt(session.snapshotEvents(), cause.replySeq)
   if (reply?.type !== 'assistant/message') throw new Error('Roleplay presentation references a missing reply')
   const mvuChanged = (tavern.lastMutation?.scope === 'message' || tavern.lastMutation?.scope === 'chat')
     && typeof tavern.scopes[tavern.lastMutation.scope].stat_data === 'object'

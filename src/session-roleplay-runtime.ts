@@ -111,7 +111,7 @@ export function resolveSessionRoleplayRuntime(input: {
   readonly templateEngineAvailable?: boolean
   readonly extensions?: RoleplayRuntimeExtensionRegistry
 }): ResolvedSessionRoleplayRuntime {
-  const events = input.session.events
+  const events = input.session.snapshotEvents()
   const activeCharacter = readActiveSessionCharacter(events)
   const importedCard = activeCharacter === undefined ? undefined : cardFromImportMeta(activeCharacter.meta)
   const importedChat = readSillyTavernChatIdentity(events)

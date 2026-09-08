@@ -6,7 +6,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AttachmentStore, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { JsonValue, Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { RoleplayPresentedArtifact } from './roleplay-turn-presentation-types.ts'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
@@ -210,7 +211,7 @@ function currentToolCall(
   callId: string,
   toolName: string,
 ): Extract<SessionEvent, { readonly type: 'tool/call' }> {
-  const event = session.events.findLast(candidate => candidate.type === 'tool/call'
+  const event = session.snapshotEvents().findLast(candidate => candidate.type === 'tool/call'
     && String(candidate.data.callId) === callId)
   if (event?.type !== 'tool/call' || event.data.name !== toolName) {
     throw new Error(`${toolName} has no matching durable tool call`)
@@ -229,15 +230,15 @@ function referencedArtifact(
   call: Extract<SessionEvent, { readonly type: 'tool/call' }>,
   artifactId: string,
 ): RoleplayArtifactStageRecord {
-  for (let index = session.events.length - 1; index >= 0; index -= 1) {
-    const event = session.events[index]
+  for (let index = session.snapshotEvents().length - 1; index >= 0; index -= 1) {
+    const event = session.snapshotEvents()[index]
     if (event === undefined || event.seq >= call.seq || event.type !== 'tool/result'
       || event.data.turn !== call.data.turn || resultFailed(event)) continue
     const meta = readToolArtifactPresentationMeta(event.data.meta)
     const artifact = meta?.artifacts.find(candidate => String(candidate.attachment.attachmentId) === artifactId)
     if (artifact === undefined) continue
     const callId = resultCallId(event)
-    const toolName = callId === undefined ? undefined : sourceToolName(session.events, callId, event.seq)
+    const toolName = callId === undefined ? undefined : sourceToolName(session.snapshotEvents(), callId, event.seq)
     if (callId === undefined || toolName === undefined) continue
     return {
       format: ROLEPLAY_ARTIFACT_STAGE_FORMAT,
@@ -342,9 +343,9 @@ function latestPublishableArtifacts(
   session: Session,
   call: Extract<SessionEvent, { readonly type: 'tool/call' }>,
 ): { readonly artifacts: readonly RoleplayToolImageArtifact[]; readonly sourceResultSeq: number } | undefined {
-  const alreadyStaged = stagedSourceSeqs(session.events, call.data.turn)
-  for (let index = session.events.length - 1; index >= 0; index -= 1) {
-    const event = session.events[index]
+  const alreadyStaged = stagedSourceSeqs(session.snapshotEvents(), call.data.turn)
+  for (let index = session.snapshotEvents().length - 1; index >= 0; index -= 1) {
+    const event = session.snapshotEvents()[index]
     if (event === undefined || event.seq >= call.seq || event.type !== 'tool/result'
       || event.data.turn !== call.data.turn || resultFailed(event) || alreadyStaged.has(event.seq)) continue
     const artifacts = readRoleplayToolResultArtifacts({
@@ -653,7 +654,7 @@ export function installRoleplayArtifactCapability(
       const artifactId = boundedArtifactId(args.artifactId)
       const caption = boundedCaption(args.caption)
       const call = currentStageCall(exec.agent.session, String(exec.callId))
-      if (readStagedRoleplayArtifacts(exec.agent.session.events, call.data.turn, call.seq).length
+      if (readStagedRoleplayArtifacts(exec.agent.session.snapshotEvents(), call.data.turn, call.seq).length
         >= policy.behavior.image.maxPublicationsPerTurn) {
         throw new Error('this prepared turn already published its allowed roleplay image')
       }
@@ -709,7 +710,7 @@ export function installRoleplayArtifactCapability(
         throw new Error('publish_roleplay_image must be a top-level tool call so its stage decision is replayable')
       }
       const call = currentToolCall(exec.agent.session, String(exec.callId), ROLEPLAY_ARTIFACT_PUBLISH_TOOL)
-      if (readStagedRoleplayArtifacts(exec.agent.session.events, call.data.turn, call.seq).length
+      if (readStagedRoleplayArtifacts(exec.agent.session.snapshotEvents(), call.data.turn, call.seq).length
         >= policy.behavior.image.maxPublicationsPerTurn) {
         throw new Error('this prepared turn already published its allowed roleplay image')
       }

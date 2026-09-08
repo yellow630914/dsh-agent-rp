@@ -11,7 +11,7 @@ import {
   type StreamChunk,
   type TokenUsage,
 } from '@deepseek-ai/dsh-llm'
-import type { JsonValue } from '@deepseek-ai/dsh-session'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
   appendRoleplayActModelRequest,
   appendRoleplayActModelResult,
@@ -249,7 +249,7 @@ export function installMvuStreamCompletion(
           }
         }
       } catch (error: unknown) {
-        if (!agent.session.events.some(event => event.type === 'agent-rp/act-model-result'
+        if (!agent.session.snapshotEvents().some(event => event.type === 'agent-rp/act-model-result'
           && event.data.requestSeq === requestEvent.seq)) {
           appendRoleplayActModelResult(agent.session, {
             format: 0,

@@ -258,7 +258,7 @@ export class RoleplayResourceCatalog {
       throw new Error(`Roleplay resource provider ${JSON.stringify(located.providerId)} returned an invalid title`)
     }
     return Object.freeze({
-      events: Object.freeze(validated.events.slice(0, next.length)),
+      events: Object.freeze(validated.snapshotEvents().slice(0, next.length)),
       ...(title === undefined ? {} : { title }),
     })
   }

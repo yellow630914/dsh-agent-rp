@@ -46,18 +46,18 @@ export function exportSillyTavernSessionChat(
   session: Session,
   options: SillyTavernSessionExportOptions,
 ): SillyTavernSessionExport {
-  const generations = readGenerationGroups(session.events)
+  const generations = readGenerationGroups(session.snapshotEvents())
   const rows: Record<string, unknown>[] = [{
     user_name: options.userName,
     character_name: options.characterName,
-    create_date: sendDate(session.events[0]?.time ?? Date.now()),
+    create_date: sendDate(session.snapshotEvents()[0]?.time ?? Date.now()),
     chat_metadata: {
       exported_from: 'dsh-agent-rp',
       source_session_id: options.sessionId,
     },
   }]
   for (const seq of session.surface.nodes) {
-    const event = session.events[seq]
+    const event = session.snapshotEvents()[seq]
     if (event === undefined) continue
     const message = text(event)
     if (message === undefined || message.trim() === '') continue

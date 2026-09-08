@@ -77,7 +77,7 @@ export function appendSessionRoleplayTurnPlan(
     toolGuidance: plan.tools.source,
     reference: { ...reference, receipt: reference.receipt },
   }
-  const existing = session.events.find(event => event.type === 'agent-rp/turn-plan'
+  const existing = session.snapshotEvents().find(event => event.type === 'agent-rp/turn-plan'
     && event.data.turn === turn && event.data.reference.step === step)
   if (existing?.type === 'agent-rp/turn-plan') {
     if (!sameRecord(existing.data, record)) {
@@ -135,7 +135,7 @@ export function replaySessionRoleplayTurnPlan(input: {
   readonly extensions?: RoleplayRuntimeExtensionRegistry
 }): RoleplayTurnPlan {
   const { session, record } = input
-  const stored = session.events[record.seq]
+  const stored = session.snapshotEvents()[record.seq]
   if (stored?.type !== 'agent-rp/turn-plan' || !sameRecord(stored.data, record.data)) {
     throw new Error('Roleplay turn plan record is not present at its declared Session boundary')
   }
@@ -152,7 +152,7 @@ export function replaySessionRoleplayTurnPlan(input: {
   if (expectedDigest === undefined || expectedSections === undefined) {
     throw new Error('Roleplay turn plan is too old for exact replay verification')
   }
-  const boundary = replayBoundary(session, session.events.slice(0, reference.input.sessionSeq))
+  const boundary = replayBoundary(session, session.snapshotEvents().slice(0, reference.input.sessionSeq))
   const resolved = resolveSessionRoleplayRuntime({
     session: boundary,
     deployment: input.deployment,
@@ -163,7 +163,7 @@ export function replaySessionRoleplayTurnPlan(input: {
   const prepared = prepareRoleplayTurn({
     session: boundary,
     sessionBoundarySeq: reference.input.sessionSeq,
-    pendingMessages: pendingMessagesForRecord(session.events, record),
+    pendingMessages: pendingMessagesForRecord(session.snapshotEvents(), record),
     deployment: input.deployment,
     resolved,
     ...(record.data.toolGuidance === undefined ? {} : { toolGuidance: record.data.toolGuidance }),
@@ -171,8 +171,8 @@ export function replaySessionRoleplayTurnPlan(input: {
   })
   const replayed = bindRoleplayExternalContext({
     plan: prepared,
-    events: session.events,
-    visibleMessages: replayBoundary(session, session.events.slice(0, record.seq)).deriveMessages(),
+    events: session.snapshotEvents(),
+    visibleMessages: replayBoundary(session, session.snapshotEvents().slice(0, record.seq)).deriveMessages(),
     turn: record.data.turn,
     step: reference.step,
     beforeSeq: record.seq,

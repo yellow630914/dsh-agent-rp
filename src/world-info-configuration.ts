@@ -48,7 +48,7 @@ export function readSessionLorebookSourcesFromEvents(events: readonly SessionEve
 
 /** Host convenience wrapper for callers that already own an Agent. */
 export function readSessionLorebookSources(agent: Agent): readonly SessionLorebookSource[] {
-  return readSessionLorebookSourcesFromEvents(agent.session.events)
+  return readSessionLorebookSourcesFromEvents(agent.session.snapshotEvents())
 }
 
 /** Resolve only the books that should participate in the next model request from the Session log. */
@@ -60,7 +60,7 @@ export function readActiveSessionLorebookSourcesFromEvents(
 
 /** Host convenience wrapper for callers that already own an Agent. */
 export function readActiveSessionLorebookSources(agent: Agent): readonly SessionLorebookSource[] {
-  return readActiveSessionLorebookSourcesFromEvents(agent.session.events)
+  return readActiveSessionLorebookSourcesFromEvents(agent.session.snapshotEvents())
 }
 
 /** Execute one World Info manager mutation and persist its complete overlay snapshot. */
@@ -68,7 +68,7 @@ export function executeWorldInfoConfiguration(invocation: {
   readonly agent: Agent
   readonly rawInput: string
 }): { readonly kind: 'success'; readonly text: string } {
-  const current = readWorldInfoConfiguration(invocation.agent.session.events)
+  const current = readWorldInfoConfiguration(invocation.agent.session.snapshotEvents())
   const next = configureWorldInfo(
     current,
     parseWorldInfoConfigurationRequest(invocation.rawInput),

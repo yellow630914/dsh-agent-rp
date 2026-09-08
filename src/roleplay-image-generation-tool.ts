@@ -89,7 +89,7 @@ export interface RoleplayImageGenerationToolController {
 }
 
 function currentToolTurn(agent: Agent, callId: string): number {
-  const call = agent.session.events.findLast(event => event.type === 'tool/call'
+  const call = agent.session.snapshotEvents().findLast(event => event.type === 'tool/call'
     && String(event.data.callId) === callId)
   if (call?.type !== 'tool/call' || call.data.name !== ROLEPLAY_IMAGE_GENERATION_TOOL) {
     throw new Error('generate_roleplay_image has no matching durable tool call')

@@ -2,6 +2,7 @@
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandId } from '@deepseek-ai/dsh-commands'
+import type { SessionSeq } from '@deepseek-ai/dsh-session'
 import { CharacterLibrary } from './character-library.ts'
 import { SillyTavernChatLibrary } from './sillytavern-chat-library.ts'
 import type { SillyTavernChatLaunchRequest } from './sillytavern-chat-protocol.ts'
@@ -34,7 +35,7 @@ export function executeSillyTavernChatCommand(
   _chats: SillyTavernChatLibrary,
   _characters: CharacterLibrary,
   invocation: { readonly commandId: CommandId; readonly agent: Agent; readonly rawInput: string },
-): { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq: number } {
+): { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq: SessionSeq } {
   void invocation
   throw new Error('这个版本的旧聊天迁移入口已停用，请刷新页面后重新选择 JSONL 文件')
 }

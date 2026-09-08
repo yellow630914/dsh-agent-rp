@@ -75,7 +75,7 @@ export function resolveRoleplayActModelBoundary(
   session: Session,
   plan: RoleplayTurnPlan,
 ): RoleplayActModelBoundary | undefined {
-  const events = session.events
+  const events = session.snapshotEvents()
   const openStarts = events.filter((event): event is SessionEvent<'step/start'> =>
     event.type === 'step/start' && !events.some(candidate => candidate.seq > event.seq
       && candidate.type === 'step/end' && candidate.data.turn === event.data.turn

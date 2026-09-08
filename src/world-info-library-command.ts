@@ -3,7 +3,7 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandId } from '@deepseek-ai/dsh-commands'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import type { JsonValue } from '@deepseek-ai/dsh-session'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { prepareWorldInfoImportResult, type WorldInfoImportMeta } from './import/session-world-info.ts'
 import { WorldInfoLibrary } from './world-info-library.ts'
 import {
@@ -35,7 +35,7 @@ export function executeWorldInfoLibraryCommand(
   invocation: { readonly commandId: CommandId; readonly agent: Agent; readonly rawInput: string },
 ): { readonly kind: 'success'; readonly text: string } {
   const request = parseWorldInfoLibraryLaunchRequest(invocation.rawInput)
-  const source = invocation.agent.session.events.at(-1)
+  const source = invocation.agent.session.snapshotEvents().at(-1)
   if (source?.type !== 'command/run' || source.data.name !== 'rp-world-info-import'
     || String(source.data.commandId) !== String(invocation.commandId)) {
     throw new Error('世界书导入命令不是当前 Session 事件')

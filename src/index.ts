@@ -10,7 +10,7 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ScopeKey } from '@deepseek-ai/dsh-scope'
-import type { SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
+import { SessionSeq, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -456,8 +456,8 @@ interface HumanCommandGateway {
       readonly agent: Agent
       readonly rawInput: string
       readonly signal: AbortSignal
-    }) => { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: number }
-      | Promise<{ readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: number }>
+    }) => { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: SessionSeq }
+      | Promise<{ readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: SessionSeq }>
   }): () => void
 }
 
@@ -691,8 +691,8 @@ function isCharacterCardAttachment(value: unknown): value is CharacterCardAttach
 }
 
 function latestConsumedAttachments(agent: Agent): { eventSeq: number; attachments: FileAttachmentRef[] } {
-  for (let index = agent.session.events.length - 1; index >= 0; index -= 1) {
-    const event = agent.session.events[index]
+  for (let index = agent.session.snapshotEvents().length - 1; index >= 0; index -= 1) {
+    const event = agent.session.snapshotEvents()[index]
     if (event?.type !== 'user/message' || event.data.source.kind !== 'user') continue
     const source = event.data.source as unknown as { attachmentConsumer?: unknown; attachments?: unknown }
     const attachments = source.attachmentConsumer === 'dsh-agent-rp' && Array.isArray(source.attachments)
@@ -705,8 +705,8 @@ function latestConsumedAttachments(agent: Agent): { eventSeq: number; attachment
 }
 
 function latestUserAttachments(agent: Agent): { eventSeq: number; attachments: CharacterCardAttachmentRef[] } {
-  for (let index = agent.session.events.length - 1; index >= 0; index -= 1) {
-    const event = agent.session.events[index]
+  for (let index = agent.session.snapshotEvents().length - 1; index >= 0; index -= 1) {
+    const event = agent.session.snapshotEvents()[index]
     if (event?.type !== 'user/message' || event.data.source.kind !== 'user') continue
     const direct = event.data.content.flatMap(block => block.type === 'image' ? [block.attachment] : [])
     const source = event.data.source as unknown as {
@@ -827,7 +827,7 @@ export function installAgentRp(
       phase: 'settle',
       async run(input) {
         if (input.plan.plan.act.stateActions.length === 0) return { outcome: 'skipped' }
-        const hasInlineStateAction = input.agent.session.events.some((event) => {
+        const hasInlineStateAction = input.agent.session.snapshotEvents().some((event) => {
           if (event.type !== 'tool/result' || event.data.turn !== input.turn || event.data.error !== undefined) return false
           const block = event.data.message.content[0]
           const intent = readRoleplayStateActionIntent(event.data.meta)
@@ -864,13 +864,13 @@ export function installAgentRp(
   installRoleplayActorRevisionCapability(ctx, actorRevisions, {
     resolveActor(agent) {
       if (agentsByScope.get(agent) !== agent) return undefined
-      const active = readActiveSessionCharacter(agent.session.events)
+      const active = readActiveSessionCharacter(agent.session.snapshotEvents())
       if (active !== undefined) {
         return active.result.libraryId === undefined
           ? undefined
           : { kind: 'actor', id: characterLibraryRoleplayResourceId(active.result.libraryId) }
       }
-      const selected = readRoleplayExperienceSelection(agent.session.events)?.actor
+      const selected = readRoleplayExperienceSelection(agent.session.snapshotEvents())?.actor
       return selected === undefined ? undefined : { kind: 'actor', id: selected.id }
     },
   })
@@ -894,7 +894,7 @@ export function installAgentRp(
       || result.isError || turnCoordinator.currentActLane(agent) !== 'narrative') return
     const plan = turnCoordinator.current(agent)
     if (plan?.tools.capability.artifactPresentation !== true) return
-    const followup = detectRoleplayArtifactFollowup(agent.session.events, String(exec.callId), result)
+    const followup = detectRoleplayArtifactFollowup(agent.session.snapshotEvents(), String(exec.callId), result)
     if (followup !== undefined) {
       turnCoordinator.enterArtifactHandoff(agent, followup.turn)
       roleplayImageGenerationCapability.prepare(agent, undefined)
@@ -1113,8 +1113,8 @@ export function installAgentRp(
       const preset = parseSillyTavernPresetBytes(await input.readFile(attachment, signal), attachment.name)
       const libraryEntry = presetLibrary.import(preset)
       return {
-        seed: createPresetSessionSeed(input.source.session.events, libraryEntry.preset, attachment, libraryEntry.id),
-        title: readActiveSessionCharacter(input.source.session.events)?.result.name ?? preset.name,
+        seed: createPresetSessionSeed(input.source.session.snapshotEvents(), libraryEntry.preset, attachment, libraryEntry.id),
+        title: readActiveSessionCharacter(input.source.session.snapshotEvents())?.result.name ?? preset.name,
       }
     },
   }), 'agent-rp: SillyTavern preset importer')
@@ -1230,7 +1230,7 @@ export function installAgentRp(
       highRiskToolRestrictions.set(agent, agent.ctx.tools.restrict({ deny: highRiskTools }))
     }
     const resolveCharacter = () => {
-      const active = readActiveSessionCharacter(agent.session.events)
+      const active = readActiveSessionCharacter(agent.session.snapshotEvents())
       if (active === undefined) return undefined
       let originalFilename: string | undefined
       if (active.result.libraryId !== undefined) {
@@ -1325,7 +1325,7 @@ export function installAgentRp(
     if (step === 1) {
       storyBriefByAgent.delete(agent)
       try {
-        const workspaceId = readSessionStoryWorkspaceId(agent.session.events)
+        const workspaceId = readSessionStoryWorkspaceId(agent.session.snapshotEvents())
         if (workspaceId !== undefined) {
           const brief = await runStoryTurnPipeline({
             ctx,
@@ -1380,7 +1380,7 @@ export function installAgentRp(
     const activePlan = agentsByScope.get(agent) === agent
       ? turnCoordinator.bindStep(agent, turn, step, plan => bindRoleplayExternalContext({
         plan,
-        events: agent.session.events,
+        events: agent.session.snapshotEvents(),
         visibleMessages: agent.session.deriveMessages(),
         turn,
         step,
@@ -1423,7 +1423,7 @@ export function installAgentRp(
       ctx.logger.warn(`agent-rp: post-narrative Worker pipeline skipped: ${error instanceof Error ? error.message : String(error)}`)
     }
     try {
-      const workspaceId = readSessionStoryWorkspaceId(agent.session.events)
+      const workspaceId = readSessionStoryWorkspaceId(agent.session.snapshotEvents())
       if (workspaceId !== undefined) {
         await materializeStoryTurn({ ctx, agent, store: storyWorkspaces, workspaceId, turn, signal })
       }
@@ -1506,7 +1506,7 @@ export function installAgentRp(
       if (exec.agent === undefined) throw new Error('remember requires an Agent Session')
       if (exec.parent !== undefined) throw new Error('remember must be called directly by the character Agent')
       const record = prepareAgentRpMemory(exec.agent.session, String(exec.callId), args)
-      if (roleplayToolCallFollowsVisibleReply(exec.agent.session.events, String(exec.callId))) {
+      if (roleplayToolCallFollowsVisibleReply(exec.agent.session.snapshotEvents(), String(exec.callId))) {
         exec.concludeTurn()
       }
       return Promise.resolve(record)
@@ -1536,7 +1536,7 @@ export function installAgentRp(
           result,
           preset: preset as unknown as import('./import/sillytavern-preset.ts').ImportedSillyTavernPreset,
         }
-        return meta as unknown as import('@deepseek-ai/dsh-session').JsonValue
+        return meta as unknown as import('@deepseek-ai/dsh-util-values').JsonValue
       },
     },
     async execute(args, exec) {
@@ -1592,7 +1592,7 @@ export function installAgentRp(
       presentationMeta: (_args, value) => {
         const { raw, ...result } = value
         const meta: CharacterImportMeta = { format: 0, result, raw }
-        return meta as unknown as import('@deepseek-ai/dsh-session').JsonValue
+        return meta as unknown as import('@deepseek-ai/dsh-util-values').JsonValue
       },
     },
     async execute(args, exec) {
@@ -1622,7 +1622,7 @@ export function installAgentRp(
           direct.eventSeq,
           stored.ref,
           args.greetingIndex ?? 0,
-          readSillyTavernChatIdentity(exec.agent.session.events)?.userName,
+          readSillyTavernChatIdentity(exec.agent.session.snapshotEvents())?.userName,
           libraryEntry.id,
         )
       }
@@ -1640,7 +1640,7 @@ export function installAgentRp(
         transport: 'png',
         metadataKeyword: payload.keyword,
       }, direct.eventSeq, stored.ref, args.greetingIndex ?? 0,
-      readSillyTavernChatIdentity(exec.agent.session.events)?.userName, libraryEntry.id)
+      readSillyTavernChatIdentity(exec.agent.session.snapshotEvents())?.userName, libraryEntry.id)
     },
     presentCall: () => ({ card: 'generic', title: '导入角色卡', kind: 'read' }),
     presentResult: (_args, result) => ({
@@ -1671,7 +1671,7 @@ export function installAgentRp(
       presentationMeta: (_args, value) => {
         const { raw, ...result } = value
         const meta: WorldInfoImportMeta = { format: 0, result, raw }
-        return meta as unknown as import('@deepseek-ai/dsh-session').JsonValue
+        return meta as unknown as import('@deepseek-ai/dsh-util-values').JsonValue
       },
     },
     async execute(args, exec) {

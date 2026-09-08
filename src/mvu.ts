@@ -1,6 +1,7 @@
 /** Minimal persistent MVU state for imported Character Cards. */
 
-import { snapshotJsonValue, type JsonValue, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
+import { type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import type { ImportedCharacterCard, ImportedLorebook } from './import/types.ts'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
@@ -212,7 +213,7 @@ export function readCurrentSessionMvuStateFromLorebooks(
   session: Session,
 ): ReturnType<typeof readCurrentMvuStateFromLorebooks> {
   const surface = new Set(session.surface.nodes)
-  return readCurrentMvuStateFromLorebooks(lorebooks, session.events.filter(event =>
+  return readCurrentMvuStateFromLorebooks(lorebooks, session.snapshotEvents().filter(event =>
     event.type !== 'assistant/message' || surface.has(event.seq)))
 }
 
@@ -229,7 +230,7 @@ export function mvuTurnSettlementContribution(input: {
     return { moduleId: MVU_ROLEPLAY_MODULE_ID, outcome: 'failed', error }
   }
   const visible = new Set(input.session.surface.nodes)
-  const failedThisTurn = input.session.events.some(event => event.seq >= input.firstSeq
+  const failedThisTurn = input.session.snapshotEvents().some(event => event.seq >= input.firstSeq
     && event.type === 'assistant/message' && event.data.turn === input.turn && visible.has(event.seq)
     && /<UpdateVariable(?:variable)?>/iu.test(event.data.message.content
       .flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')))

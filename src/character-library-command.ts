@@ -2,6 +2,7 @@
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandId } from '@deepseek-ai/dsh-commands'
+import type { SessionSeq } from '@deepseek-ai/dsh-session'
 import { CharacterLibrary } from './character-library.ts'
 import type { CharacterLibraryLaunchRequest } from './character-library-protocol.ts'
 import { parseSessionPersona } from './session-persona.ts'
@@ -39,7 +40,7 @@ export function executeCharacterLibraryCommand(
     readonly agent: Agent
     readonly rawInput: string
   },
-): { readonly kind: 'success'; readonly text: string; readonly sourceEventSeq: number } {
+): { readonly kind: 'success'; readonly text: string; readonly sourceEventSeq: SessionSeq } {
   void invocation
   throw new Error('这个版本的旧角色启动入口已停用，请刷新页面后从角色库重新开始')
 }

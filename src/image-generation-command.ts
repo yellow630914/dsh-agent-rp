@@ -81,7 +81,7 @@ export async function executeImageGenerationCommand(
   },
 ): Promise<{ readonly kind: 'success'; readonly text: string }> {
   const request = parseImageGenerationRequest(invocation.rawInput)
-  const source = invocation.agent.session.events.at(-1)
+  const source = invocation.agent.session.snapshotEvents().at(-1)
   if (source?.type !== 'command/run' || source.data.name !== 'rp-draw'
     || String(source.data.commandId) !== String(invocation.commandId)) {
     throw new Error('图片生成命令不是当前 Session 事件')

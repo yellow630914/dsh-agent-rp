@@ -1,7 +1,7 @@
 /** Durable, source-neutral result compiled when one Roleplay turn closes. */
 
 import { createHash } from 'node:crypto'
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionSeq, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readAgentRpMemoryHistory } from './memory.ts'
 import { MVU_ROLEPLAY_MODULE_ID, MVU_ROLEPLAY_STATE_ID } from './mvu.ts'
 import {
@@ -425,7 +425,7 @@ function exactTurnEvents(
         return event.data.turn === turn
       }
       if (event.type === 'agent-rp/act-model-result') {
-        const request = eventsBySeq.get(event.data.requestSeq)
+        const request = eventsBySeq.get(SessionSeq(event.data.requestSeq))
         return request?.type === 'agent-rp/act-model-request' && request.data.turn === turn
       }
       return false
@@ -495,7 +495,7 @@ export function compileRoleplayActReceipt(
       const reference = plans.find(plan => plan.step === data.step)
       const start = starts.get(data.step)
       const end = ends.get(data.step)
-      const planEvent = eventsBySeq.get(data.planSeq)
+      const planEvent = eventsBySeq.get(SessionSeq(data.planSeq))
       const expected = reference?.receipt?.act?.responseRepairs.some(program =>
         program.engine === data.purpose.engine && program.moduleId === data.purpose.moduleId
           && program.stateId === data.purpose.stateId) === true
@@ -916,7 +916,7 @@ export function appendRoleplayTurnSettlement(
   session: Session,
   settlement: RoleplayTurnSettlement,
 ): SessionEvent<'agent-rp/turn-settlement'> {
-  const existing = session.events.find(event => event.type === 'agent-rp/turn-settlement'
+  const existing = session.snapshotEvents().find(event => event.type === 'agent-rp/turn-settlement'
     && event.data.turn === settlement.turn)
   if (existing?.type === 'agent-rp/turn-settlement') return existing
   return appendAgentRpSessionEvent(session, 'agent-rp/turn-settlement', settlement)

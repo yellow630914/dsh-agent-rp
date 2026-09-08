@@ -89,9 +89,9 @@ function reviewRequest(
 }
 
 function terminalForStep(input: Parameters<RoleplayTurnWorker['run']>[0]): boolean {
-  const requests = input.agent.session.events.filter(event => event.type === 'agent-rp/narrative-review-request'
+  const requests = input.agent.session.snapshotEvents().filter(event => event.type === 'agent-rp/narrative-review-request'
     && event.data.turn === input.turn && event.data.step === input.plan.step)
-  return requests.some(request => input.agent.session.events.some(event => event.type === 'agent-rp/narrative-review-result'
+  return requests.some(request => input.agent.session.snapshotEvents().some(event => event.type === 'agent-rp/narrative-review-result'
     && event.data.requestSeq === request.seq))
 }
 
@@ -162,7 +162,7 @@ export function createRoleplayNarrativeReviewWorker(enabled: () => boolean): Rol
         })
         return { outcome: 'applied', requestEventSeq: requestEvent.seq, resultEventSeq: resultEvent.seq }
       } catch (error: unknown) {
-        const existing = input.agent.session.events.find(event => event.type === 'agent-rp/narrative-review-result'
+        const existing = input.agent.session.snapshotEvents().find(event => event.type === 'agent-rp/narrative-review-result'
           && event.data.requestSeq === requestEvent.seq)
         const resultEvent = existing ?? appendAgentRpSessionEvent(input.agent.session, 'agent-rp/narrative-review-result', {
           format: 0,

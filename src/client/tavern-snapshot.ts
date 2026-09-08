@@ -1,7 +1,7 @@
 /** Shared projection of one Agent RP Session into SillyTavern-compatible page state. */
 
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
-import type { JsonValue } from '@deepseek-ai/dsh-session/types'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { ImportedRegexScript, ImportedTavernHelperScript } from '../import/types.ts'
 import type {
   TavernScriptTree,

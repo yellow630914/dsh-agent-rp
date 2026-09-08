@@ -1,6 +1,7 @@
 /** Pure, provider-neutral plan compiled for one Roleplay turn. */
 
-import { snapshotJsonValue, type JsonValue, type Session, type UserMessage } from '@deepseek-ai/dsh-session'
+import { snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
+import { type Session, type UserMessage } from '@deepseek-ai/dsh-session'
 import type { ResolvedConfig } from './config.ts'
 import {
   createEjsWorldInfoBooks,
@@ -461,7 +462,7 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
     characterName,
     userName: userName ?? '用户',
     ...(characterWorldbook === undefined ? {} : { characterWorldInfoBookName: characterWorldbook }),
-    replayTime: sessionBoundarySeq === 0 ? 0 : input.session.events[sessionBoundarySeq - 1]?.time ?? 0,
+    replayTime: sessionBoundarySeq === 0 ? 0 : input.session.snapshotEvents()[sessionBoundarySeq - 1]?.time ?? 0,
     entropy: macroContext.entropy,
     messages: [...roleplayVisibleDialogue(input.session, pendingMessages), ...injectedScanText],
     transcript,
@@ -657,7 +658,7 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
       afterHistory: [...prompt.afterHistory, { role: 'system', content: stateContext }],
     }
   }
-  const memoryHistory = readAgentRpMemoryHistory(input.session.events)
+  const memoryHistory = readAgentRpMemoryHistory(input.session.snapshotEvents())
   const memory: RoleplayMemoryPlan = {
     ...snapshot.memory,
     reads: memoryHistory.active.map(record => ({

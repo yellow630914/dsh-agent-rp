@@ -39,14 +39,14 @@ export function createSessionRoleplayTurnBoundary(
   session: Session,
   closing: SessionEvent<'turn/end'>,
 ): SessionRoleplayTurnBoundary {
-  const prefix = session.events.slice(0, closing.seq + 1)
+  const prefix = session.snapshotEvents().slice(0, closing.seq + 1)
   const last = prefix.at(-1)
   if (last?.type !== 'turn/end' || last.seq !== closing.seq
     || last.data.turn !== closing.data.turn) {
     throw new Error('Roleplay turn boundary is unavailable from this Session')
   }
   const boundary = Session.create(session.id, prefix)
-  return { session: boundary, events: boundary.events.slice(0, prefix.length) }
+  return { session: boundary, events: boundary.snapshotEvents().slice(0, prefix.length) }
 }
 
 /**
@@ -68,7 +68,7 @@ export function recoverSessionRoleplayTurns(input: {
   let presentations = 0
   for (const record of records) {
     if (record.boundary.endSeq === undefined) continue
-    const closing = input.session.events[record.boundary.endSeq]
+    const closing = input.session.snapshotEvents()[record.boundary.endSeq]
     if (closing?.type !== 'turn/end' || closing.data.turn !== record.turn) {
       throw new Error('Roleplay recovery record references a missing closing boundary')
     }
@@ -76,7 +76,7 @@ export function recoverSessionRoleplayTurns(input: {
     if (!roleplayTurnRecordFinalizable(record)) continue
     let settlement = record.settle === undefined
       ? undefined
-      : input.session.events[record.settle.eventSeq]
+      : input.session.snapshotEvents()[record.settle.eventSeq]
     if (settlement !== undefined && settlement.type !== 'agent-rp/turn-settlement') {
       throw new Error('Roleplay recovery record references a missing settlement')
     }

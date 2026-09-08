@@ -2,7 +2,8 @@
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { isSurfaceEvent, type JsonValue, type SessionEvent, type SurfaceEvent, type SurfaceIntent } from '@deepseek-ai/dsh-session'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { isSurfaceEvent, type SessionEvent, type SurfaceEvent, type SurfaceIntent } from '@deepseek-ai/dsh-session'
 import type { TavernChatMessageInput, TavernChatMutationRequest, TavernHiddenMessage } from './tavern-helper.ts'
 
 type JsonRecord = Readonly<Record<string, JsonValue>>
@@ -39,7 +40,7 @@ function textContent(event: SurfaceEvent): string | undefined {
 
 function surfaceEntries(agent: Agent): readonly SurfaceEntry[] {
   return agent.session.surface.nodes.map(seq => {
-    const event = agent.session.events[seq]
+    const event = agent.session.snapshotEvents()[seq]
     if (event === undefined || !isSurfaceEvent(event)) throw new Error('current Session surface contains an invalid node')
     return { kind: 'existing' as const, event }
   })
@@ -113,13 +114,15 @@ function appendEntry(agent: Agent, entry: SurfaceEntry, intent: SurfaceIntent): 
       source: { kind: 'user' },
     }), intent))
   }
-  const coordinates = assistantCoordinates(agent.session.events)
+  const coordinates = assistantCoordinates(agent.session.snapshotEvents())
   return requireSurfaceEvent(agent.session.append('assistant/message', {
     ...coordinates,
     message: createAssistantMessage({
       content: [{ type: 'text', text: entry.text }],
       source: { provider: 'dsh-agent-rp', model: 'tavern-script' },
     }),
+    // Script-authored surface text never streamed from a model.
+    stream: [],
   }, intent))
 }
 

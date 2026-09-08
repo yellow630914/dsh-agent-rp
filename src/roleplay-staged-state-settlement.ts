@@ -13,7 +13,8 @@ import {
   type LlmFailure,
   type ResolvedRetryPolicy,
 } from '@deepseek-ai/dsh-llm'
-import { foldSurface, type JsonValue, type SessionEvent } from '@deepseek-ai/dsh-session'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { foldSurface, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { jsonrepair } from 'jsonrepair'
 import {
   roleplayActModelDispatch,
@@ -289,10 +290,10 @@ function settlementEvidence(
     stringifySillyTavernPromptJson(current, identity),
     '</current_state>',
     '<player_input>',
-    playerInputText(agent.session.events, planEvent),
+    playerInputText(agent.session.snapshotEvents(), planEvent),
     '</player_input>',
     '<roleplay_reply>',
-    visibleReplyText(agent.session.events, turn, step, planEvent.seq, surfaceThroughEventSeq),
+    visibleReplyText(agent.session.snapshotEvents(), turn, step, planEvent.seq, surfaceThroughEventSeq),
     '</roleplay_reply>',
   ].join('\n')
 }
@@ -556,7 +557,7 @@ async function dispatchStateSettlement(
     })
     return { outcome: 'success', requestEvent, resultEvent, text, operations }
   } catch (error: unknown) {
-    let resultEvent = input.agent.session.events.find(
+    let resultEvent = input.agent.session.snapshotEvents().find(
       (event): event is SessionEvent<'agent-rp/staged-state-result'> =>
         event.type === 'agent-rp/staged-state-result' && event.data.requestSeq === requestEvent.seq,
     )
@@ -609,9 +610,9 @@ export async function runRoleplayStagedStateSettlement(input: {
   if (target === undefined) return { outcome: 'skipped' }
   const state = input.plan.plan.stateReads.find(read => read.id === target.stateId)
   if (state?.value === undefined) return { outcome: 'skipped' }
-  const planEvent = matchingPlanEvent(input.agent.session.events, input.turn, input.plan)
-  const through = stepEnd(input.agent.session.events, input.turn, input.plan.step)
-  if (terminalForCoverage(input.agent.session.events, input.turn, through.seq)) return { outcome: 'skipped' }
+  const planEvent = matchingPlanEvent(input.agent.session.snapshotEvents(), input.turn, input.plan)
+  const through = stepEnd(input.agent.session.snapshotEvents(), input.turn, input.plan.step)
+  if (terminalForCoverage(input.agent.session.snapshotEvents(), input.turn, through.seq)) return { outcome: 'skipped' }
   const evidence = settlementEvidence(
     input.agent,
     input.turn,

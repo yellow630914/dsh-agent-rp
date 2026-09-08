@@ -439,7 +439,7 @@ async function runStage(
     resultEventSeqs.push(resultEvent.seq)
     return { text, resultEventSeq: resultEvent.seq }
   } catch (error: unknown) {
-    const existing = input.agent.session.events.find(event => event.type === 'agent-rp/story-stage-result'
+    const existing = input.agent.session.snapshotEvents().find(event => event.type === 'agent-rp/story-stage-result'
       && event.data.requestSeq === requestEvent.seq)
     const resultEvent = existing ?? appendAgentRpSessionEvent(input.agent.session, 'agent-rp/story-stage-result', {
       format: 0,
@@ -494,7 +494,7 @@ function modelContext(finalDraft: string): string {
 
 /** Run or replay the complete story Worker pipeline for one accepted model step. */
 export async function runStoryTurnPipeline(input: RunStoryTurnPipelineInput): Promise<StoryTurnBriefRecord> {
-  const prior = existingBrief(input.agent.session.events, input)
+  const prior = existingBrief(input.agent.session.snapshotEvents(), input)
   if (prior !== undefined) return prior.data
   input.signal.throwIfAborted()
   const playerInput = messageText(input.messages)
@@ -630,15 +630,15 @@ export async function materializeStoryTurn(input: {
   readonly turn: number
   readonly signal: AbortSignal
 }): Promise<StoryTurnMaterializedRecord | undefined> {
-  const previous = input.agent.session.events.findLast((event): event is SessionEvent<'agent-rp/story-turn-materialized'> =>
+  const previous = input.agent.session.snapshotEvents().findLast((event): event is SessionEvent<'agent-rp/story-turn-materialized'> =>
     event.type === 'agent-rp/story-turn-materialized' && event.data.turn === input.turn
       && event.data.workspaceId === input.workspaceId)
   if (previous !== undefined) return previous.data
-  const briefEvent = input.agent.session.events.findLast((event): event is SessionEvent<'agent-rp/story-turn-brief'> =>
+  const briefEvent = input.agent.session.snapshotEvents().findLast((event): event is SessionEvent<'agent-rp/story-turn-brief'> =>
     event.type === 'agent-rp/story-turn-brief' && event.data.turn === input.turn
       && event.data.workspaceId === input.workspaceId)
   if (briefEvent === undefined) return undefined
-  const visibleReply = visibleReplyText(input.agent.session.events, input.turn)
+  const visibleReply = visibleReplyText(input.agent.session.snapshotEvents(), input.turn)
   if (visibleReply === '') return undefined
   const workspace = input.store.get(input.workspaceId)
   const participants = workspace.manifest.characters.filter(character => character.enabled)

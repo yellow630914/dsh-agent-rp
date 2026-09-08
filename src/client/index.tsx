@@ -1,13 +1,14 @@
 /** Roleplay browser shell and native SillyTavern migration affordances. */
 
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { JsonValue } from '@deepseek-ai/dsh-session/types'
-import type {
-  ClientContext, SessionId, SessionSummary, WorkspaceView,
-} from '@deepseek-ai/dsh-client-runtime/client'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CommandRowProps, IConversation, TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { CommandRowProps, TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
+import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -12984,7 +12985,7 @@ function SessionLaunchNoticeToast({ source }: { readonly source: SessionLaunchNo
 }
 
 /** Client services required by the Roleplay shell. */
-export const inject = ['connection', 'conversationEvents', 'slots', 'sessions', 'workspaces']
+export const inject = ['connection', 'uiConversation', 'slots', 'sessions', 'workspaces']
 
 /** Register the Agent RP header, composer presentation, and import affordance. */
 export function apply(ctx: ClientContext): void {

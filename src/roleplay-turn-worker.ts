@@ -62,7 +62,7 @@ export interface RoleplayTurnWorker {
 const phaseOrder: Readonly<Record<RoleplayTurnWorkerPhase, number>> = { review: 0, settle: 1 }
 
 function terminalExists(input: RoleplayTurnWorkerInput, workerId: string): boolean {
-  return input.agent.session.events.some(event => event.type === 'agent-rp/turn-worker-result'
+  return input.agent.session.snapshotEvents().some(event => event.type === 'agent-rp/turn-worker-result'
     && event.data.turn === input.turn && event.data.step === input.plan.step
     && event.data.workerId === workerId)
 }

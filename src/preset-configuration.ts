@@ -12,7 +12,7 @@ export function configurePresetFromCommand(invocation: {
   readonly agent: Agent
   readonly rawInput: string
 }): { readonly kind: 'success' } {
-  const events = invocation.agent.session.events
+  const events = invocation.agent.session.snapshotEvents()
   const current = events.at(-1)
   if (current?.type !== 'command/run'
     || current.data.name !== 'rp-preset-configure'

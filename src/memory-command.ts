@@ -56,7 +56,7 @@ export function executeAgentRpMemoryCommand(invocation: {
   readonly rawInput: string
 }): { readonly kind: 'success'; readonly text: string } {
   const request = parseAgentRpMemoryCommandRequest(invocation.rawInput)
-  const events = invocation.agent.session.events
+  const events = invocation.agent.session.snapshotEvents()
   const source = events.at(-1)
   if (source?.type !== 'command/run' || source.data.name !== 'rp-memory'
     || String(source.data.commandId) !== String(invocation.commandId)) {

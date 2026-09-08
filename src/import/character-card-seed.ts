@@ -1,6 +1,6 @@
 /** Model-free Character Card import into a native roleplay Session. */
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionSeq, Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import {
   prepareCharacterImportResult,
   type CharacterCardAttachmentRef,
@@ -73,7 +73,7 @@ export function createCharacterCardSessionSeed(
   const fromLibrary = libraryId !== undefined && String(attachment.attachmentId) === `library:${libraryId}`
   const events: SessionEvent[] = [{
     type: 'agent-rp/character-card-seed',
-    seq: 0,
+    seq: SessionSeq(0),
     time,
     data: {
       format: 0,
@@ -87,7 +87,7 @@ export function createCharacterCardSessionSeed(
   if (persona !== undefined) {
     events.push({
       type: 'agent-rp/persona-seed',
-      seq: events.length,
+      seq: SessionSeq(events.length),
       time,
       data: { format: 0, persona },
       ignorable: true,
@@ -109,11 +109,13 @@ export function createCharacterCardSessionSeed(
           content: [{ type: 'text', text: renderedGreeting }],
           source: { provider: 'agent-rp-import', model: 'character-card' },
         }),
+        // Imported history never streamed from a model, so the v2 embedded stream is empty.
+        stream: [],
       },
       surfaceOp: 'append',
     })
     push({ type: 'step/end', time: time + 1, data: { turn: 1, step: 1 } })
     push({ type: 'turn/end', time: time + 1, data: { turn: 1, reason: { kind: 'completed' } } })
   }
-  return Object.freeze(Session.create(SessionId('agent-rp-character-card-import-validation'), events).events.slice(0, events.length))
+  return Object.freeze(Session.create(SessionId('agent-rp-character-card-import-validation'), events).snapshotEvents().slice(0, events.length))
 }

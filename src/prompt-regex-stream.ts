@@ -159,7 +159,7 @@ function appendReplacement(
   appendAgentRpSessionEvent(
     session,
     'agent-rp/surface-override',
-    roleplaySurfaceOverride(replacement.seq, [node.current.seq]),
+    roleplaySurfaceOverride([replacement.seq], [node.current.seq]),
   )
 }
 

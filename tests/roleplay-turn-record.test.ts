@@ -197,7 +197,7 @@ test('updates only present when a later reply version is selected', () => {
     stream: [],
   }, { surfaceOp: 'append' })
   appendAgentRpSessionEvent(fixture.session, 'agent-rp/surface-override',
-    roleplaySurfaceOverride(surface.seq, [fixture.reply.seq, alternative.seq]))
+    roleplaySurfaceOverride([surface.seq], [fixture.reply.seq, alternative.seq]))
   const trigger = fixture.session.append('command/done', {
     commandId: CommandId('turn-record-version'),
     kind: 'success',

@@ -236,7 +236,7 @@ test('switches Tavern reply branches through command/done on the published Host'
     stream: [],
   }, { surfaceOp: 'append' })
   appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
-    roleplaySurfaceOverride(surface.seq, [original.seq, alternative.seq]))
+    roleplaySurfaceOverride([surface.seq], [original.seq, alternative.seq]))
   const groupId = '00000000-0000-4000-8000-000000000201'
   const seedId = CommandId('published-tavern-generation-seed')
   session.append('command/run', { commandId: seedId, name: 'rp-generation', source: { kind: 'user' } })

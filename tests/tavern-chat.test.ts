@@ -4,6 +4,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { executeTavernChatMutation } from '../src/tavern-chat.ts'
+import { roleplayModelHistory, roleplaySurfaceNodes } from '../src/roleplay-surface-overlay.ts'
 import { installIgnorableSessionEventFixture } from './session-event-fixture.ts'
 
 installIgnorableSessionEventFixture()
@@ -35,7 +36,7 @@ function createTranscript(...messages: readonly { readonly role: 'assistant' | '
 }
 
 function transcript(session: Session): readonly string[] {
-  return session.deriveMessages().map(message => message.content
+  return roleplayModelHistory(session).map(message => message.content
     .flatMap(block => block.type === 'text' ? [block.text] : []).join('\n'))
 }
 
@@ -189,7 +190,7 @@ test('re-mints message identity when a hidden-prefix rewrite re-appends the surf
   assert.equal(ids.filter(id => id === pluginId).length, 1)
 
   // Provenance and content survive the re-mint.
-  const replayed = session.surface.nodes
+  const replayed = roleplaySurfaceNodes(session)
     .map(seq => session.snapshotEvents()[seq])
     .filter(event => event?.type === 'user/message'
       && (event.data as { readonly source: { readonly kind: string } }).source.kind === 'plugin')

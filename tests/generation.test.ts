@@ -40,7 +40,7 @@ function appendAssistant(session: Session, turn: number, text: string, supersede
   // the supersession in its own overlay event instead.
   if (supersedes !== undefined) {
     appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
-      roleplaySurfaceOverride(appended.seq, supersedes))
+      roleplaySurfaceOverride([appended.seq], supersedes))
   }
   return appended
 }

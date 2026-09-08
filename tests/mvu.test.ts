@@ -130,7 +130,7 @@ test('excludes shadowed reply updates while retaining durable script state', () 
     stream: [],
   }, { surfaceOp: 'append' })
   appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
-    roleplaySurfaceOverride(supersedingReply.seq, [original.seq]))
+    roleplaySurfaceOverride([supersedingReply.seq], [original.seq]))
 
   assert.deepEqual(readCurrentSessionMvuState(card, session), {
     statData: { 角色: { 等级: 4 } }, updateCount: 1,
@@ -163,7 +163,7 @@ test('replays an exact MVU version checkpoint before applying the new visible re
     stream: [],
   }, { surfaceOp: 'append' })
   appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
-    roleplaySurfaceOverride(supersedingReply.seq, [rejected.seq]))
+    roleplaySurfaceOverride([supersedingReply.seq], [rejected.seq]))
 
   assert.deepEqual(readCurrentSessionMvuState(card, session), {
     statData: { 角色: { 等级: 5 } }, updateCount: 3,

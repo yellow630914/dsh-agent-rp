@@ -425,7 +425,7 @@ test('reply-version selection produces the current unified presentation', () => 
     stream: [],
   }, { surfaceOp: 'append' })
   appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
-    roleplaySurfaceOverride(surface.seq, [original.seq, alternative.seq]))
+    roleplaySurfaceOverride([surface.seq], [original.seq, alternative.seq]))
   const groupId = '00000000-0000-4000-8000-000000000183'
   const resultEvent = session.append('command/done', {
     commandId: CommandId('presentation-version'),
@@ -481,7 +481,7 @@ test('reply versions restore branch-local state and artifacts together after rep
     stream: [],
   }, { surfaceOp: 'append' })
   appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
-    roleplaySurfaceOverride(surface.seq, session.surface.nodes.slice(session.surface.nodes.indexOf(original.seq))))
+    roleplaySurfaceOverride([surface.seq], session.surface.nodes.slice(session.surface.nodes.indexOf(original.seq))))
   const alternativeState = applyTavernHelperMutation(originalBase, {
     format: 0, scope: 'chat', variables: { marker: 'alternative' },
   })

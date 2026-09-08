@@ -560,7 +560,7 @@ test('settles MVU after the visible reply through a replayable local-provider st
     stream: [],
   }, { surfaceOp: 'append' })
   appendAgentRpSessionEvent(session, 'agent-rp/surface-override',
-    roleplaySurfaceOverride(reviewedNarrative.seq, [narrative.seq]))
+    roleplaySurfaceOverride([reviewedNarrative.seq], [narrative.seq]))
   const requestTexts: string[] = []
   const requestSystems: string[] = []
   const requestReasoning: (string | undefined)[] = []

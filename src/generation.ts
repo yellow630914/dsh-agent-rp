@@ -309,7 +309,7 @@ function appendCurrentReplySurface(
   appendAgentRpSessionEvent(
     agent.session,
     'agent-rp/surface-override',
-    roleplaySurfaceOverride(replacement.seq, superseded),
+    roleplaySurfaceOverride([replacement.seq], superseded),
   )
   return replacement
 }

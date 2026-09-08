@@ -141,12 +141,11 @@ function rewriteSurface(agent: Agent, before: readonly SurfaceEntry[], after: re
   // is available. Append the whole rewritten range and record one supersession
   // for Agent RP's model-visible overlay.
   const appended = after.map(entry => appendEntry(agent, entry, { surfaceOp: 'append' }))
-  const replacement = appended[0]
-  if (replacement === undefined) throw new Error('脚本没有写入任何聊天楼层')
+  if (appended.length === 0) throw new Error('脚本没有写入任何聊天楼层')
   appendAgentRpSessionEvent(
     agent.session,
     'agent-rp/surface-override',
-    roleplaySurfaceOverride(replacement.seq, superseded),
+    roleplaySurfaceOverride(appended.map(event => event.seq), superseded),
   )
 }
 
@@ -232,7 +231,7 @@ function setMessages(
     appendAgentRpSessionEvent(
       agent.session,
       'agent-rp/surface-override',
-      roleplaySurfaceOverride(appended.seq, [update.target.event.seq]),
+      roleplaySurfaceOverride([appended.seq], [update.target.event.seq]),
     )
   }
   return { hiddenPrefix, ...(messageVariables === undefined ? {} : { messageVariables }) }

@@ -47,6 +47,9 @@ import { readTavernMessageAnnotations } from '../src/tavern-message-annotation.t
 import { parseCharacterCardJson } from '../src/import/character-card.ts'
 import { createCharacterCardSessionSeed } from '../src/import/character-card-seed.ts'
 import { inspectLorebook } from '../src/import/lorebook.ts'
+import { installIgnorableSessionEventFixture } from './session-event-fixture.ts'
+
+installIgnorableSessionEventFixture()
 
 interface CapturedIgnorableEvent {
   readonly type: string

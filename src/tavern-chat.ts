@@ -5,7 +5,7 @@ import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { isSurfaceEvent, type SessionEvent, type SurfaceEvent, type SurfaceIntent } from '@deepseek-ai/dsh-session'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
-import { roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
+import { roleplaySurfaceNodes, roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
 import type { TavernChatMessageInput, TavernChatMutationRequest, TavernHiddenMessage } from './tavern-helper.ts'
 
 type JsonRecord = Readonly<Record<string, JsonValue>>
@@ -41,7 +41,7 @@ function textContent(event: SurfaceEvent): string | undefined {
 }
 
 function surfaceEntries(agent: Agent): readonly SurfaceEntry[] {
-  return agent.session.surface.nodes.map(seq => {
+  return roleplaySurfaceNodes(agent.session).map(seq => {
     const event = agent.session.snapshotEvents()[seq]
     if (event === undefined || !isSurfaceEvent(event)) throw new Error('current Session surface contains an invalid node')
     return { kind: 'existing' as const, event }
@@ -224,10 +224,16 @@ function setMessages(
     if (role !== target.role || text !== target.text) planned.push({ target, role, text })
   }
   for (const update of planned) {
-    appendEntry(agent, { kind: 'synthetic', role: update.role, text: update.text }, {
-      surfaceOp: { op: 'replace', start: update.target.event.seq, end: update.target.event.seq },
-      sourceEventSeqs: [update.target.event.seq],
+    // An updated floor may be an Assistant message, which DSH 0.1.3 bars from
+    // replacing surface nodes — append and record the supersession instead.
+    const appended = appendEntry(agent, { kind: 'synthetic', role: update.role, text: update.text }, {
+      surfaceOp: 'append',
     })
+    appendAgentRpSessionEvent(
+      agent.session,
+      'agent-rp/surface-override',
+      roleplaySurfaceOverride(appended.seq, [update.target.event.seq]),
+    )
   }
   return { hiddenPrefix, ...(messageVariables === undefined ? {} : { messageVariables }) }
 }

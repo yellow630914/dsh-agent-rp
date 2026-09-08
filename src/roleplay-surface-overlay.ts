@@ -18,7 +18,7 @@
  * shows every appended node, which is the honest degraded view.
  */
 
-import { isSurfaceEvent, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { isSurfaceEvent, type Session, type SessionEvent, type SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Message } from '@deepseek-ai/dsh-llm'
 
 /** One recorded supersession: appended replacement plus the nodes it hides. */
@@ -89,6 +89,23 @@ export function readRoleplaySurfaceOverlay(events: readonly SessionEvent[]): Rol
     hidden.delete(record.replacement)
   }
   return { hidden }
+}
+
+/**
+ * Current model-visible surface node seqs with the Agent RP overlay applied.
+ *
+ * Before DSH 0.1.3 a superseded node left `session.surface.nodes` on its own,
+ * because the replacement carried a surface `replace`. Agent RP now supersedes
+ * through this overlay, so every reader that means "the nodes on the surface
+ * right now" must go through here — a bare `session.surface.nodes` still lists
+ * the replaced originals and double-counts every rewritten floor.
+ * @param session - live session whose surface is read.
+ * @returns the visible node seqs in model-visible order.
+ */
+export function roleplaySurfaceNodes(session: Session): readonly SessionSeq[] {
+  const { hidden } = readRoleplaySurfaceOverlay(session.snapshotEvents())
+  if (hidden.size === 0) return session.surface.nodes
+  return session.surface.nodes.filter(seq => !hidden.has(seq))
 }
 
 /**

@@ -3,6 +3,7 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { roleplaySurfaceNodes } from './roleplay-surface-overlay.ts'
 
 function visibleRole(event: SessionEvent | undefined): 'assistant' | 'user' | undefined {
   if (event?.type === 'user/message'
@@ -12,8 +13,10 @@ function visibleRole(event: SessionEvent | undefined): 'assistant' | 'user' | un
 }
 
 function latestVisibleRole(agent: Agent): 'assistant' | 'user' | undefined {
-  for (let index = agent.session.surface.nodes.length - 1; index >= 0; index -= 1) {
-    const role = visibleRole(agent.session.snapshotEvents()[agent.session.surface.nodes[index]!])
+  const nodes = roleplaySurfaceNodes(agent.session)
+  const events = agent.session.snapshotEvents()
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
+    const role = visibleRole(events[nodes[index]!])
     if (role !== undefined) return role
   }
   return undefined

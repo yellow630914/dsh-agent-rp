@@ -4,6 +4,9 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { executeTavernChatMutation } from '../src/tavern-chat.ts'
+import { installIgnorableSessionEventFixture } from './session-event-fixture.ts'
+
+installIgnorableSessionEventFixture()
 
 function createTranscript(...messages: readonly { readonly role: 'assistant' | 'user'; readonly text: string }[]): {
   readonly agent: Agent

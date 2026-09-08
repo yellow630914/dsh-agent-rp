@@ -11,6 +11,7 @@ import type {
 import { cardFromImportMeta, readActiveSessionCharacter } from './import/session-character.ts'
 import { readActiveSessionPreset } from './import/session-preset.ts'
 import { presetTavernHelperScripts } from './import/sillytavern-preset.ts'
+import { roleplaySurfaceNodes } from './roleplay-surface-overlay.ts'
 import { executeTavernChatMutation } from './tavern-chat.ts'
 import { tavernChatMessageSeqs } from './tavern-chat.ts'
 import {
@@ -50,7 +51,7 @@ function latestCausalPresentation(agent: Agent, replySeq: number): RoleplayTurnP
 }
 
 function latestVisibleAssistantSeq(agent: Agent): number | undefined {
-  for (const seq of [...agent.session.surface.nodes].reverse()) {
+  for (const seq of [...roleplaySurfaceNodes(agent.session)].reverse()) {
     const event = agent.session.snapshotEvents().find(candidate => candidate.seq === seq)
     if (event?.type === 'assistant/message') return event.seq
   }

@@ -4,6 +4,7 @@ import { snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
 import { type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import type { ImportedCharacterCard, ImportedLorebook } from './import/types.ts'
+import { roleplaySurfaceNodes } from './roleplay-surface-overlay.ts'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
 import type { RoleplayTurnSettlementContribution } from './roleplay-runtime.ts'
 import { decodeActiveTavernHelperState } from './tavern-helper.ts'
@@ -212,7 +213,7 @@ export function readCurrentSessionMvuStateFromLorebooks(
   lorebooks: readonly ImportedLorebook[],
   session: Session,
 ): ReturnType<typeof readCurrentMvuStateFromLorebooks> {
-  const surface = new Set(session.surface.nodes)
+  const surface = new Set(roleplaySurfaceNodes(session))
   return readCurrentMvuStateFromLorebooks(lorebooks, session.snapshotEvents().filter(event =>
     event.type !== 'assistant/message' || surface.has(event.seq)))
 }
@@ -229,7 +230,7 @@ export function mvuTurnSettlementContribution(input: {
   if (input.state?.source?.kind === 'agent-action' && input.state.source.turn === input.turn) {
     return { moduleId: MVU_ROLEPLAY_MODULE_ID, outcome: 'failed', error }
   }
-  const visible = new Set(input.session.surface.nodes)
+  const visible = new Set(roleplaySurfaceNodes(input.session))
   const failedThisTurn = input.session.snapshotEvents().some(event => event.seq >= input.firstSeq
     && event.type === 'assistant/message' && event.data.turn === input.turn && visible.has(event.seq)
     && /<UpdateVariable(?:variable)?>/iu.test(event.data.message.content

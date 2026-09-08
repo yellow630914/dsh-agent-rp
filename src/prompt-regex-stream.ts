@@ -24,7 +24,7 @@ import {
   type PromptRegexTraceRecord,
 } from './frontend-regex.ts'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
-import { roleplayModelHistory, roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
+import { roleplaySurfaceNodes, roleplayModelHistory, roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
 import type { ImportedRegexScript } from './import/types.ts'
 import {
   prepareSillyTavernProviderMessages,
@@ -62,7 +62,7 @@ function dialogueEvent(event: SessionEvent | undefined): event is DialogueNode['
 }
 
 function dialogueNodes(session: Session): DialogueNode[] {
-  return session.surface.nodes.flatMap(seq => {
+  return roleplaySurfaceNodes(session).flatMap(seq => {
     const current = session.snapshotEvents()[seq]
     if (!dialogueEvent(current)) return []
     const marker = sourceMarker(messageOf(current).source)

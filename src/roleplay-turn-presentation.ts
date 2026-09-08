@@ -5,6 +5,7 @@ import type {
   BoundRoleplayTurnPlan,
   RoleplayTurnPlanReference,
 } from './roleplay-turn-settlement.ts'
+import { roleplaySurfaceNodes } from './roleplay-surface-overlay.ts'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
 import {
   normalizeRoleplayTurnPresentation as importedNormalizePresentation,
@@ -62,7 +63,7 @@ function settlementEventAt(
 }
 
 function latestVisibleAssistantSeq(session: Session): number | undefined {
-  for (const seq of [...session.surface.nodes].reverse()) {
+  for (const seq of [...roleplaySurfaceNodes(session)].reverse()) {
     const event = eventAt(session.snapshotEvents(), seq)
     if (event?.type !== 'assistant/message') continue
     const text = event.data.message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')

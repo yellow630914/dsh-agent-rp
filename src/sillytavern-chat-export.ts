@@ -1,6 +1,7 @@
 /** Serialize the active DSH Roleplay transcript as a portable SillyTavern chat. */
 
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import { roleplaySurfaceNodes } from './roleplay-surface-overlay.ts'
 import { readGenerationGroups } from './generation.ts'
 
 /** Identity and provenance included in one exported chat. */
@@ -56,7 +57,7 @@ export function exportSillyTavernSessionChat(
       source_session_id: options.sessionId,
     },
   }]
-  for (const seq of session.surface.nodes) {
+  for (const seq of roleplaySurfaceNodes(session)) {
     const event = session.snapshotEvents()[seq]
     if (event === undefined) continue
     const message = text(event)

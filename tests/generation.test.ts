@@ -11,7 +11,7 @@ import {
 } from '../src/generation.ts'
 import { CommandId } from '@deepseek-ai/dsh-commands'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
+import { roleplayModelHistory, roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { executeTavernTrigger } from '../src/tavern-trigger.ts'
 import {
   appendTavernHelperState,
@@ -133,7 +133,7 @@ test('folds latest selectable reply group snapshots across replacement events', 
   const [group] = readGenerationGroups(session.snapshotEvents())
   assert.equal(group?.selectedVersionSeq, original.seq)
   assert.equal(group?.surfaceSeq, restored.seq)
-  assert.deepEqual(session.deriveMessages().map(message => message.content[0]?.type === 'text' ? message.content[0].text : ''), ['第一版'])
+  assert.deepEqual(roleplayModelHistory(session).map(message => message.content[0]?.type === 'text' ? message.content[0].text : ''), ['第一版'])
 })
 
 test('rejects reply versions that reference a non-state event', () => {
@@ -174,7 +174,7 @@ test('regenerates without exposing the rejected reply to the replacement request
     inbox: { hasPending: false },
     followup(message: ReturnType<typeof createUserMessage>) {
       session.append('user/message', message, { surfaceOp: 'append' })
-      requestTranscript = session.deriveMessages().map(item => item.content.flatMap(block =>
+      requestTranscript = roleplayModelHistory(session).map(item => item.content.flatMap(block =>
         block.type === 'text' ? [block.text] : []).join('\n'))
       appendAssistant(session, 2, '房间里只有安静的灯光。')
     },
@@ -190,7 +190,7 @@ test('regenerates without exposing the rejected reply to the replacement request
   const state = decodeGenerationState(result.text)
 
   assert.equal(requestTranscript.some(text => text.includes('有问题的回复') || text.includes('<状态栏>')), false)
-  assert.deepEqual(session.deriveMessages().map(message => message.content.flatMap(block =>
+  assert.deepEqual(roleplayModelHistory(session).map(message => message.content.flatMap(block =>
     block.type === 'text' ? [block.text] : []).join('\n')), [
     '请描述没有状态栏的房间。',
     '房间里只有安静的灯光。',
@@ -229,7 +229,7 @@ test('keeps adapter replay state only while reply content remains exact', async 
     inbox: { hasPending: false },
     followup(message: ReturnType<typeof createUserMessage>) {
       regenerateSession.append('user/message', message, { surfaceOp: 'append' })
-      const placeholder = regenerateSession.deriveMessages().findLast(item => item.role === 'assistant')
+      const placeholder = roleplayModelHistory(regenerateSession).findLast(item => item.role === 'assistant')
       placeholderReplay = placeholder?.source.kind === 'model' ? placeholder.source.replayState : undefined
       appendReplayAssistant(regenerateSession, 2, '新回复', 'new')
     },
@@ -242,7 +242,7 @@ test('keeps adapter replay state only while reply content remains exact', async 
     signal: new AbortController().signal,
   })
   assert.equal(placeholderReplay, undefined)
-  const regenerated = regenerateSession.deriveMessages().findLast(item => item.role === 'assistant')
+  const regenerated = roleplayModelHistory(regenerateSession).findLast(item => item.role === 'assistant')
   assert.deepEqual(regenerated?.source.kind === 'model' ? regenerated.source.replayState : undefined, replay('new'))
 
   const continueSession = Session.create(SessionId('generation-replay-continue'))
@@ -266,7 +266,7 @@ test('keeps adapter replay state only while reply content remains exact', async 
     rawInput: JSON.stringify({ operation: 'continue', replySeq: first.seq }),
     signal: new AbortController().signal,
   })
-  const continued = continueSession.deriveMessages().findLast(item => item.role === 'assistant')
+  const continued = roleplayModelHistory(continueSession).findLast(item => item.role === 'assistant')
   assert.equal(continued?.source.kind === 'model' ? continued.source.replayState : undefined, undefined)
   assert.equal(continued?.content[0]?.type === 'text' ? continued.content[0].text : '', '第一段第二段')
 })
@@ -393,7 +393,7 @@ test('restores the selected reply when isolated regeneration produces no replace
     signal: new AbortController().signal,
   }), /模型没有生成可用的角色回复/u)
 
-  assert.deepEqual(session.deriveMessages().map(message => message.content.flatMap(block =>
+  assert.deepEqual(roleplayModelHistory(session).map(message => message.content.flatMap(block =>
     block.type === 'text' ? [block.text] : []).join('\n')), ['继续。', '保留这一版。'])
   assert.deepEqual(readTavernHelperState(session.snapshotEvents())?.scopes.message, { stat_data: { marker: 'retained-reply' } })
 })
@@ -459,7 +459,7 @@ test('triggers one reply after a Tavern script appends a user message', async ()
 
   assert.equal(triggerText, 'Respond to the latest user-authored roleplay message. Output only the in-character response.')
   assert.deepEqual(JSON.parse(result.text), { format: 0, assistantSeq: 1 })
-  assert.deepEqual(session.deriveMessages().map(message => message.content[0]?.type === 'text' ? message.content[0].text : ''), [
+  assert.deepEqual(roleplayModelHistory(session).map(message => message.content[0]?.type === 'text' ? message.content[0].text : ''), [
     '延续当前剧情', '角色继续回应',
   ])
 })
@@ -539,7 +539,7 @@ test('rewrites the last turn input in place and keeps no version of the discarde
     inbox: { hasPending: false },
     followup(message: ReturnType<typeof createUserMessage>) {
       session.append('user/message', message, { surfaceOp: 'append' })
-      requestTranscript = session.deriveMessages().map(item => item.content.flatMap(block =>
+      requestTranscript = roleplayModelHistory(session).map(item => item.content.flatMap(block =>
         block.type === 'text' ? [block.text] : []).join('\n'))
       appendAssistant(session, 2, '窗外正在下雨。')
     },
@@ -558,7 +558,7 @@ test('rewrites the last turn input in place and keeps no version of the discarde
   assert.equal(requestTranscript.some(text => text.includes('我推开窗。')), true)
   assert.equal(requestTranscript.some(text => text.includes('我推开门。')), false)
   assert.equal(requestTranscript.some(text => text.includes('门后是一条走廊。')), false)
-  assert.deepEqual(session.deriveMessages().map(message => message.content.flatMap(block =>
+  assert.deepEqual(roleplayModelHistory(session).map(message => message.content.flatMap(block =>
     block.type === 'text' ? [block.text] : []).join('\n')), [
     '我推开窗。',
     '窗外正在下雨。',
@@ -622,7 +622,7 @@ test('restores the original input and reply when the rewritten turn produces not
     rawInput: JSON.stringify({ operation: 'rewrite-input', replySeq: original, text: '我推开窗。' }),
     signal: new AbortController().signal,
   }), /模型没有生成可用的角色回复/u)
-  assert.deepEqual(session.deriveMessages().map(message => message.content.flatMap(block =>
+  assert.deepEqual(roleplayModelHistory(session).map(message => message.content.flatMap(block =>
     block.type === 'text' ? [block.text] : []).join('\n')), [
     '我推开门。',
     '门后是一条走廊。',

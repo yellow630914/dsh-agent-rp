@@ -167,3 +167,50 @@ test('uses an aligned imported message when its durable seq cannot identify the 
     kind: 'inline-html', source: '<span style="color:#d9b36c">藤子</span>',
   }])
 })
+
+function planText(plan: ReturnType<ReturnType<typeof createRoleplayDisplayPlanner>['user']>): string {
+  if (plan.kind !== 'render') return ''
+  return plan.compilation.segments.map(segment => segment.kind === 'markdown' ? segment.text : segment.source).join('')
+}
+
+test('renders a rewritten turn into the rows the transcript already showed', () => {
+  // The Host transcript is built from append-origin events, so after an
+  // in-place input rewrite it still carries the original message and the
+  // discarded reply, plus the freshly generated one. The group anchors on
+  // those original rows.
+  const rewritten: RoleplayDisplayProjection = {
+    ...projection,
+    tavern: { messages: [{ messageId: 0, seq: 30, role: 'user', text: '我推开窗。', isHidden: false }] },
+    generations: [{
+      anchorSeq: 20,
+      selectedVersionSeq: 21,
+      assistantSeqs: [20, 21],
+      versions: [{ seq: 21, text: '窗外正在下雨。' }],
+      rewrittenInput: { seq: 10, text: '我推开窗。' },
+    }],
+  }
+  const planner = createRoleplayDisplayPlanner({
+    projection: rewritten, frontend, immersive: true, overrides: new Map(),
+  })
+
+  // The original player row shows the replacement, with no display rules and
+  // even though seq 10 is no longer on the surface.
+  const userPlan = planner.user({ seq: 10 })
+  assert.equal(userPlan.kind, 'render')
+  assert.equal(userPlan.kind === 'render' ? userPlan.source : '', 'rewritten-input')
+  assert.match(planText(userPlan), /我推开窗。/u)
+  // No messageId: the DOM adapter gates rendering on card-frame retention.
+  assert.equal(userPlan.kind === 'render' ? userPlan.messageId : 'unset', undefined)
+
+  // The discarded reply's row renders the new reply …
+  const anchorPlan = planner.assistant({ finalSeq: 20, blockText: '门后是一条走廊。' })
+  assert.equal(anchorPlan.kind, 'render')
+  assert.match(planText(anchorPlan), /窗外正在下雨。/u)
+  // … and the freshly appended reply row is hidden, so the turn reads as one exchange.
+  assert.deepEqual(planner.assistant({ finalSeq: 21, blockText: '窗外正在下雨。' }), {
+    kind: 'hidden', reason: 'unselected-generation',
+  })
+
+  // Rows outside the rewritten turn are untouched.
+  assert.deepEqual(planner.user({ seq: 999 }), { kind: 'host' })
+})

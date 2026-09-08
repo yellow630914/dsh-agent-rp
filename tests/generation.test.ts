@@ -554,9 +554,18 @@ test('rewrites the last turn input in place and keeps no version of the discarde
     '我推开窗。',
     '窗外正在下雨。',
   ])
-  // No version group: the old reply answered a message that no longer exists.
-  assert.deepEqual(readGenerationGroups(session.events), [])
-  assert.equal(result.text.startsWith('agent-rp-generation-v0:'), false)
+  // The Host transcript keeps showing the rows that were appended, so the group
+  // anchors on the discarded reply: the display planner renders the new text
+  // into that row and hides the freshly appended one.
+  // The command result carries the record; the Host appends it as command/done.
+  const group = decodeGenerationState(result.text)
+  assert.equal(group?.operation, 'rewrite-input')
+  assert.equal(group?.anchorSeq, original.seq)
+  assert.deepEqual(group?.rewrittenInput, { seq: 0, text: '我推开窗。' })
+  // A single version: the old reply is discarded, not parked behind a switcher.
+  assert.deepEqual(group?.versions.map(version => version.text), ['窗外正在下雨。'])
+  assert.equal(group?.selectedVersionSeq, group?.versions[0]?.seq)
+  assert.equal(group?.surfaceSeq, session.surface.nodes.at(-1))
 })
 
 test('refuses to rewrite the input of a turn that is not the last one', async () => {

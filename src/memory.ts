@@ -103,6 +103,9 @@ export type AgentRpMemoryCommandRequest = {
   readonly format: 0
   readonly operation: 'import'
   readonly entries: readonly AgentRpMemorySeedEntry[]
+} | {
+  readonly format: 0
+  readonly operation: 'forget-all'
 }
 
 /** Durable result of one user-initiated memory command. */
@@ -183,6 +186,12 @@ function memoryCommandRequest(value: unknown): AgentRpMemoryCommandRequest {
       text: normalizeText(record.text, 'text', TEXT_MAX_LENGTH),
     }
   }
+  if (record.operation === 'forget-all') {
+    if (Object.keys(record).some(key => key !== 'format' && key !== 'operation')) {
+      throw new Error('记忆操作请求字段无效')
+    }
+    return { format: 0, operation: 'forget-all' }
+  }
   if (record.operation === 'import') {
     if (!Array.isArray(record.entries) || record.entries.length === 0
       || record.entries.length > IMPORT_MAX_ENTRIES
@@ -246,6 +255,8 @@ function memoryCommandMatches(
         && request.subject === command.subject && request.text === command.text
     case 'forget':
       return command.operation === 'forget' && request.id === command.id
+    case 'forget-all':
+      return command.operation === 'forget-all'
     case 'import':
       return command.operation === 'import'
         && request.entries.length === command.entries.length
@@ -454,6 +465,14 @@ function applyCommandRecord(
     if (active.has(added.id)) throw new Error(`重复的 Agent RP 记忆编号 ${added.id}`)
     active.set(added.id, added)
     return [added]
+  }
+  if (command.operation === 'forget-all') {
+    // One record clears the whole set, so the log keeps a single reversible
+    // statement of what happened instead of one forget per memory. Nothing new
+    // is created, so no record joins the chronological history.
+    if (active.size === 0) throw new Error('记忆清空操作没有可清空的记录')
+    active.clear()
+    return []
   }
   if (command.operation === 'import') {
     // One command/done carries the whole batch, so an import either lands

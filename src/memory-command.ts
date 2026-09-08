@@ -82,6 +82,13 @@ export function executeAgentRpMemoryCommand(invocation: {
       throw new Error(`${shown}${rest}已经有有效记忆，导入已取消；请先整理这些主题，或从文件里移除它们`)
     }
     expectedActive += request.entries.length
+  } else if (request.operation === 'forget-all') {
+    // One record for the whole set, so the log states what happened once
+    // instead of a forget per memory. The player is asked to confirm and the
+    // set is exported before this runs, because the log only appends: nothing
+    // undoes it afterwards.
+    if (history.active.length === 0) throw new Error('当前没有可清空的记忆')
+    expectedActive = 0
   } else {
     if (!history.active.some(record => record.id === request.id)) {
       throw new Error('这条记忆已经被纠正或忘记，请刷新后再试')

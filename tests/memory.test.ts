@@ -436,3 +436,45 @@ test('rejects a whole import batch instead of applying part of it', () => {
     format: 0, operation: 'import', entries: [],
   })), /字段无效/u)
 })
+
+test('clears every active memory with one record while the history stays readable', () => {
+  const agent = { session: Session.create(SessionId('agent-rp-memory-clear')) } as Agent
+  runMemoryCommand(agent, JSON.stringify({
+    format: 0, operation: 'add', kind: 'relationship', subject: '称呼', text: '角色称呼用户为小满',
+  }), 1)
+  runMemoryCommand(agent, JSON.stringify({
+    format: 0,
+    operation: 'import',
+    entries: [
+      { kind: 'preference', subject: '饮品', text: '用户喝红茶不加糖' },
+      { kind: 'event', subject: '初遇', text: '两人在海城钟楼下第一次见面。' },
+    ],
+  }), 2)
+  assert.equal(readAgentRpMemoryHistory(agent.session.events).active.length, 3)
+  const before = agent.session.events.length
+
+  assert.deepEqual(parseAgentRpMemoryCommandRequest('{"format":0,"operation":"forget-all"}'), {
+    format: 0, operation: 'forget-all',
+  })
+  runMemoryCommand(agent, JSON.stringify({ format: 0, operation: 'forget-all' }), 3)
+
+  const history = readAgentRpMemoryHistory(agent.session.events)
+  assert.deepEqual(history.active, [])
+  // One command/run + one command/done cleared the whole set.
+  assert.equal(agent.session.events.length - before, 2)
+  // Clearing removes nothing from the chronological history, so what was
+  // remembered — and later forgotten — is still replayable.
+  assert.deepEqual(history.all.map(record => record.subject), ['称呼', '饮品', '初遇'])
+  assert.equal(renderMemoryContext(agent.session.events), '')
+
+  // Nothing left to clear, and the Session is unchanged by the refusal.
+  const settled = agent.session.events.length
+  assert.throws(() => {
+    runMemoryCommand(agent, JSON.stringify({ format: 0, operation: 'forget-all' }), 4)
+  }, /没有可清空的记忆/u)
+  assert.equal(readAgentRpMemoryHistory(agent.session.events).active.length, 0)
+  assert.equal(agent.session.events.length, settled + 1)
+
+  assert.throws(() => parseAgentRpMemoryCommandRequest('{"format":0,"operation":"forget-all","id":"memory-1"}'),
+    /字段无效/u)
+})

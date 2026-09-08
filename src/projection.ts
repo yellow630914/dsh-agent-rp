@@ -1436,6 +1436,7 @@ export function createAgentRpProjectionDefinition(
         selectedVersionSeq: group.selectedVersionSeq,
         assistantSeqs: group.assistantSeqs,
         versions: group.versions,
+        ...(group.rewrittenInput === undefined ? {} : { rewrittenInput: group.rewrittenInput }),
       })),
       ...(state.currentReplySeq === undefined ? {} : { currentReplySeq: state.currentReplySeq }),
       ...(state.presentation === undefined ? {} : { presentation: state.presentation }),

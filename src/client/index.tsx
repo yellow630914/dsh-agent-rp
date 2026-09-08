@@ -5009,6 +5009,7 @@ function MemoryManagerDialog({ load, onManage, onClose }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const memoryFileRef = useRef<HTMLInputElement>(null)
+  const [clearing, setClearing] = useState(false)
   const refresh = (): Promise<void> => load().then(setMemories)
   useEffect(() => {
     let current = true
@@ -5069,6 +5070,19 @@ function MemoryManagerDialog({ load, onManage, onClose }: {
       window.setTimeout(() => { URL.revokeObjectURL(objectUrl) }, 0)
     }
   }
+  const clearMemories = (): void => {
+    // Export first: the Session log only appends, so nothing undoes this
+    // afterwards. Handing the player the file before the records go is the
+    // only recovery path there is — and it doubles as the import source.
+    exportMemories()
+    setBusy(true)
+    setError(undefined)
+    void onManage({ format: 0, operation: 'forget-all' }).then(refresh).then(() => {
+      setClearing(false)
+    }).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    }).finally(() => { setBusy(false) })
+  }
   const importMemories = (file: File): void => {
     setBusy(true)
     setError(undefined)
@@ -5127,6 +5141,10 @@ function MemoryManagerDialog({ load, onManage, onClose }: {
             event.currentTarget.value = ''
             if (file !== undefined) importMemories(file)
           }} />
+          <button type="button" data-agent-rp-action="clear-memory"
+            disabled={busy || memories === undefined || memories.length === 0}
+            onClick={() => { setError(undefined); setClearing(true) }}
+            style={{ ...headerMenuItemStyle, color: 'var(--dsw-alias-state-danger, #e06470)' }}>清空</button>
           <button type="button" data-agent-rp-action="export-memory"
             disabled={busy || memories === undefined || memories.length === 0}
             onClick={exportMemories} style={headerMenuItemStyle}>导出</button>
@@ -5227,6 +5245,34 @@ function MemoryManagerDialog({ load, onManage, onClose }: {
       </div>}
       {error !== undefined && <p role="alert" style={{ color: 'var(--dsw-alias-state-danger, #e06470)', fontSize: '12px', lineHeight: 1.5, margin: '14px 0 0' }}>{error}</p>}
     </section>
+
+    {clearing && <div data-agent-rp-dialog data-agent-rp-clear-memory-confirm role="dialog" aria-modal="true"
+      aria-label="清空全部记忆" style={{
+        alignItems: 'center', background: 'rgba(0,0,0,.5)', display: 'flex', inset: 0,
+        justifyContent: 'center', padding: '18px', position: 'fixed', zIndex: 1300,
+      }} onMouseDown={event => { if (event.target === event.currentTarget && !busy) setClearing(false) }}>
+      <section style={{
+        background: 'var(--dsw-alias-bg-base, #171719)', border: '1px solid var(--dsw-alias-border-l2, #3e3e43)',
+        borderRadius: '13px', boxShadow: '0 18px 58px rgba(0,0,0,.44)', maxWidth: '420px', padding: '18px', width: '100%',
+      }}>
+        <h3 style={{ fontSize: '15px', margin: 0 }}>清空全部记忆？</h3>
+        <p style={{ fontSize: '12px', lineHeight: 1.65, margin: '9px 0 0', opacity: .68 }}>
+          将删除当前的 {memories?.length ?? 0} 条有效记忆，之后的回复不会再用到它们。
+          会先把这些记忆导出成文件——会话历史只能追加，
+          删除之后没有撤销，那份文件是唯一的恢复途径（也可以直接用“导入”放回来）。
+        </p>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
+          <button type="button" disabled={busy} onClick={() => { setClearing(false) }}
+            style={generationButtonStyle}>取消</button>
+          <button type="button" data-agent-rp-action="confirm-clear-memory" disabled={busy} onClick={clearMemories} style={{
+            ...generationButtonStyle,
+            background: 'color-mix(in srgb, var(--dsw-alias-state-danger, #e06470) 18%, transparent)',
+            borderColor: 'color-mix(in srgb, var(--dsw-alias-state-danger, #e06470) 48%, transparent)',
+            color: 'var(--dsw-alias-state-danger, #e06470)', opacity: busy ? .5 : 1,
+          }}>{busy ? '正在清空…' : '导出并清空'}</button>
+        </div>
+      </section>
+    </div>}
   </div>
 }
 
@@ -13397,14 +13443,20 @@ export function apply(ctx: ClientContext): void {
       ...(presetId === undefined ? {} : { presetId }),
     }, resourcePermissions)
   }
-  const prepareChatMigrationFromBlankSession = async (
-    sourceSessionId: SessionId,
-    chatFile: File,
-    cardFile?: File,
-  ): Promise<PreparedChatMigration> => {
+  // Typed from the shared contract rather than re-declared: this wrapper once
+  // omitted `characterId`, and because TypeScript accepts a function with fewer
+  // parameters wherever more are expected, neither compile ever complained —
+  // migrating from a blank session silently dropped the card picked in the
+  // dropdown and produced a Session with no Character Card at all.
+  const prepareChatMigrationFromBlankSession: HeaderProps['prepareChatMigration'] = async (
+    sourceSessionId,
+    chatFile,
+    cardFile,
+    characterId,
+  ) => {
     const summary = ctx.sessions.list.getSnapshot().byId[sourceSessionId]
     if (summary === undefined || !summary.blank) throw new Error('只能从尚未开始的会话迁移聊天')
-    return prepareChatMigration(sourceSessionId, chatFile, cardFile)
+    return prepareChatMigration(sourceSessionId, chatFile, cardFile, characterId)
   }
   const prepareRpDistributionChatMigrationFromBlankSession = async (
     sourceSessionId: SessionId,

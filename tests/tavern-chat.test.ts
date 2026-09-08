@@ -158,3 +158,40 @@ test('hides a retained transcript prefix from model history and restores it for 
   assert.deepEqual(restored.hiddenPrefix, [])
   assert.deepEqual(transcript(session), ['旧问题', '旧回复', '总结请求', '压缩后的总结（修订）'])
 })
+
+test('re-mints message identity when a hidden-prefix rewrite re-appends the surface', () => {
+  const { session, agent } = createTranscript(
+    { role: 'user', text: '第一句' },
+    { role: 'assistant', text: '第一段回复' },
+    { role: 'user', text: '第二句' },
+    { role: 'assistant', text: '第二段回复' },
+  )
+  // A plugin-sourced message is what the id-indexed readers look for: external
+  // context, pending turn input and staged settlement all key on this id and
+  // reject the Session when two events claim the same one.
+  session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: '外部上下文' }],
+    source: { kind: 'plugin', plugin: 'fixture', form: 'notice', summary: '外部上下文' },
+  }), { surfaceOp: 'append' })
+  const pluginId = String((session.events.at(-1)!.data as { readonly id: unknown }).id)
+
+  executeTavernChatMutation(agent, { format: 0, operation: 'set-chat-hidden', start: 0, end: 1, hidden: true })
+
+  const ids = session.events.flatMap(event => event.type === 'user/message'
+    ? [String((event.data as { readonly id: unknown }).id)]
+    : [])
+  assert.equal(new Set(ids).size, ids.length)
+  // The original event keeps its identity; the re-appended copy gets a new one.
+  assert.equal(ids.filter(id => id === pluginId).length, 1)
+
+  // Provenance and content survive the re-mint.
+  const replayed = session.surface.nodes
+    .map(seq => session.events[seq])
+    .filter(event => event?.type === 'user/message'
+      && (event.data as { readonly source: { readonly kind: string } }).source.kind === 'plugin')
+  assert.equal(replayed.length, 1)
+  assert.equal(
+    (replayed[0]!.data as { readonly content: readonly { readonly text?: string }[] }).content[0]?.text,
+    '外部上下文',
+  )
+})

@@ -82,8 +82,29 @@ function requireSurfaceEvent(event: SessionEvent): SurfaceEvent {
 function appendEntry(agent: Agent, entry: SurfaceEntry, intent: SurfaceIntent): SurfaceEvent {
   if (entry.kind === 'existing') {
     const event = entry.event
-    if (event.type === 'user/message') return requireSurfaceEvent(agent.session.append(event.type, event.data, intent))
-    if (event.type === 'assistant/message') return requireSurfaceEvent(agent.session.append(event.type, event.data, intent))
+    // A re-appended node is a new message and must carry a new identity. The
+    // message factories enforce this for callers (`id?: never`, "a fresh stable
+    // identity"), but re-sending `event.data` verbatim smuggled the old id past
+    // them, leaving two live messages sharing one id. Readers that index the log
+    // by message id — external context, pending turn input, staged settlement —
+    // then reject the Session as ambiguous and every later turn fails.
+    // Provenance is preserved; only identity is re-minted.
+    if (event.type === 'user/message') {
+      return requireSurfaceEvent(agent.session.append(event.type, createUserMessage({
+        content: event.data.content,
+        source: event.data.source,
+      }), intent))
+    }
+    if (event.type === 'assistant/message') {
+      const { kind: _kind, ...source } = event.data.message.source
+      return requireSurfaceEvent(agent.session.append(event.type, {
+        ...event.data,
+        message: createAssistantMessage({ content: event.data.message.content, source }),
+      }, intent))
+    }
+    // Tool results correlate through `toolCallId`, not the message id, and no
+    // reader indexes them by identity — left as-is rather than disturbing the
+    // call pairing without a failure to justify it.
     return requireSurfaceEvent(agent.session.append(event.type, event.data, intent))
   }
   if (entry.role === 'user') {

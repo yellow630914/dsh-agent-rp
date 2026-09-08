@@ -161,6 +161,11 @@ export interface AgentRpProjection {
       readonly seq: number
       readonly text: string
     }[]
+    /** User row this group superseded, and the text that replaced it. */
+    readonly rewrittenInput?: {
+      readonly seq: number
+      readonly text: string
+    }
   }[]
   /** Stable transcript anchor of the model-visible final Roleplay reply. */
   readonly currentReplySeq?: number

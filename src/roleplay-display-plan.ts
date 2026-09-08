@@ -49,6 +49,10 @@ export interface RoleplayDisplayProjection {
       readonly seq: number
       readonly text: string
     }[]
+    readonly rewrittenInput?: {
+      readonly seq: number
+      readonly text: string
+    }
   }[]
 }
 
@@ -58,7 +62,7 @@ export type RoleplayDisplayPlan =
   | { readonly kind: 'hidden'; readonly reason: 'unselected-generation' }
   | {
     readonly kind: 'render'
-    readonly source: 'override' | 'selected-generation' | 'display-regex'
+    readonly source: 'override' | 'selected-generation' | 'display-regex' | 'rewritten-input'
     readonly compilation: CompiledCharacterDisplay
     /** Tavern message represented by this rendered row, when the projection can identify it. */
     readonly messageId?: number
@@ -122,6 +126,8 @@ export function createRoleplayDisplayPlanner(input: {
     ...(projection.preset?.regexScripts ?? []),
   ]
   const hasDisplayRules = immersive && activeFrontend.regexScripts.length + sharedRegexScripts.length > 0
+  const rewrittenInputBySeq = new Map(projection.generations
+    .flatMap(group => group.rewrittenInput === undefined ? [] : [[group.rewrittenInput.seq, group.rewrittenInput.text] as const]))
 
   return {
     user: ({ seq, alignedMessage }) => {
@@ -129,6 +135,23 @@ export function createRoleplayDisplayPlanner(input: {
       const messageId = message?.messageId ?? messageIdBySeq.get(seq)
       const override = messageId === undefined ? undefined : overrides.get(messageId)
       if (override !== undefined) return overridePlan(override, messageId!)
+      // A rewritten row must show its replacement even with no display rules
+      // and even when the surface no longer contains this seq: the Host
+      // transcript is append-origin, so the row still carries the superseded
+      // text and nothing else will correct it. The messageId is deliberately
+      // omitted — the DOM adapter gates rendering on card-frame retention, and
+      // showing the old message again is worse than losing frame identity on
+      // one player row.
+      const rewritten = rewrittenInputBySeq.get(seq)
+      if (rewritten !== undefined) {
+        const renderedInput = renderCharacterDisplay(rewritten, {
+          name: projection.characterName,
+          frontend: activeFrontend,
+        }, USER_INPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
+        return {
+          kind: 'render', source: 'rewritten-input', compilation: compileCharacterDisplay(renderedInput),
+        }
+      }
       if (!hasDisplayRules || message?.role !== 'user' || message.text === '') {
         return { kind: 'host' }
       }

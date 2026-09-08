@@ -44,7 +44,7 @@ import { appendAgentRpSessionEvent, supportsAgentRpSessionEvents } from './sessi
 export interface GenerationStateRecord {
   readonly format: 0
   readonly groupId: string
-  readonly operation: 'regenerate' | 'continue' | 'select' | 'review'
+  readonly operation: 'regenerate' | 'continue' | 'select' | 'review' | 'rewrite-input'
   readonly originSeq: number
   readonly anchorSeq: number
   readonly assistantSeqs: readonly number[]
@@ -68,6 +68,19 @@ export interface GenerationStateRecord {
   }
   readonly selectedVersionSeq: number
   readonly surfaceSeq: number
+  /**
+   * User row superseded by `rewrite-input`, with the text that replaced it.
+   *
+   * The Host transcript is built from append-origin events only — a surface
+   * replacement stays model-visible and never becomes a row — so the edited
+   * message cannot appear on its own. The display planner instead renders this
+   * text into the original row, the same way a reply version renders into its
+   * anchor.
+   */
+  readonly rewrittenInput?: {
+    readonly seq: number
+    readonly text: string
+  }
   readonly tavern?: TavernHelperState
   readonly mvu?: {
     readonly statData: JsonValue
@@ -172,7 +185,11 @@ function parseGenerationState(data: GenerationStateRecord, eventSeq: number): Ac
   const versionSeqs = uniqueSeqs(data.versions.map(version => version.seq), '回复版本序号')
   if (data.format !== 0 || !/^[0-9a-f-]{36}$/iu.test(data.groupId)
     || (data.operation !== 'regenerate' && data.operation !== 'continue'
-      && data.operation !== 'select' && data.operation !== 'review')
+      && data.operation !== 'select' && data.operation !== 'review' && data.operation !== 'rewrite-input')
+    || (data.rewrittenInput !== undefined
+      && (typeof data.rewrittenInput !== 'object' || data.rewrittenInput === null
+        || !Number.isSafeInteger(data.rewrittenInput.seq) || data.rewrittenInput.seq < 0
+        || typeof data.rewrittenInput.text !== 'string' || data.rewrittenInput.text.trim() === ''))
     || !Number.isSafeInteger(data.originSeq) || data.originSeq < 0
     || !Number.isSafeInteger(data.anchorSeq) || data.anchorSeq < 0
     || !Number.isSafeInteger(data.selectedVersionSeq) || data.selectedVersionSeq < 0
@@ -533,6 +550,7 @@ async function executeInputRewrite(
   if ((baseTavern !== undefined || baseMvu !== undefined) && !supportsAgentRpSessionEvents(agent.session)) {
     throw new Error('当前 DSH Host 缺少安全插件事件能力，无法重新生成含状态的回复')
   }
+  let baseTavernStateSeq: number | undefined
   const shadowed = nodes.slice(userIndex)
   const replacement = agent.session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: request.text }],
@@ -544,7 +562,10 @@ async function executeInputRewrite(
   try {
     // Answer the revised message from the state this turn started with, the
     // same baseline `regenerate` restores.
-    restoreTavernState(agent, baseTavern ?? (currentTavern === undefined ? undefined : initialTavernState(agent)))
+    baseTavernStateSeq = restoreTavernState(
+      agent,
+      baseTavern ?? (currentTavern === undefined ? undefined : initialTavernState(agent)),
+    )
     appendMvuSelection(agent, baseMvu)
     const generatedSeq = await generate(agent, 'rewrite-input', signal)
     const generated = assistantEvent(agent.session.events, generatedSeq)
@@ -553,7 +574,26 @@ async function executeInputRewrite(
     const surface = shadowStart === undefined
       ? generated
       : appendCurrentReplySurface(agent, shadowStart, generated)
-    return { kind: 'success', text: '已按修改后的输入重新生成', sourceEventSeq: surface.seq }
+    // The transcript keeps showing the rows that were appended — the original
+    // message and the discarded reply — because a surface replacement never
+    // becomes a row. Anchoring a group on those rows is what lets the display
+    // planner render the new text into them, exactly as `regenerate` does.
+    // A single version means no version switcher: the old reply is gone, not
+    // parked behind an arrow.
+    const state = appendState({
+      groupId: crypto.randomUUID(),
+      operation: 'rewrite-input',
+      originSeq: generatedSeq,
+      anchorSeq: request.replySeq,
+      assistantSeqs: [request.replySeq, generatedSeq],
+      versions: [{ seq: generatedSeq, text: visibleText(generated), artifactReplySeqs: [generatedSeq] }],
+      selectedVersionSeq: generatedSeq,
+      surfaceSeq: surface.seq,
+      rewrittenInput: { seq: userSeq, text: request.text },
+      ...(baseTavernStateSeq === undefined ? {} : { baseTavernStateSeq }),
+      ...(baseMvu === undefined ? {} : { baseMvu }),
+    }, mvuSnapshot(agent), readTavernHelperStateSnapshot(agent.session.events)?.state)
+    return { kind: 'success', text: encodeGenerationState(state), sourceEventSeq: state.surfaceSeq }
   } catch (error: unknown) {
     const current = agent.session.surface.nodes
     const index = current.indexOf(replacement.seq)

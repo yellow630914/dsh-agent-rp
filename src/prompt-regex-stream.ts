@@ -23,7 +23,7 @@ import {
   type PromptRegexSourceMarker,
   type PromptRegexTraceRecord,
 } from './frontend-regex.ts'
-import { appendAgentRpSessionEvent } from './session-event-compat.ts'
+import { appendAgentRpSessionEvent, supportsAgentRpSessionEvents } from './session-event-compat.ts'
 import { roleplaySurfaceNodes, roleplayModelHistory, roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
 import type { ImportedRegexScript } from './import/types.ts'
 import {
@@ -145,7 +145,11 @@ function appendReplacement(
   }
   // DSH 0.1.3 reserves the Assistant message's provenance slot for its embedded
   // stream, so this rewrite appends and records the supersession for Agent RP's
-  // own model-visible overlay instead of replacing the surface node.
+  // own model-visible overlay instead of replacing the surface node. Without the
+  // Host's ignorable-event seam the record cannot be written, and an unrecorded
+  // append would show the model both texts — skip the view instead. This is a
+  // prompt-only enhancement, so degrading beats failing the whole turn.
+  if (!supportsAgentRpSessionEvents(session)) return
   const replacement = session.append('assistant/message', {
     ...position,
     message: createMessage({

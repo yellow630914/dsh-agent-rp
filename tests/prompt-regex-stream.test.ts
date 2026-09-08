@@ -27,6 +27,10 @@ import type {
   RoleplayPromptTransformPlan,
   RoleplayTurnPromptPlan,
 } from '../src/roleplay-turn-plan.ts'
+import { roleplayModelHistory } from '../src/roleplay-surface-overlay.ts'
+import { installIgnorableSessionEventFixture } from './session-event-fixture.ts'
+
+installIgnorableSessionEventFixture()
 
 const script = (placement: number, findRegex: string, replaceString: string): ImportedRegexScript => ({
   scriptName: `${placement}:${findRegex}`,
@@ -121,7 +125,7 @@ function promptPlan(overrides: Partial<RoleplayTurnPromptPlan> = {}): RoleplayTu
 }
 
 function textHistory(session: Session): string[] {
-  return session.deriveMessages().flatMap(message =>
+  return roleplayModelHistory(session).flatMap(message =>
     message.content.flatMap(block => block.type === 'text' ? [block.text] : []))
 }
 
@@ -282,7 +286,7 @@ test('records a no-op trace without rewriting a tool-call assistant in the follo
   ]))
 
   assert.equal(trace?.replacementCount, 0)
-  const messages = session.deriveMessages()
+  const messages = roleplayModelHistory(session)
   const pair = toolPair(messages, callId)
   assert.equal(pair.resultIndex, pair.assistantIndex + 1)
   assert.equal(String(messages[pair.assistantIndex]?.id), assistantId)
@@ -301,7 +305,7 @@ test('preserves a failed tool pair when prompt regex changes its assistant text'
   ]))
 
   assert.equal(trace?.replacementCount, 1)
-  const messages = session.deriveMessages()
+  const messages = roleplayModelHistory(session)
   const pair = toolPair(messages, callId)
   assert.equal(pair.resultIndex, pair.assistantIndex + 1)
   assert.notEqual(String(messages[pair.assistantIndex]?.id), assistantId)

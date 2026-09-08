@@ -424,6 +424,10 @@ function applySurfaceOverride(
   if (superseded.size === 0 || replacements.length === 0) return surface
   const moving = new Set(replacements)
   const moved = replacements.flatMap(seq => surface.filter(node => node.seq === seq))
+  // A prompt-only rewrite never joins the visible surface, so its replacements
+  // are absent here. Dropping the originals then would erase the row instead of
+  // restating it — leave the visible transcript exactly as it was.
+  if (moved.length === 0) return surface
   const next: AgentRpProjectionState['surface'][number][] = []
   let placed = false
   for (const node of surface) {

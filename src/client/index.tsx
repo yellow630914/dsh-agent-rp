@@ -12302,6 +12302,7 @@ function roleplayComposerDockComponent(
         readonly root: Root
       }): void => {
         original.style.removeProperty('display')
+        delete original.dataset.agentRpHiddenByFrontend
         display.style.setProperty('display', 'block')
         mount.root.render(<CharacterDisplay
           appearance={appearance}
@@ -12317,7 +12318,14 @@ function roleplayComposerDockComponent(
           {...(greetingChoices === undefined ? {} : { greetingChoices })}
           {...(activeCharacterDetail === undefined ? {} : { character: activeCharacterDetail })}
           onFrameRegistration={registerFrame}
-          onReady={() => { original.style.display = 'none' }}
+          onReady={() => {
+            // A switched-away version unmounts this display; a late onReady from
+            // that dead render would hide the Host row with nothing left to show
+            // it again, which is how switching back and forth blanked the reply.
+            if (!display.isConnected) return
+            original.style.display = 'none'
+            original.dataset.agentRpHiddenByFrontend = 'true'
+          }}
         />)
       }
       if (existing !== null && existingMount !== undefined) {
@@ -12338,14 +12346,27 @@ function roleplayComposerDockComponent(
     }
     const restoreHostDisplay = (item: HTMLElement, original: HTMLElement): void => {
       const display = item.querySelector<HTMLElement>(':scope > [data-agent-rp-rendered-display]')
-      if (display === null) return
-      const mount = mounted.get(display)
-      if (mount !== undefined) {
-        mount.root.unmount()
-        mounted.delete(display)
+      if (display !== null) {
+        const mount = mounted.get(display)
+        if (mount !== undefined) {
+          mount.root.unmount()
+          mounted.delete(display)
+        }
+        display.remove()
       }
-      display.remove()
+      // Clear the hidden marker even when the rendered node is already gone.
+      // `original` is whichever child the caller believes is the Host row, and
+      // after a mount/unmount cycle that can be the wrong node — a stale
+      // `display:none` left behind is exactly what made a switched-away reply
+      // come back blank until the page was reloaded.
       original.style.removeProperty('display')
+      delete original.dataset.agentRpHiddenByFrontend
+      for (const child of item.children) {
+        if (!(child instanceof HTMLElement)) continue
+        if (child.dataset.agentRpHiddenByFrontend === undefined) continue
+        child.style.removeProperty('display')
+        delete child.dataset.agentRpHiddenByFrontend
+      }
       delete item.dataset.agentRpFrontend
     }
     window.addEventListener('message', bridge)

@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-  [string]$DshVersion = '0.1.1-rc.2',
+  [string]$DshVersion = '0.1.3-alpha.2',
   [string]$PluginSource = '@hewzhew/dsh-agent-rp@next',
   [string]$RunnerSourceBase = 'https://raw.githubusercontent.com/hewzhew/dsh-agent-rp/main/host-runner',
   [string]$Registry,
@@ -13,13 +13,13 @@ $pluginPackageName = '@hewzhew/dsh-agent-rp'
 $legacyPluginPackageNames = @('@dsh-external/dsh-agent-rp')
 $minimumPnpmMajor = 11
 $previousRegistry = $env:npm_config_registry
-$agentHostVersion = '0.1.1-rc.2'
+$agentHostVersion = '0.1.3-alpha.2'
 $agentHostPort = 3080
 $runnerFiles = @(
   'package.json',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
-  'patches/@deepseek-ai__dsh-session@0.1.1-rc.2.patch'
+  'patches/@deepseek-ai__dsh-session@0.1.3-alpha.2.patch'
 )
 
 function Write-Stage {

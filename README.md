@@ -43,7 +43,7 @@ Invoke-WebRequest 'https://raw.githubusercontent.com/hewzhew/dsh-agent-rp/main/s
 powershell -NoProfile -ExecutionPolicy Bypass -File $installerPath -Start
 ```
 
-当前 Agent Host 固定在官方 DSH `0.1.1-rc.2`，并通过 pnpm 的可审计补丁机制补上插件私有事件写入能力；依赖版本和补丁哈希都由锁文件约束，安装器还会实际导入 Session 模块验证能力已经生效。官方 DSH 发布等价接口后会移除这层补丁。直接运行官方 `@deepseek-ai/dsh@0.1.1-rc.2` 仍可使用纯对话兼容模式，但不能完整保存 Agent/MVU 回合记录；官方 runner 与 Agent Host 显示相同的 DSH 版本号，不能只按版本号判断能力。
+当前 Agent Host 固定在官方 DSH `0.1.3-alpha.2`，并通过 pnpm 的可审计补丁机制补上插件私有事件写入能力；依赖版本和补丁哈希都由锁文件约束，安装器还会实际导入 Session 模块验证能力已经生效。官方 DSH 发布等价接口后会移除这层补丁。直接运行官方 `@deepseek-ai/dsh@0.1.3-alpha.2` 仍可使用纯对话兼容模式，但不能完整保存 Agent/MVU 回合记录；官方 runner 与 Agent Host 显示相同的 DSH 版本号，不能只按版本号判断能力。
 
 安装器会在默认 DSH 数据目录生成稳定的 Agent RP 专用启动入口。以后更新时重新运行同一安装器；平时启动使用：
 

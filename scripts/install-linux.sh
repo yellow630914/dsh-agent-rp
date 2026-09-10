@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 umask 077
 
-DSH_VERSION="${DSH_VERSION:-0.1.1-rc.2}"
+DSH_VERSION="${DSH_VERSION:-0.1.3-alpha.2}"
 PLUGIN_SOURCE="${PLUGIN_SOURCE:-@hewzhew/dsh-agent-rp@next}"
 RUNNER_SOURCE_BASE="${RUNNER_SOURCE_BASE:-https://raw.githubusercontent.com/hewzhew/dsh-agent-rp/main/host-runner}"
 REGISTRY="${REGISTRY:-}"
@@ -12,13 +12,13 @@ AGENT_HOST_PORT="${AGENT_HOST_PORT:-3080}"
 
 PLUGIN_PACKAGE_NAME='@hewzhew/dsh-agent-rp'
 LEGACY_PLUGIN_PACKAGE_NAMES=('@dsh-external/dsh-agent-rp')
-AGENT_HOST_VERSION='0.1.1-rc.2'
+AGENT_HOST_VERSION='0.1.3-alpha.2'
 MINIMUM_PNPM_MAJOR=11
 RUNNER_FILES=(
   'package.json'
   'pnpm-lock.yaml'
   'pnpm-workspace.yaml'
-  'patches/@deepseek-ai__dsh-session@0.1.1-rc.2.patch'
+  'patches/@deepseek-ai__dsh-session@0.1.3-alpha.2.patch'
 )
 
 START=0

@@ -61,7 +61,7 @@ function createFixture(
   writeFileSync(join(runnerSource, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n')
   writeFileSync(join(runnerSource, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
   writeFileSync(
-    join(runnerSource, 'patches/@deepseek-ai__dsh-session@0.1.1-rc.2.patch'),
+    join(runnerSource, 'patches/@deepseek-ai__dsh-session@0.1.3-alpha.2.patch'),
     'fixture patch\n',
   )
 
@@ -84,7 +84,7 @@ const { appendFileSync, mkdirSync, readFileSync, writeFileSync } = require('node
 const { join } = require('node:path')
 const args = process.argv.slice(2)
 if (args.includes('--version')) {
-  process.stdout.write('0.1.1-rc.2\\n')
+  process.stdout.write('0.1.3-alpha.2\\n')
   process.exit(0)
 }
 appendFileSync(process.env.FAKE_DSH_LOG, JSON.stringify({

@@ -1,6 +1,7 @@
 /** Browser-safe values for direct World Info imports. */
 
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import type { WorldInfoEditableEntry } from './world-info-configuration-types.ts'
 
 /** Same-origin upload endpoint served by the Agent RP Host plugin. */
 export const WORLD_INFO_LIBRARY_PATH = '/api/agent-rp/world-info'
@@ -19,6 +20,37 @@ export interface WorldInfoLibraryPreferenceRequest {
   readonly format: 0
   readonly id: string
   readonly defaultForNewSessions: boolean
+}
+
+/**
+ * Complete replacement of one reusable source's entries.
+ *
+ * The whole book is sent rather than per-entry operations: ids are the sha256
+ * of the stored bytes, so every save mints a new identity — batching one
+ * editing session into one save keeps that churn to a single transition.
+ */
+export interface WorldInfoLibraryUpdateRequest {
+  readonly format: 0
+  readonly id: string
+  /**
+   * The complete desired entry list, in storage order. Omitting a row deletes
+   * it; a row without `sourceIndex` is newly added. Rows cite where they came
+   * from so the Host can carry each entry's original JSON through the edit —
+   * community books hold fields this runtime does not model, and saving must
+   * not silently drop them.
+   */
+  readonly entries: readonly {
+    readonly sourceIndex?: number
+    readonly entry: WorldInfoEditableEntry
+  }[]
+}
+
+/** One world's editable contents, as the resource-center editor loads them. */
+export interface WorldInfoLibraryDetailResponse {
+  readonly format: 0
+  readonly id: string
+  readonly name: string
+  readonly entries: readonly WorldInfoEditableEntry[]
 }
 
 /** Explicit removal of one reusable source; existing Session snapshots remain valid. */

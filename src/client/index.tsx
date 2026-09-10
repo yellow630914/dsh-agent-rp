@@ -113,6 +113,7 @@ import { worldInfoFailureReport } from './world-info-failure-report.ts'
 import { availableWorldInfoLibraryUploads } from './world-info-library-selection.ts'
 import type { PresetConfigurationRequest } from '../preset-configuration-types.ts'
 import type { WorldInfoConfigurationRequest, WorldInfoEditableEntry } from '../world-info-configuration-types.ts'
+import type { LoadWorldInfoEntries, SaveWorldInfoEntries } from './world-info-editor.tsx'
 import { exportSillyTavernPresetJson } from '../preset-export.ts'
 import {
   attachPresetModule, detachPresetModule, movePresetModule,
@@ -346,6 +347,7 @@ import {
 } from './roleplay-experience-request.ts'
 import {
   WORLD_INFO_LIBRARY_PATH,
+  type WorldInfoLibraryDetailResponse,
   type WorldInfoLibraryListResponse,
   type WorldInfoLibraryLaunchRequest,
   type WorldInfoLibraryUpload,
@@ -2797,6 +2799,8 @@ type SidebarRoleplayWorkbenchProps = Pick<HeaderProps,
   readonly importWorldInfoFile: (file: File) => Promise<WorldInfoLibraryUpload>
   readonly setWorldInfoDefault: (id: string, enabled: boolean) => Promise<WorldInfoLibraryUpload>
   readonly deleteWorldInfo: (id: string) => Promise<WorldInfoLibraryUpload>
+  readonly loadWorldInfoEntries: LoadWorldInfoEntries
+  readonly saveWorldInfoEntries: SaveWorldInfoEntries
   readonly startWorldInfoSession: (
     sessionId: SessionId,
     worldInfo: WorldInfoLibraryUpload,
@@ -2889,7 +2893,8 @@ function SidebarRoleplayDestination({
   startCharacterSession,
   listPresets, listRegexPacks, importRegexPackFile, deleteRegexPack,
   listAgentCapabilityPresets, importPresetFile, listPersonas, savePersona, deletePersona,
-  listWorldInfos, importWorldInfoFile, setWorldInfoDefault, deleteWorldInfo, renamePreset, deletePreset,
+  listWorldInfos, importWorldInfoFile, setWorldInfoDefault, deleteWorldInfo,
+  loadWorldInfoEntries, saveWorldInfoEntries, renamePreset, deletePreset,
   startWorldInfoSession,
   workspaceSettings, workspaceList,
 }: SidebarRoleplayDestinationProps) {
@@ -3180,6 +3185,8 @@ function SidebarRoleplayDestination({
       importWorldInfoFile={importWorldInfoFile}
       setWorldInfoDefault={setWorldInfoDefault}
       deleteWorldInfo={deleteWorldInfo}
+      loadWorldInfoEntries={loadWorldInfoEntries}
+      saveWorldInfoEntries={saveWorldInfoEntries}
       listPresets={listPresets}
       listRegexPacks={listRegexPacks}
       importPresetFile={importPresetFile}
@@ -13608,6 +13615,38 @@ export function apply(ctx: ClientContext): void {
     if (!response.ok || value.upload === undefined) throw new Error(value.error ?? `世界书上传失败（${response.status}）`)
     return value.upload
   }
+  const loadWorldInfoEntries = async (id: string): Promise<{
+    readonly name: string
+    readonly entries: readonly WorldInfoEditableEntry[]
+  }> => {
+    const response = await fetch(`${WORLD_INFO_LIBRARY_PATH}?id=${encodeURIComponent(id)}`, {
+      headers: { accept: 'application/json' },
+    })
+    const value = await response.json() as Partial<WorldInfoLibraryDetailResponse> & { readonly error?: string }
+    if (!response.ok || value.entries === undefined || typeof value.name !== 'string') {
+      throw new Error(value.error ?? `世界书内容读取失败（${response.status}）`)
+    }
+    return { name: value.name, entries: value.entries }
+  }
+  /**
+   * Save the whole edited book at once. World ids are the sha256 of their
+   * content, so every save mints a new id and moves the bindings with it —
+   * batching one editing session into one request keeps that to one transition,
+   * and the caller has to adopt the returned id.
+   */
+  const saveWorldInfoEntries = async (
+    id: string,
+    entries: readonly { readonly sourceIndex?: number; readonly entry: WorldInfoEditableEntry }[],
+  ): Promise<WorldInfoLibraryUpload> => {
+    const response = await fetch(WORLD_INFO_LIBRARY_PATH, {
+      method: 'PUT',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ format: 0, id, entries }),
+    })
+    const value = await response.json() as Partial<WorldInfoLibraryUploadResponse> & { readonly error?: string }
+    if (!response.ok || value.upload === undefined) throw new Error(value.error ?? `世界书保存失败（${response.status}）`)
+    return value.upload
+  }
   const setWorldInfoDefault = async (id: string, enabled: boolean): Promise<WorldInfoLibraryUpload> => {
     const response = await fetch(WORLD_INFO_LIBRARY_PATH, {
       method: 'PATCH',
@@ -13822,6 +13861,7 @@ export function apply(ctx: ClientContext): void {
     importRegexPackFile, deleteRegexPack, listAgentCapabilityPresets, importPresetFile,
     renamePreset: renamePresetLibraryEntry, deletePreset: deletePresetLibraryEntry, listPersonas, savePersona, deletePersona,
     listWorldInfos, importWorldInfoFile, setWorldInfoDefault, deleteWorldInfo,
+    loadWorldInfoEntries, saveWorldInfoEntries,
     startWorldInfoSession: startWorldInfoFromBlankSession,
   }
   ctx.slots.inject('sidebar.destinations', () => ctx.slots.register({

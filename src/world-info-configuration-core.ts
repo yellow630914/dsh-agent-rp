@@ -166,7 +166,8 @@ function textArray(value: unknown, label: string): readonly string[] {
   return [...value] as string[]
 }
 
-function editable(value: unknown, label: string): WorldInfoEditableEntry {
+/** Validate one browser-supplied entry form value. */
+export function editable(value: unknown, label: string): WorldInfoEditableEntry {
   const entry = object(value, label)
   const secondaryLogic = entry.secondaryLogic
   const position = entry.position
@@ -351,7 +352,8 @@ export function editableWorldInfoEntry(entry: ImportedLorebookEntry): WorldInfoE
   }
 }
 
-function applyEditable(entry: ImportedLorebookEntry, value: WorldInfoEditableEntry): ImportedLorebookEntry {
+/** Merge one editable form value onto an entry, keeping the fields the form cannot express. */
+export function applyEditable(entry: ImportedLorebookEntry, value: WorldInfoEditableEntry): ImportedLorebookEntry {
   return {
     sourceId: entry.sourceId,
     ...value,

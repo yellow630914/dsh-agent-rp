@@ -84,6 +84,64 @@ export class WorldInfoLibrary {
     return this.resolve(id).upload
   }
 
+  /**
+   * Replace one world's content, minting the new identity its content requires.
+   *
+   * Ids are the sha256 of the stored bytes, which is what makes identical
+   * imports deduplicate. Editing therefore cannot keep the id without turning
+   * that into a lie — a later import of the ORIGINAL file would hash to this id,
+   * find the file present, and silently hand back the edited content. So the
+   * edit writes a new id and moves every reference to it.
+   *
+   * Order matters for crash safety: write the new world, repoint bindings, then
+   * retire the old one. Interrupted anywhere, the worst outcome is an orphaned
+   * world file — never a binding pointing at something that does not exist.
+   *
+   * Sessions are unaffected either way: they froze a lossless snapshot of the
+   * book at launch and never read the library again.
+   * @param id - the world being edited.
+   * @param data - complete replacement JSON bytes.
+   * @returns the world under its new identity.
+   */
+  update(id: string, data: Uint8Array): WorldInfoLibraryUpload {
+    const source = this.readSource(id)
+    if (data.byteLength === 0) throw new Error('世界书内容为空')
+    if (data.byteLength > MAX_WORLD_INFO_JSON_BYTES) throw new Error('世界书内容过大')
+    const worldInfo = parseWorldInfoJsonBytes(data)
+    const next = `world-info-${createHash('sha256').update(data).digest('hex').slice(0, 32)}`
+    if (next === id) return this.describe(id, source.filename, worldInfo)
+
+    const dataPath = join(this.root, `${next}.json`)
+    const namePath = join(this.root, `${next}.name`)
+    const existed = existsSync(dataPath)
+    if (!existed) {
+      // A different world already holding this content means the edit made two
+      // worlds identical. Adopting it would silently merge them and take the
+      // other one's bindings along, so refuse and let the player decide.
+      writeFileSync(dataPath, data, { flag: 'wx' })
+      writeFileSync(namePath, source.filename, { encoding: 'utf8', flag: 'wx' })
+    } else if (this.bindings?.referencingCharacters(next).length ?? 0) {
+      throw new Error('编辑后的内容与另一本已被角色绑定的世界书完全相同，请先调整内容或改用那一本')
+    }
+
+    try {
+      this.bindings?.replaceWorldInfoId(id, next)
+    } catch (error: unknown) {
+      if (!existed) {
+        unlinkSync(dataPath)
+        unlinkSync(namePath)
+      }
+      throw error
+    }
+
+    if (this.isDefault(id)) writeFileSync(join(this.root, `${next}.default`), '1', { encoding: 'utf8' })
+    for (const suffix of ['.json', '.name', '.default']) {
+      const path = join(this.root, `${id}${suffix}`)
+      if (existsSync(path)) unlinkSync(path)
+    }
+    return this.describe(next, source.filename, worldInfo)
+  }
+
   /** Remove one reusable source without affecting Sessions that already logged its lossless snapshot. */
   remove(id: string): WorldInfoLibraryUpload {
     const upload = this.resolve(id).upload

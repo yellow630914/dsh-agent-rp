@@ -139,6 +139,66 @@ export function embeddedWorldInfoAsset(card: ImportedCharacterCard): {
   }
 }
 
+/** Blank entry used as the base for a newly added lorebook row. */
+export function blankLorebookEntry(sourceId: string): ImportedLorebookEntry {
+  return {
+    sourceId,
+    keys: [],
+    secondaryKeys: [],
+    content: '',
+    enabled: true,
+    insertionOrder: 100,
+    selective: false,
+    constant: false,
+    caseSensitive: false,
+    matchWholeWords: false,
+    secondaryLogic: 'and-any',
+    position: 'after_char',
+    useRegex: false,
+    hasDecorators: false,
+    ignoreBudget: false,
+  }
+}
+
+/**
+ * Rebuild standalone World Info JSON from an edited entry list.
+ *
+ * Each edited row cites the index it came from so its original JSON object can
+ * be carried through: SillyTavern books routinely hold fields this runtime does
+ * not model, and an edit must not silently drop them. A row citing no index is
+ * newly added and starts from an empty object. Omitted rows are the deletion.
+ * @param worldInfo - the stored book being edited.
+ * @param rows - complete replacement list, in the order they should be stored.
+ * @returns standalone World Info JSON ready to serialize.
+ */
+export function worldInfoWithEntries(
+  worldInfo: ImportedWorldInfo,
+  rows: readonly { readonly sourceIndex?: number; readonly entry: ImportedLorebookEntry }[],
+): JsonValue {
+  const original = record(worldInfo.raw) ?? {}
+  const rawEntries = Array.isArray(original.entries)
+    ? original.entries
+    : Object.values(record(original.entries) ?? {})
+  // Added rows continue the book's own uid sequence instead of leaking this
+  // runtime's internal row name, so an edited book still reads like any other
+  // SillyTavern export.
+  let nextUid = rawEntries.reduce<number>((highest, raw) => {
+    const uid = record(raw)?.uid
+    return typeof uid === 'number' && Number.isSafeInteger(uid) && uid >= highest ? uid + 1 : highest
+  }, rawEntries.length)
+  return {
+    ...structuredClone(original),
+    ...(worldInfo.name === undefined ? {} : { name: worldInfo.name }),
+    ...(worldInfo.lorebook.scanDepth === undefined ? {} : { scan_depth: worldInfo.lorebook.scanDepth }),
+    ...(worldInfo.lorebook.tokenBudget === undefined ? {} : { token_budget: worldInfo.lorebook.tokenBudget }),
+    recursive_scanning: worldInfo.lorebook.recursiveScanning,
+    entries: rows.map(row => projectedEntry(
+      row.sourceIndex === undefined ? { uid: nextUid++ } : rawEntries[row.sourceIndex],
+      row.entry,
+    )),
+  }
+}
+
 /** Rebuild the exchange-format `character_book` from one bound World Info snapshot. */
 export function characterCardWithWorldInfo(
   card: ImportedCharacterCard,

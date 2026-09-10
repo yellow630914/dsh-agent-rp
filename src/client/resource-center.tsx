@@ -12,6 +12,8 @@ import type { PersonaLibraryEntry, PersonaLibrarySaveRequest } from '../persona-
 import type { PresetLibrarySummary } from '../preset-library-http-protocol.ts'
 import type { RegexPackLibrarySummary } from '../regex-pack-library-protocol.ts'
 import type { WorldInfoLibraryUpload } from '../world-info-library-protocol.ts'
+import type { WorldInfoEditableEntry } from '../world-info-configuration-types.ts'
+import { WorldInfoEditorDialog } from './world-info-editor.tsx'
 import { classifySillyTavernJsonFile } from './import-hint.ts'
 import {
   prepareSillyTavernMigration,
@@ -39,6 +41,14 @@ interface ResourceCenterProps {
   readonly importWorldInfoFile: (file: File) => Promise<WorldInfoLibraryUpload>
   readonly setWorldInfoDefault: (id: string, enabled: boolean) => Promise<WorldInfoLibraryUpload>
   readonly deleteWorldInfo: (id: string) => Promise<WorldInfoLibraryUpload>
+  readonly loadWorldInfoEntries: (id: string) => Promise<{
+    readonly name: string
+    readonly entries: readonly WorldInfoEditableEntry[]
+  }>
+  readonly saveWorldInfoEntries: (
+    id: string,
+    entries: readonly { readonly sourceIndex?: number; readonly entry: WorldInfoEditableEntry }[],
+  ) => Promise<WorldInfoLibraryUpload>
   readonly listPresets: () => Promise<readonly PresetLibrarySummary[]>
   readonly importPresetFile: (file: File) => Promise<PresetLibrarySummary>
   readonly renamePreset: (id: string, name: string) => Promise<PresetLibrarySummary>
@@ -375,6 +385,7 @@ export function RoleplayResourceCenter({
   listCharacters, readCharacter, updateCharacterWorldBinding,
   setCharacterArchived, deleteCharacter, importCharacterFile,
   listWorldInfos, importWorldInfoFile, setWorldInfoDefault, deleteWorldInfo,
+  loadWorldInfoEntries, saveWorldInfoEntries,
   listPresets, importPresetFile, renamePreset, deletePreset,
   listRegexPacks, importRegexPackFile, deleteRegexPack,
   listPersonas, savePersona, deletePersona,
@@ -399,6 +410,7 @@ export function RoleplayResourceCenter({
   const [confirmingPersonaId, setConfirmingPersonaId] = useState<string>()
   const [confirmingRegexPackId, setConfirmingRegexPackId] = useState<string>()
   const [confirmingWorldInfoId, setConfirmingWorldInfoId] = useState<string>()
+  const [editingWorldInfo, setEditingWorldInfo] = useState<WorldInfoLibraryUpload>()
   const [confirmingCharacterId, setConfirmingCharacterId] = useState<string>()
   const [migrationOpen, setMigrationOpen] = useState(false)
   const characterInputRef = useRef<HTMLInputElement | null>(null)
@@ -598,6 +610,12 @@ export function RoleplayResourceCenter({
         ? `「${updated.name}」会在新 RP 会话中默认加载`
         : `「${updated.name}」改为开聊时手动选择`)
     }).catch(reason => { setError(message(reason)) }).finally(finishAction)
+  }
+  const adoptEditedWorldInfo = (previousId: string, upload: WorldInfoLibraryUpload): void => {
+    // Saving mints a new id, so the row has to adopt it — keeping the old one
+    // would leave every later action pointing at a world that no longer exists.
+    setWorldInfos(current => current?.map(candidate => candidate.id === previousId ? upload : candidate))
+    setNotice(`已保存世界书「${upload.name}」；绑定它的角色卡已同步`)
   }
   const removeWorldInfo = (entry: WorldInfoLibraryUpload): void => {
     if (confirmingWorldInfoId !== entry.id) {
@@ -886,6 +904,8 @@ export function RoleplayResourceCenter({
                 <strong style={{ display: 'block', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</strong>
                 <span style={{ display: 'block', fontSize: '10px', marginTop: '4px', opacity: .48 }}>{entry.entryCount} 条目{entry.defaultForNewSessions ? ' · 新会话默认加载' : ''}{entry.degradations.length > 0 ? ` · ${entry.degradations.length} 项兼容提醒` : ''}</span>
               </div>
+              <button type="button" data-agent-rp-action="edit-world-info" disabled={busy !== undefined}
+                onClick={() => { setEditingWorldInfo(entry) }} style={actionStyle(busy === undefined)}>编辑</button>
               <button type="button" disabled={busy !== undefined} onClick={() => { toggleWorldInfoDefault(entry) }} style={actionStyle(busy === undefined)}>
                 {busy === `world-info-default:${entry.id}` ? '保存中…' : entry.defaultForNewSessions ? '取消默认' : '设为默认'}
               </button>
@@ -972,6 +992,12 @@ export function RoleplayResourceCenter({
             : `已处理 ${report.handled} 项，${report.failures.length} 项需要查看原因`)
         }}
         onClose={() => { setMigrationOpen(false) }} />}
+    {editingWorldInfo !== undefined && <WorldInfoEditorDialog
+      entry={editingWorldInfo}
+      load={loadWorldInfoEntries}
+      save={saveWorldInfoEntries}
+      onSaved={adoptEditedWorldInfo}
+      onClose={() => { setEditingWorldInfo(undefined) }} />}
     </section>
   </div>
 }

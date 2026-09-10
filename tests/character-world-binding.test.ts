@@ -355,3 +355,41 @@ test('migrating a SillyTavern chat activates the same bound worlds a character l
     migratedSession.snapshotEvents().length,
   )
 })
+
+test('editing a bound world mints a new identity and carries every reference with it', context => {
+  const { bindings, worlds, characters } = integratedLibraries(context)
+  const character = characters.importFile({
+    data: characterBytes(),
+    filename: 'character.json', mediaType: 'application/json',
+  })
+  const embedded = characters.worldBinding(character.id)?.primary?.worldInfoId
+  assert.ok(embedded)
+  worlds.setDefault(embedded, true)
+  assert.deepEqual(worlds.defaultIds(), [embedded])
+
+  const edited = JSON.parse(new TextDecoder().decode(worlds.asset(embedded).data)) as {
+    entries: Record<string, { content: string }>
+  }
+  const firstKey = Object.keys(edited.entries)[0]!
+  edited.entries[firstKey]!.content = '钟楼每天正午停摆。'
+  const updated = worlds.update(embedded, new TextEncoder().encode(JSON.stringify(edited)))
+
+  // Content changed, so the identity had to change with it.
+  assert.notEqual(updated.id, embedded)
+  assert.equal(worlds.asset(updated.id).worldInfo.lorebook.entries[0]?.content, '钟楼每天正午停摆。')
+  // The binding followed, keeping its provenance.
+  assert.equal(bindings.get(character.id)?.primary?.worldInfoId, updated.id)
+  assert.equal(bindings.get(character.id)?.primary?.provenance, 'embedded-import')
+  // The default marker followed too, and the retired world is gone.
+  assert.deepEqual(worlds.defaultIds(), [updated.id])
+  assert.equal(worlds.list().map(entry => entry.id).includes(embedded), false)
+  assert.throws(() => worlds.asset(embedded), /已不可用/u)
+
+  // The character card now exports the edited text, because export rebuilds
+  // character_book from the bound world rather than the original file.
+  const exported = parseCharacterCardJsonBytes(characters.exportModified(character.id).data)
+  assert.equal(exported.lorebook?.entries[0]?.content, '钟楼每天正午停摆。')
+
+  // Saving identical content is a no-op rather than a pointless id churn.
+  assert.equal(worlds.update(updated.id, worlds.asset(updated.id).data).id, updated.id)
+})

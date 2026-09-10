@@ -183,6 +183,48 @@ export class CharacterWorldBindingStore {
       .sort()
   }
 
+  /**
+   * Point every binding at a world's new identity after its content changed.
+   *
+   * World ids are the sha256 of their content, so editing a world necessarily
+   * mints a new id. Provenance is carried over unchanged: an embedded-import
+   * world stays embedded-import after an edit — what changed is the text, not
+   * where the world came from.
+   * @param previous - the id being retired.
+   * @param next - the id its content now lives under.
+   * @returns the characters whose bindings were rewritten.
+   */
+  replaceWorldInfoId(previous: string, next: string): readonly string[] {
+    if (!WORLD_INFO_ID_PATTERN.test(previous) || !WORLD_INFO_ID_PATTERN.test(next)) {
+      throw new Error('世界书编号无效')
+    }
+    if (previous === next) return []
+    const swap = (reference: CharacterWorldReference): CharacterWorldReference =>
+      reference.worldInfoId === previous ? { ...reference, worldInfoId: next } : reference
+    const rewritten: string[] = []
+    for (const identity of this.referencingCharacters(previous)) {
+      const binding = this.get(identity)
+      if (binding === undefined) continue
+      const primary = binding.primary === null ? null : swap(binding.primary)
+      const additional = binding.additional.map(swap)
+      // A character bound to both the old and the new id would end up with a
+      // duplicate, which parseBinding rejects on the next read. Refuse loudly
+      // rather than write a file that cannot be loaded again.
+      const ids = [...(primary === null ? [] : [primary.worldInfoId]), ...additional.map(item => item.worldInfoId)]
+      if (new Set(ids).size !== ids.length) {
+        throw new Error(`角色 ${identity} 同时绑定了这本世界书的新旧版本，无法改写`)
+      }
+      this.write({
+        ...binding,
+        primary,
+        additional,
+        updatedAt: Math.max(Date.now(), binding.updatedAt + 1),
+      })
+      rewritten.push(identity)
+    }
+    return rewritten
+  }
+
   /** Remove a deleted character's relationship without deleting reusable worlds. */
   removeCharacter(id: string): void {
     const path = this.path(id)

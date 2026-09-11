@@ -30,11 +30,26 @@ export interface WorldInfoEntryOverride {
   readonly entry?: WorldInfoEditableEntry
 }
 
+/**
+ * One book-level override addressed within an immutable imported book.
+ *
+ * The record's presence is what states "this Session decides the value" — so an
+ * omitted `scanDepth` inside a present record means the Session deliberately
+ * removed the book's own default, which is a different outcome from having no
+ * record at all (follow the file).
+ */
+export interface WorldInfoBookOverride {
+  readonly bookId: string
+  readonly scanDepth?: number
+}
+
 /** Complete session-local World Info overlay snapshot. */
 export interface WorldInfoConfigurationState {
   readonly format: 0
   readonly revision: number
   readonly overrides: readonly WorldInfoEntryOverride[]
+  /** Book-level settings this Session overrides; omitted entirely by snapshots written before book overrides existed. */
+  readonly bookOverrides?: readonly WorldInfoBookOverride[]
   /** Optional player-selected aggregate cap across every active book; omitted records do not add a plugin cap. */
   readonly tokenBudget?: number
 }
@@ -44,6 +59,8 @@ export type WorldInfoConfigurationRequest =
   | { readonly operation: 'toggle'; readonly revision: number; readonly bookId: string; readonly entryIndex: number; readonly enabled: boolean }
   | { readonly operation: 'set-book-enabled'; readonly revision: number; readonly bookId: string; readonly enabled: boolean }
   | { readonly operation: 'reset-book'; readonly revision: number; readonly bookId: string }
+  | { readonly operation: 'set-book-scan-depth'; readonly revision: number; readonly bookId: string; readonly scanDepth?: number }
+  | { readonly operation: 'reset-book-scan-depth'; readonly revision: number; readonly bookId: string }
   | { readonly operation: 'edit'; readonly revision: number; readonly bookId: string; readonly entryIndex: number; readonly entry: WorldInfoEditableEntry }
   | { readonly operation: 'delete'; readonly revision: number; readonly bookId: string; readonly entryIndex: number; readonly deleted: boolean }
   | { readonly operation: 'reset-entry'; readonly revision: number; readonly bookId: string; readonly entryIndex: number }

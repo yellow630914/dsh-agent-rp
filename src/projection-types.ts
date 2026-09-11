@@ -79,7 +79,12 @@ export interface AgentRpProjection {
       readonly id: string
       readonly name: string
       readonly source: 'character' | 'standalone'
+      /** Depth actually in force this Session — the Session's override when it set one, otherwise the file's. */
       readonly scanDepth?: number
+      /** The imported file's own default, kept separate so the manager can say what "restore" restores. */
+      readonly fileScanDepth?: number
+      /** True when this Session decided the depth itself, including deciding the book has none. */
+      readonly scanDepthModified: boolean
       readonly tokenBudget?: number
       readonly recursiveScanning: boolean
       readonly degradations: readonly string[]

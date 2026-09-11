@@ -4,6 +4,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ImportedLorebook, ImportedLorebookEntry } from './import/types.ts'
 import type { TavernHelperState, TavernWorldbookEntry } from './tavern-helper.ts'
 import type {
+  WorldInfoBookOverride,
   WorldInfoConfigurationRequest,
   WorldInfoConfigurationState,
   WorldInfoEditableEntry,
@@ -128,6 +129,17 @@ const INITIAL_STATE: WorldInfoConfigurationState = { format: 0, revision: 0, ove
 /** Largest player-selected aggregate World Info cap accepted by the Session manager. */
 export const MAX_SESSION_WORLD_INFO_TOKEN_BUDGET = 100_000
 
+/** Largest book-level scan depth accepted anywhere, matching the `at_depth` injection ceiling. */
+export const MAX_WORLD_INFO_SCAN_DEPTH = 10_000
+
+/** Validate one book-level scan depth, which counts messages and so must be a whole number. */
+export function bookScanDepth(value: unknown, label: string): number | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`${label}必须是非负整数`)
+  if ((value as number) > MAX_WORLD_INFO_SCAN_DEPTH) throw new Error(`${label}过大`)
+  return value as number
+}
+
 /** Resolve the optional player-selected aggregate cap; omission leaves final capacity to the model context. */
 export function worldInfoTokenBudget(state: WorldInfoConfigurationState): number | undefined {
   return state.tokenBudget === undefined || state.tokenBudget === 0 ? undefined : state.tokenBudget
@@ -248,6 +260,20 @@ export function parseWorldInfoConfigurationRequest(source: string): WorldInfoCon
   if (record.operation === 'reset-book') {
     return { operation: 'reset-book', revision, bookId: requestedBookId(record, '世界书操作请求') }
   }
+  if (record.operation === 'reset-book-scan-depth') {
+    return { operation: 'reset-book-scan-depth', revision, bookId: requestedBookId(record, '世界书操作请求') }
+  }
+  if (record.operation === 'set-book-scan-depth') {
+    // An absent scanDepth is the deliberate "this Session uses no book-level
+    // depth" choice, distinct from reset-book-scan-depth's "follow the file".
+    const scanDepth = bookScanDepth(record.scanDepth, 'scanDepth')
+    return {
+      operation: 'set-book-scan-depth',
+      revision,
+      bookId: requestedBookId(record, '世界书操作请求'),
+      ...(scanDepth === undefined ? {} : { scanDepth }),
+    }
+  }
   if (record.operation === 'set-book-enabled') {
     if (typeof record.enabled !== 'boolean') throw new Error('enabled 必须是布尔值')
     return {
@@ -282,6 +308,14 @@ function parseOverride(value: unknown, index: number): WorldInfoEntryOverride {
   }
 }
 
+function parseBookOverride(value: unknown, index: number): WorldInfoBookOverride {
+  const record = object(value, `bookOverrides[${index}]`)
+  const bookId = text(record.bookId, `bookOverrides[${index}].bookId`)
+  if (bookId.trim() === '') throw new Error(`bookOverrides[${index}].bookId 不能为空`)
+  const scanDepth = bookScanDepth(record.scanDepth, `bookOverrides[${index}].scanDepth`)
+  return { bookId, ...(scanDepth === undefined ? {} : { scanDepth }) }
+}
+
 function parseState(value: unknown): WorldInfoConfigurationState {
   const record = object(value, '世界书配置')
   if (record.format !== 0 || !Array.isArray(record.overrides)) throw new Error('世界书配置格式无效')
@@ -289,6 +323,14 @@ function parseState(value: unknown): WorldInfoConfigurationState {
   const keys = parsed.map(item => `${item.bookId}\u0000${item.entryIndex}`)
   if (new Set(keys).size !== keys.length) throw new Error('世界书配置包含重复条目')
   const overrides = parsed.filter(item => item.deleted || item.entry !== undefined)
+  // Snapshots written before book overlays existed carry no bookOverrides at
+  // all, so absence has to stay legal rather than fold to a format error.
+  if (record.bookOverrides !== undefined && !Array.isArray(record.bookOverrides)) {
+    throw new Error('世界书配置格式无效')
+  }
+  const bookOverrides = (record.bookOverrides ?? []).map(parseBookOverride)
+  const bookIds = bookOverrides.map(item => item.bookId)
+  if (new Set(bookIds).size !== bookIds.length) throw new Error('世界书配置包含重复的整本设置')
   const parsedTokenBudget = record.tokenBudget === undefined
     ? undefined : nonNegativeInteger(record.tokenBudget, 'tokenBudget')
   if (parsedTokenBudget !== undefined && parsedTokenBudget > MAX_SESSION_WORLD_INFO_TOKEN_BUDGET) {
@@ -299,6 +341,7 @@ function parseState(value: unknown): WorldInfoConfigurationState {
     format: 0,
     revision: nonNegativeInteger(record.revision, 'revision'),
     overrides,
+    ...(bookOverrides.length === 0 ? {} : { bookOverrides }),
     ...(tokenBudget === undefined ? {} : { tokenBudget }),
   }
 }
@@ -363,6 +406,14 @@ export function applyEditable(entry: ImportedLorebookEntry, value: WorldInfoEdit
   }
 }
 
+/** Resolve this Session's book-level override for one imported book, if it set one. */
+export function worldInfoBookOverride(
+  state: WorldInfoConfigurationState,
+  bookId: string,
+): WorldInfoBookOverride | undefined {
+  return state.bookOverrides?.find(item => item.bookId === bookId)
+}
+
 /** Apply one session overlay while retaining deleted entries for management UI. */
 export function configuredLorebook(
   source: SessionLorebookSource,
@@ -376,7 +427,15 @@ export function configuredLorebook(
     const configured = override?.entry === undefined ? entry : applyEditable(entry, override.entry)
     return override?.deleted === true ? { ...configured, enabled: false } : configured
   })
-  return { lorebook: { ...source.lorebook, entries }, deleted }
+  // A present book override decides scanDepth outright, including deciding the
+  // book has none — so drop the file's own key rather than spreading over it.
+  const book = worldInfoBookOverride(state, source.id)
+  const { scanDepth: fileScanDepth, ...carried } = source.lorebook
+  const scanDepth = book === undefined ? fileScanDepth : book.scanDepth
+  return {
+    lorebook: { ...carried, ...(scanDepth === undefined ? {} : { scanDepth }), entries },
+    deleted,
+  }
 }
 
 function replaceOverride(
@@ -406,7 +465,10 @@ export function configureWorldInfo(
   sources: readonly SessionLorebookSource[],
 ): WorldInfoConfigurationState {
   if (request.revision !== state.revision) throw new Error('世界书已在别处改变，请刷新后重试')
-  if (request.operation === 'reset-all') return { ...state, revision: state.revision + 1, overrides: [] }
+  if (request.operation === 'reset-all') {
+    const { bookOverrides: _clearedBooks, ...withoutBookOverrides } = state
+    return { ...withoutBookOverrides, revision: state.revision + 1, overrides: [] }
+  }
   if (request.operation === 'set-budget') {
     if (request.tokenBudget === 0) {
       const { tokenBudget: _removed, ...withoutTokenBudget } = state
@@ -414,12 +476,33 @@ export function configureWorldInfo(
     }
     return { ...state, revision: state.revision + 1, tokenBudget: request.tokenBudget }
   }
-  if (request.operation === 'reset-book') {
+  if (request.operation === 'reset-book' || request.operation === 'reset-book-scan-depth') {
+    if (!sources.some(source => source.id === request.bookId)) throw new Error('目标世界书不存在')
+    const { bookOverrides: previous, ...rest } = state
+    const bookOverrides = (previous ?? []).filter(item => item.bookId !== request.bookId)
+    return {
+      ...rest,
+      revision: state.revision + 1,
+      // "Restore from file" covers the whole book, scan depth included; the
+      // narrower request leaves the entry overlay alone.
+      ...(request.operation === 'reset-book'
+        ? { overrides: state.overrides.filter(item => item.bookId !== request.bookId) }
+        : {}),
+      ...(bookOverrides.length === 0 ? {} : { bookOverrides }),
+    }
+  }
+  if (request.operation === 'set-book-scan-depth') {
     if (!sources.some(source => source.id === request.bookId)) throw new Error('目标世界书不存在')
     return {
       ...state,
       revision: state.revision + 1,
-      overrides: state.overrides.filter(item => item.bookId !== request.bookId),
+      bookOverrides: [
+        ...(state.bookOverrides ?? []).filter(item => item.bookId !== request.bookId),
+        {
+          bookId: request.bookId,
+          ...(request.scanDepth === undefined ? {} : { scanDepth: request.scanDepth }),
+        },
+      ],
     }
   }
   if (request.operation === 'set-book-enabled') {

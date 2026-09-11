@@ -206,3 +206,75 @@ test('a malformed edit is refused and leaves the stored book alone', async conte
   assert.equal(rejected.status, 405)
   assert.match(rejected.headers.allow ?? '', /PUT/u)
 })
+
+test('the book-level scan depth is loaded, stored and removed from the resource center', async context => {
+  const store = library(context)
+  const deep = Buffer.from(JSON.stringify({
+    name: '海城',
+    scan_depth: 3,
+    token_budget: 900,
+    entries: { 1: { uid: 1, key: ['钟楼'], content: '钟楼午夜停摆。', order: 10, position: 0 } },
+  }), 'utf8')
+  const original = store.importFile({ data: deep, filename: '海城.json' })
+  const route = routeFor(store)
+
+  const loaded = await call(route, 'GET', `${WORLD_INFO_LIBRARY_PATH}?id=${encodeURIComponent(original.id)}`)
+  assert.equal(loaded.status, 200)
+  assert.equal(loaded.json.scanDepth, 3, '整本的默认扫描深度，不是某个条目的')
+  const entries = loaded.json.entries as readonly WorldInfoEditableEntry[]
+  const body = (scanDepth?: number): Record<string, unknown> => ({
+    format: 0,
+    id: '',
+    ...(scanDepth === undefined ? {} : { scanDepth }),
+    entries: entries.map((entry, sourceIndex) => ({ sourceIndex, entry })),
+  })
+
+  const shallow = await call(route, 'PUT', WORLD_INFO_LIBRARY_PATH, { ...body(1), id: original.id })
+  assert.equal(shallow.status, 200)
+  const shallowId = (shallow.json.upload as { readonly id: string }).id
+  assert.equal(store.asset(shallowId).worldInfo.lorebook.scanDepth, 1)
+  assert.equal(store.asset(shallowId).worldInfo.lorebook.tokenBudget, 900, 'unrelated book settings survive')
+
+  // Omitting scanDepth is the complete-replacement way of saying "no default",
+  // so the key has to actually leave the stored file.
+  const cleared = await call(route, 'PUT', WORLD_INFO_LIBRARY_PATH, { ...body(), id: shallowId })
+  assert.equal(cleared.status, 200)
+  const clearedId = (cleared.json.upload as { readonly id: string }).id
+  assert.equal(store.asset(clearedId).worldInfo.lorebook.scanDepth, undefined)
+  const raw = store.asset(clearedId).worldInfo.raw as unknown as Record<string, unknown>
+  assert.equal('scan_depth' in raw, false, 'the key is removed rather than written as null')
+
+  for (const scanDepth of [-1, 2.5, 20_000, 'deep']) {
+    const refused = await call(route, 'PUT', WORLD_INFO_LIBRARY_PATH, { ...body(), id: clearedId, scanDepth })
+    assert.equal(refused.status, 400, JSON.stringify(scanDepth))
+  }
+  assert.equal(store.list().length, 1)
+})
+
+test('keeping a book scan depth unchanged does not move it or churn the id', async context => {
+  const store = library(context)
+  const deep = Buffer.from(JSON.stringify({
+    name: '海城',
+    scan_depth: 3,
+    entries: { 1: { uid: 1, key: ['钟楼'], content: '钟楼午夜停摆。', order: 10, position: 0 } },
+  }), 'utf8')
+  const original = store.importFile({ data: deep, filename: '海城.json' })
+  const route = routeFor(store)
+  const save = async (id: string): Promise<string> => {
+    const loaded = await call(route, 'GET', `${WORLD_INFO_LIBRARY_PATH}?id=${encodeURIComponent(id)}`)
+    const entries = loaded.json.entries as readonly WorldInfoEditableEntry[]
+    const saved = await call(route, 'PUT', WORLD_INFO_LIBRARY_PATH, {
+      format: 0,
+      id,
+      scanDepth: loaded.json.scanDepth as number,
+      entries: entries.map((entry, sourceIndex) => ({ sourceIndex, entry })),
+    })
+    assert.equal(saved.status, 200)
+    return (saved.json.upload as { readonly id: string }).id
+  }
+
+  const normalized = await save(original.id)
+  const keys = Object.keys(store.asset(normalized).worldInfo.raw as unknown as Record<string, unknown>)
+  assert.deepEqual(keys, ['name', 'scan_depth', 'entries', 'recursive_scanning'], 'scan_depth stays where the file had it')
+  assert.equal(await save(normalized), normalized, 'a second identical save is a no-op')
+})

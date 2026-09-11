@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CommandId } from '@deepseek-ai/dsh-commands'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { inspectLorebook } from '../src/import/lorebook.ts'
 import { parseWorldInfoJson } from '../src/import/world-info.ts'
 import {
   characterWorldInfoBookName,
@@ -178,4 +179,106 @@ test('changes one whole book atomically and restores its imported state', () => 
   assert.equal(restored.revision, 4)
   assert.deepEqual(restored.overrides, [])
   assert.deepEqual(configuredLorebook(book, restored).lorebook.entries.map(entry => entry.enabled), [true, true])
+})
+
+test('a Session sets its own book-level scan depth without touching the imported file', () => {
+  // The key only appears in the oldest message, so the depth is what decides
+  // whether this entry activates at all.
+  const messages = ['提到钟楼。', '随后闲聊。', '继续闲聊。']
+  const deep = parseWorldInfoJson(JSON.stringify({ name: '海城', scan_depth: 3, entries: {
+    1: { uid: 1, key: ['钟楼'], content: '钟楼午夜停摆。', order: 1, position: 1 },
+  } }))
+  const book: SessionLorebookSource = {
+    id: 'standalone:depth', name: '海城', source: 'standalone', lorebook: deep.lorebook, degradations: [],
+  }
+  const active = (state: Parameters<typeof configuredLorebook>[1]): boolean =>
+    inspectLorebook(configuredLorebook(book, state).lorebook, messages).entries[0]!.active
+
+  const initial = { format: 0, revision: 0, overrides: [] } as const
+  assert.equal(book.lorebook.scanDepth, 3)
+  assert.equal(active(initial), true, 'the file\'s own depth reaches the oldest message')
+
+  const shallow = configureWorldInfo(initial, parseWorldInfoConfigurationRequest(JSON.stringify({
+    operation: 'set-book-scan-depth', revision: 0, bookId: book.id, scanDepth: 1,
+  })), [book])
+  assert.deepEqual(shallow.bookOverrides, [{ bookId: book.id, scanDepth: 1 }])
+  assert.equal(configuredLorebook(book, shallow).lorebook.scanDepth, 1)
+  assert.equal(active(shallow), false, 'the Session\'s shallower depth no longer reaches it')
+  assert.equal(book.lorebook.scanDepth, 3, 'the imported book is untouched')
+
+  // An omitted scanDepth is "this Session uses no book-level depth", which is a
+  // different outcome from having no override at all.
+  const none = configureWorldInfo(shallow, parseWorldInfoConfigurationRequest(JSON.stringify({
+    operation: 'set-book-scan-depth', revision: 1, bookId: book.id,
+  })), [book])
+  assert.deepEqual(none.bookOverrides, [{ bookId: book.id }])
+  assert.equal(configuredLorebook(book, none).lorebook.scanDepth, undefined)
+  assert.equal(active(none), true, 'with no book depth the whole transcript is scanned')
+
+  const restored = configureWorldInfo(none, parseWorldInfoConfigurationRequest(JSON.stringify({
+    operation: 'reset-book-scan-depth', revision: 2, bookId: book.id,
+  })), [book])
+  assert.equal(restored.bookOverrides, undefined, 'the emptied list is dropped rather than kept as []')
+  assert.equal(configuredLorebook(book, restored).lorebook.scanDepth, 3)
+  assert.equal(restored.revision, 3)
+})
+
+test('restoring a book or the whole overlay also drops its scan depth', () => {
+  const book = source()
+  const withDepth = configureWorldInfo({ format: 0, revision: 0, overrides: [] }, {
+    operation: 'set-book-scan-depth', revision: 0, bookId: book.id, scanDepth: 2,
+  }, [book])
+  const edited = configureWorldInfo(withDepth, {
+    operation: 'edit', revision: 1, bookId: book.id, entryIndex: 0,
+    entry: { ...editableWorldInfoEntry(book.lorebook.entries[0]!), content: '改写。' },
+  }, [book])
+
+  const perBook = configureWorldInfo(edited, { operation: 'reset-book', revision: 2, bookId: book.id }, [book])
+  assert.equal(perBook.bookOverrides, undefined)
+  assert.deepEqual(perBook.overrides, [])
+
+  const everything = configureWorldInfo(edited, { operation: 'reset-all', revision: 2 }, [book])
+  assert.equal(everything.bookOverrides, undefined)
+  assert.deepEqual(everything.overrides, [])
+
+  // The narrow reset is narrow: the entry overlay stays.
+  const depthOnly = configureWorldInfo(edited, {
+    operation: 'reset-book-scan-depth', revision: 2, bookId: book.id,
+  }, [book])
+  assert.equal(depthOnly.bookOverrides, undefined)
+  assert.equal(configuredLorebook(book, depthOnly).lorebook.entries[0]?.content, '改写。')
+})
+
+test('refuses a book scan depth that is not a whole non-negative count', () => {
+  const book = source()
+  for (const scanDepth of [-1, 2.5, 20_000, 'deep']) {
+    assert.throws(() => parseWorldInfoConfigurationRequest(JSON.stringify({
+      operation: 'set-book-scan-depth', revision: 0, bookId: book.id, scanDepth,
+    })), /scanDepth/u, JSON.stringify(scanDepth))
+  }
+  assert.throws(() => configureWorldInfo({ format: 0, revision: 0, overrides: [] }, {
+    operation: 'set-book-scan-depth', revision: 0, bookId: 'standalone:missing', scanDepth: 1,
+  }, [book]), /目标世界书不存在/u)
+})
+
+test('carries book scan depth through a persisted overlay snapshot', () => {
+  const book = source()
+  const state = configureWorldInfo({ format: 0, revision: 0, overrides: [] }, {
+    operation: 'set-book-scan-depth', revision: 0, bookId: book.id, scanDepth: 4,
+  }, [book])
+  const session = Session.create(SessionId('world-info-book-depth'))
+  const commandId = CommandId('world-info-1')
+  session.append('command/run', { commandId, name: 'rp-world-info', args: ' {}', source: { kind: 'user' } })
+  session.append('command/done', { commandId, kind: 'success', text: encodeWorldInfoConfiguration(state) })
+
+  const replayed = readWorldInfoConfiguration(session.snapshotEvents())
+  assert.deepEqual(replayed.bookOverrides, [{ bookId: book.id, scanDepth: 4 }])
+
+  // Overlays written before book settings existed still load.
+  const legacy = readWorldInfoConfiguration([{
+    type: 'command/done', seq: 0, time: 0,
+    data: { commandId, kind: 'success', text: encodeWorldInfoConfiguration({ format: 0, revision: 7, overrides: [] }) },
+  } as never])
+  assert.equal(legacy.bookOverrides, undefined)
+  assert.equal(legacy.revision, 7)
 })

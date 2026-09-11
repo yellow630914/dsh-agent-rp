@@ -10,16 +10,21 @@ export interface WorldInfoEditorRow {
   readonly entry: WorldInfoEditableEntry
 }
 
-/** Load one world's editable entries. */
+/** Load one world's editable entries and its book-level settings. */
 export type LoadWorldInfoEntries = (id: string) => Promise<{
   readonly name: string
+  readonly scanDepth?: number
   readonly entries: readonly WorldInfoEditableEntry[]
 }>
 
-/** Store the complete edited entry list, returning the world's new identity. */
+/**
+ * Store the complete edited book, returning the world's new identity.
+ * `scanDepth` is the book-level default; `undefined` stores none.
+ */
 export type SaveWorldInfoEntries = (
   id: string,
   entries: readonly WorldInfoEditorRow[],
+  scanDepth: number | undefined,
 ) => Promise<WorldInfoLibraryUpload>
 
 /**
@@ -94,6 +99,7 @@ export function WorldInfoEditorDialog({ entry, load, save, onSaved, onClose }: {
   readonly onClose: () => void
 }) {
   const [rows, setRows] = useState<readonly WorldInfoEditorRow[]>()
+  const [scanDepth, setScanDepth] = useState<number>()
   const [selected, setSelected] = useState(0)
   const [busy, setBusy] = useState(false)
   const [dirty, setDirty] = useState(false)
@@ -104,6 +110,7 @@ export function WorldInfoEditorDialog({ entry, load, save, onSaved, onClose }: {
     void load(entry.id).then(value => {
       if (!current) return
       setRows(value.entries.map((item, index) => ({ sourceIndex: index, entry: item })))
+      setScanDepth(value.scanDepth)
     }, reason => {
       if (current) setError(reason instanceof Error ? reason.message : String(reason))
     })
@@ -136,7 +143,7 @@ export function WorldInfoEditorDialog({ entry, load, save, onSaved, onClose }: {
     if (rows === undefined || busy) return
     setBusy(true)
     setError(undefined)
-    void save(entry.id, rows).then(upload => {
+    void save(entry.id, rows, scanDepth).then(upload => {
       onSaved(entry.id, upload)
       onClose()
     }, reason => {
@@ -175,9 +182,22 @@ export function WorldInfoEditorDialog({ entry, load, save, onSaved, onClose }: {
         fontSize: '13px', margin: '22px 0 4px', opacity: .58,
       }}>正在读取条目…</p>}
 
+      {rows !== undefined && <label data-agent-rp-world-info-book-scan-depth style={{
+        alignItems: 'center', display: 'flex', flexWrap: 'wrap', fontSize: '11px', gap: '8px',
+        marginTop: '14px', opacity: .82,
+      }}>默认扫描深度
+        <input type="number" min={0} value={scanDepth ?? ''} placeholder="不限制" disabled={busy}
+          style={{ ...fieldStyle, width: '96px' }} onChange={event => {
+            const value = event.target.value.trim()
+            setScanDepth(value === '' ? undefined : Math.max(0, Math.trunc(Number(value)) || 0))
+            setDirty(true)
+          }} />
+        <span style={{ opacity: .58 }}>只对没有自己扫描深度的条目生效</span>
+      </label>}
+
       {rows !== undefined && <div style={{
         display: 'grid', gap: '12px', gridTemplateColumns: 'minmax(0, 220px) minmax(0, 1fr)',
-        marginTop: '14px', minHeight: 0,
+        marginTop: '12px', minHeight: 0,
       }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minHeight: 0 }}>
           <div style={{ display: 'flex', gap: '6px' }}>

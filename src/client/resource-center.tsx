@@ -12,8 +12,11 @@ import type { PersonaLibraryEntry, PersonaLibrarySaveRequest } from '../persona-
 import type { PresetLibrarySummary } from '../preset-library-http-protocol.ts'
 import type { RegexPackLibrarySummary } from '../regex-pack-library-protocol.ts'
 import type { WorldInfoLibraryUpload } from '../world-info-library-protocol.ts'
-import type { WorldInfoEditableEntry } from '../world-info-configuration-types.ts'
-import { WorldInfoEditorDialog } from './world-info-editor.tsx'
+import {
+  WorldInfoEditorDialog,
+  type LoadWorldInfoEntries,
+  type SaveWorldInfoEntries,
+} from './world-info-editor.tsx'
 import { classifySillyTavernJsonFile } from './import-hint.ts'
 import {
   prepareSillyTavernMigration,
@@ -41,14 +44,8 @@ interface ResourceCenterProps {
   readonly importWorldInfoFile: (file: File) => Promise<WorldInfoLibraryUpload>
   readonly setWorldInfoDefault: (id: string, enabled: boolean) => Promise<WorldInfoLibraryUpload>
   readonly deleteWorldInfo: (id: string) => Promise<WorldInfoLibraryUpload>
-  readonly loadWorldInfoEntries: (id: string) => Promise<{
-    readonly name: string
-    readonly entries: readonly WorldInfoEditableEntry[]
-  }>
-  readonly saveWorldInfoEntries: (
-    id: string,
-    entries: readonly { readonly sourceIndex?: number; readonly entry: WorldInfoEditableEntry }[],
-  ) => Promise<WorldInfoLibraryUpload>
+  readonly loadWorldInfoEntries: LoadWorldInfoEntries
+  readonly saveWorldInfoEntries: SaveWorldInfoEntries
   readonly listPresets: () => Promise<readonly PresetLibrarySummary[]>
   readonly importPresetFile: (file: File) => Promise<PresetLibrarySummary>
   readonly renamePreset: (id: string, name: string) => Promise<PresetLibrarySummary>

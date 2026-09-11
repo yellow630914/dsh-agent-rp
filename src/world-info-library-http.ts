@@ -12,7 +12,7 @@ import {
   type AgentRpHttpServer,
 } from './host-http.ts'
 import { MAX_WORLD_INFO_JSON_BYTES } from './import/world-info.ts'
-import { applyEditable, editable, editableWorldInfoEntry } from './world-info-configuration-core.ts'
+import { applyEditable, bookScanDepth, editable, editableWorldInfoEntry } from './world-info-configuration-core.ts'
 import { WorldInfoLibrary } from './world-info-library.ts'
 import { WORLD_INFO_LIBRARY_PATH } from './world-info-library-protocol.ts'
 
@@ -53,6 +53,8 @@ export function installWorldInfoLibraryHttp(
             format: 0,
             id,
             name: asset.upload.name,
+            ...(asset.worldInfo.lorebook.scanDepth === undefined
+              ? {} : { scanDepth: asset.worldInfo.lorebook.scanDepth }),
             entries: asset.worldInfo.lorebook.entries.map(entry => editableWorldInfoEntry(entry)),
           })
         } catch (error: unknown) {
@@ -93,9 +95,10 @@ export function installWorldInfoLibraryHttp(
           const record = value as Record<string, unknown>
           if (record.format !== 0 || typeof record.id !== 'string' || !Array.isArray(record.entries)
             || record.entries.length > MAX_WORLD_INFO_ENTRIES
-            || Object.keys(record).some(key => !['format', 'id', 'entries'].includes(key))) {
+            || Object.keys(record).some(key => !['format', 'id', 'scanDepth', 'entries'].includes(key))) {
             throw new Error('世界书编辑请求字段无效')
           }
+          const scanDepth = bookScanDepth(record.scanDepth, 'scanDepth')
           const asset = library.asset(record.id)
           const existing = asset.worldInfo.lorebook.entries
           const rows = record.entries.map((value, index) => {
@@ -117,7 +120,7 @@ export function installWorldInfoLibraryHttp(
               entry: applyEditable(base, editable(row.entry, `第 ${index + 1} 个条目`)),
             }
           })
-          const rebuilt = worldInfoWithEntries(asset.worldInfo, rows)
+          const rebuilt = worldInfoWithEntries(asset.worldInfo, rows, scanDepth)
           const upload = library.update(record.id, new TextEncoder().encode(`${JSON.stringify(rebuilt, null, 2)}
 `))
           json(response, 200, { format: 0, upload })

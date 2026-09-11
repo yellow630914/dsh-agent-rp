@@ -169,11 +169,15 @@ export function blankLorebookEntry(sourceId: string): ImportedLorebookEntry {
  * newly added and starts from an empty object. Omitted rows are the deletion.
  * @param worldInfo - the stored book being edited.
  * @param rows - complete replacement list, in the order they should be stored.
+ * @param scanDepth - book-level default depth to store; `undefined` removes it,
+ *   which is how the editor expresses "this book sets no default of its own".
+ *   Required rather than optional so a caller cannot silently mean "keep".
  * @returns standalone World Info JSON ready to serialize.
  */
 export function worldInfoWithEntries(
   worldInfo: ImportedWorldInfo,
   rows: readonly { readonly sourceIndex?: number; readonly entry: ImportedLorebookEntry }[],
+  scanDepth: number | undefined,
 ): JsonValue {
   const original = record(worldInfo.raw) ?? {}
   const rawEntries = Array.isArray(original.entries)
@@ -186,10 +190,15 @@ export function worldInfoWithEntries(
     const uid = record(raw)?.uid
     return typeof uid === 'number' && Number.isSafeInteger(uid) && uid >= highest ? uid + 1 : highest
   }, rawEntries.length)
+  // Clone first and drop the key outright when the edit removed the default:
+  // overriding in place keeps scan_depth where the file had it, so a book that
+  // keeps its default still serializes byte-identically.
+  const carried = structuredClone(original)
+  if (scanDepth === undefined) delete carried.scan_depth
   return {
-    ...structuredClone(original),
+    ...carried,
     ...(worldInfo.name === undefined ? {} : { name: worldInfo.name }),
-    ...(worldInfo.lorebook.scanDepth === undefined ? {} : { scan_depth: worldInfo.lorebook.scanDepth }),
+    ...(scanDepth === undefined ? {} : { scan_depth: scanDepth }),
     ...(worldInfo.lorebook.tokenBudget === undefined ? {} : { token_budget: worldInfo.lorebook.tokenBudget }),
     recursive_scanning: worldInfo.lorebook.recursiveScanning,
     entries: rows.map(row => projectedEntry(

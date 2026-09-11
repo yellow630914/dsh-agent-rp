@@ -33,6 +33,12 @@ export interface WorldInfoLibraryUpdateRequest {
   readonly format: 0
   readonly id: string
   /**
+   * Book-level default scan depth for entries that set none of their own.
+   * Omitted means the book stores no default — the same complete-replacement
+   * rule the entry list follows, so "removed it" needs no separate signal.
+   */
+  readonly scanDepth?: number
+  /**
    * The complete desired entry list, in storage order. Omitting a row deletes
    * it; a row without `sourceIndex` is newly added. Rows cite where they came
    * from so the Host can carry each entry's original JSON through the edit —
@@ -50,6 +56,8 @@ export interface WorldInfoLibraryDetailResponse {
   readonly format: 0
   readonly id: string
   readonly name: string
+  /** The book's own default scan depth; omitted when it stores none. */
+  readonly scanDepth?: number
   readonly entries: readonly WorldInfoEditableEntry[]
 }
 

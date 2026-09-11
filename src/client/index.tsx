@@ -5475,6 +5475,10 @@ function WorldInfoManagerDialog({ debugEnabled, worldInfo, listWorldInfos, onAtt
   const [error, setError] = useState<string>()
   const [copyFailureNotice, setCopyFailureNotice] = useState<string>()
   const [budgetDraft, setBudgetDraft] = useState(worldInfo.tokenBudget === undefined ? '' : String(worldInfo.tokenBudget))
+  // One draft per book, cleared once its change lands: the overlay is an
+  // append-only command log, so committing per keystroke would write a command
+  // per character and race its own revision check.
+  const [scanDepthDrafts, setScanDepthDrafts] = useState<Record<string, string>>({})
   useEffect(() => { setBudgetDraft(worldInfo.tokenBudget === undefined ? '' : String(worldInfo.tokenBudget)) }, [worldInfo.tokenBudget])
   useEffect(() => {
     if (!narrow && selectedKey === undefined && first !== undefined) setSelectedKey(first)
@@ -5489,12 +5493,19 @@ function WorldInfoManagerDialog({ debugEnabled, worldInfo, listWorldInfos, onAtt
   const book = pair?.book
   const entry = pair?.entry
   const reason = entry === undefined ? undefined : worldInfoReason(entry)
-  const hasOverrides = worldInfo.books.some(item => item.entries.some(candidate => candidate.modified || candidate.deleted))
+  const hasOverrides = worldInfo.books.some(item => item.scanDepthModified
+    || item.entries.some(candidate => candidate.modified || candidate.deleted))
   const enabledCount = allEntries.filter(candidate => candidate.enabled && !candidate.deleted).length
   const blockedCount = allEntries.filter(candidate => !candidate.deleted
     && (candidate.compatibilityBlockers.length > 0 || candidate.hasDecorators)).length
   const failureReport = worldInfoFailureReport(worldInfo.books, { includeDebugErrors: debugEnabled })
   useEffect(() => { setCopyFailureNotice(undefined) }, [failureReport])
+  const clearDepthDraft = (bookId: string): void => {
+    setScanDepthDrafts(current => {
+      const { [bookId]: _committed, ...rest } = current
+      return rest
+    })
+  }
   const mutate = (request: WorldInfoConfigurationRequest, after?: () => void): void => {
     setSaving(true)
     setError(undefined)
@@ -5620,6 +5631,7 @@ function WorldInfoManagerDialog({ debugEnabled, worldInfo, listWorldInfos, onAtt
           overflowY: 'auto', padding: '12px 10px 18px', width: narrow ? '100%' : undefined,
         }}>
           {worldInfo.books.map(item => {
+            const committedDepth = item.scanDepth === undefined ? '' : String(item.scanDepth)
             const itemEntries = item.entries.filter(candidate => !candidate.deleted)
             const itemEnabled = itemEntries.filter(candidate => candidate.enabled).length
             const itemBlocked = itemEntries.filter(candidate => candidate.compatibilityBlockers.length > 0 || candidate.hasDecorators).length
@@ -5637,10 +5649,54 @@ function WorldInfoManagerDialog({ debugEnabled, worldInfo, listWorldInfos, onAtt
                 <button type="button" disabled={saving || itemEnabled === 0} onClick={() => {
                   mutate({ operation: 'set-book-enabled', revision: worldInfo.revision, bookId: item.id, enabled: false })
                 }} style={{ ...generationButtonStyle, fontSize: '10px', padding: '4px 7px' }}>整本关闭</button>
-                {item.entries.some(candidate => candidate.modified || candidate.deleted) && <button type="button" disabled={saving} onClick={() => {
+                {(item.scanDepthModified || item.entries.some(candidate => candidate.modified || candidate.deleted)) && <button type="button" disabled={saving} onClick={() => {
                   mutate({ operation: 'reset-book', revision: worldInfo.revision, bookId: item.id })
                 }} style={{ ...generationButtonStyle, fontSize: '10px', padding: '4px 7px' }}>恢复原文件</button>}
               </div>
+              {/*
+                Scan depth belongs to the book, not to any one entry, so it sits
+                in the book header rather than the entry form. This only changes
+                the Session's snapshot — the stored world book is edited from the
+                resource center instead.
+              */}
+              <form data-agent-rp-world-info-book-scan-depth onSubmit={event => {
+                event.preventDefault()
+                const raw = (scanDepthDrafts[item.id] ?? committedDepth).trim()
+                if (raw !== '' && (!Number.isSafeInteger(Number(raw)) || Number(raw) < 0 || Number(raw) > 10_000)) {
+                  setError('扫描深度需要是 0 到 10000 的整数；留空表示这本书不设默认深度')
+                  return
+                }
+                mutate(raw === ''
+                  ? { operation: 'set-book-scan-depth', revision: worldInfo.revision, bookId: item.id }
+                  : {
+                    operation: 'set-book-scan-depth',
+                    revision: worldInfo.revision,
+                    bookId: item.id,
+                    scanDepth: Number(raw),
+                  }, () => { clearDepthDraft(item.id) })
+              }} style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '7px' }}>
+                <span style={{ opacity: .55 }}>扫描深度</span>
+                <input inputMode="numeric" min={0} max={10000} step={1} type="number" disabled={saving}
+                  value={scanDepthDrafts[item.id] ?? committedDepth}
+                  placeholder={item.fileScanDepth === undefined ? '不限制' : String(item.fileScanDepth)}
+                  aria-label={`${item.name} 的扫描深度`}
+                  onChange={event => {
+                    const value = event.currentTarget.value
+                    setScanDepthDrafts(current => ({ ...current, [item.id]: value }))
+                  }}
+                  style={{
+                    background: 'var(--dsw-alias-bg-base, #151518)',
+                    border: '1px solid var(--dsw-alias-border-l2, #3b3b41)', borderRadius: '6px',
+                    boxSizing: 'border-box', color: 'inherit', font: 'inherit', fontSize: '10px',
+                    padding: '3px 5px', width: '68px',
+                  }} />
+                <button type="submit" disabled={saving || (scanDepthDrafts[item.id] ?? committedDepth) === committedDepth}
+                  style={{ ...generationButtonStyle, fontSize: '10px', padding: '3px 6px' }}>应用</button>
+                {item.scanDepthModified && <button type="button" disabled={saving} onClick={() => {
+                  mutate({ operation: 'reset-book-scan-depth', revision: worldInfo.revision, bookId: item.id },
+                    () => { clearDepthDraft(item.id) })
+                }} style={{ ...generationButtonStyle, fontSize: '10px', padding: '3px 6px' }}>跟随文件</button>}
+              </form>
             </div>
             <div style={{ display: 'grid', gap: '5px' }}>
               {item.entries.map(candidate => {
@@ -13617,6 +13673,7 @@ export function apply(ctx: ClientContext): void {
   }
   const loadWorldInfoEntries = async (id: string): Promise<{
     readonly name: string
+    readonly scanDepth?: number
     readonly entries: readonly WorldInfoEditableEntry[]
   }> => {
     const response = await fetch(`${WORLD_INFO_LIBRARY_PATH}?id=${encodeURIComponent(id)}`, {
@@ -13626,7 +13683,11 @@ export function apply(ctx: ClientContext): void {
     if (!response.ok || value.entries === undefined || typeof value.name !== 'string') {
       throw new Error(value.error ?? `世界书内容读取失败（${response.status}）`)
     }
-    return { name: value.name, entries: value.entries }
+    return {
+      name: value.name,
+      ...(value.scanDepth === undefined ? {} : { scanDepth: value.scanDepth }),
+      entries: value.entries,
+    }
   }
   /**
    * Save the whole edited book at once. World ids are the sha256 of their
@@ -13637,11 +13698,12 @@ export function apply(ctx: ClientContext): void {
   const saveWorldInfoEntries = async (
     id: string,
     entries: readonly { readonly sourceIndex?: number; readonly entry: WorldInfoEditableEntry }[],
+    scanDepth: number | undefined,
   ): Promise<WorldInfoLibraryUpload> => {
     const response = await fetch(WORLD_INFO_LIBRARY_PATH, {
       method: 'PUT',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
-      body: JSON.stringify({ format: 0, id, entries }),
+      body: JSON.stringify({ format: 0, id, ...(scanDepth === undefined ? {} : { scanDepth }), entries }),
     })
     const value = await response.json() as Partial<WorldInfoLibraryUploadResponse> & { readonly error?: string }
     if (!response.ok || value.upload === undefined) throw new Error(value.error ?? `世界书保存失败（${response.status}）`)

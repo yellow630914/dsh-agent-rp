@@ -58,7 +58,11 @@ import { DEFAULT_AGENT_RP_CHARACTER_NAME, type AgentRpProjection } from '../proj
 import { resolveLegacySidebarWidth } from './sidebar-slot-compat.ts'
 import { resolveRoleplayAvatarSource } from './avatar-source.ts'
 import { chatMigrationPermissionOwnerId } from './chat-migration.ts'
-import type { ImportedRegexScript, ImportedTavernHelperScript } from '../import/types.ts'
+import type {
+  ImportedCharacterFrontend,
+  ImportedRegexScript,
+  ImportedTavernHelperScript,
+} from '../import/types.ts'
 import { parseTavernHelperScripts } from '../import/tavern-helper.ts'
 import { importTavernRegex } from '../tavern-regex.ts'
 import type {
@@ -136,6 +140,7 @@ import {
 import {
   createRoleplayDisplayPlanner,
   ROLEPLAY_STATUS_PLACEHOLDER,
+  type RoleplayDisplayPlanner,
 } from '../roleplay-display-plan.ts'
 import {
   blockedCardFrameResources, compileCardFrameDocument, inlineCardSanitizerProbeState,
@@ -11766,6 +11771,15 @@ function roleplayComposerDockComponent(
     displayRegexScripts: storedCharacterRuntime?.displayRegexScripts, projection, viewMode,
   })
   const scanDisplayRef = useRef<() => void>(() => undefined)
+  const displayPlannerRef = useRef<{
+    readonly inputs: {
+      readonly projection: AgentRpProjection | undefined
+      readonly frontend: ImportedCharacterFrontend | undefined
+      readonly immersive: boolean
+      readonly overrides: ReadonlyMap<number, string>
+    }
+    readonly planner: RoleplayDisplayPlanner
+  }>()
   displayStateRef.current = {
     cardFrameRenderDepth, chat, characterDetail, compatibilityMarkers, displayOverrides,
     characterStatus: storedCharacterRuntime?.status,
@@ -12471,12 +12485,25 @@ function roleplayComposerDockComponent(
         && activeCharacterStatus !== 'error') return
       const frontend = activeProjection.frontend === undefined ? undefined
         : withCurrentCharacterDisplayScripts(activeProjection.frontend, activeCharacterDisplayRegexScripts)
-      const displayPlanner = createRoleplayDisplayPlanner({
-        projection: activeProjection,
-        immersive: activeViewMode === 'immersive',
-        overrides: activeDisplayOverrides,
-        ...(frontend === undefined ? {} : { frontend }),
-      })
+      // Reused while its inputs are identical so its per-row memo survives
+      // between frames. The projection only changes when a surface event lands,
+      // never per streamed chunk, so during streaming this keeps every row but
+      // the one being written off the display-regex path entirely.
+      const plannerInputs = { projection: activeProjection, frontend, immersive: activeViewMode === 'immersive', overrides: activeDisplayOverrides }
+      const cachedPlanner = displayPlannerRef.current
+      const displayPlanner = cachedPlanner !== undefined
+        && cachedPlanner.inputs.projection === plannerInputs.projection
+        && cachedPlanner.inputs.frontend === plannerInputs.frontend
+        && cachedPlanner.inputs.immersive === plannerInputs.immersive
+        && cachedPlanner.inputs.overrides === plannerInputs.overrides
+        ? cachedPlanner.planner
+        : createRoleplayDisplayPlanner({
+          projection: activeProjection,
+          immersive: plannerInputs.immersive,
+          overrides: activeDisplayOverrides,
+          ...(frontend === undefined ? {} : { frontend }),
+        })
+      displayPlannerRef.current = { inputs: plannerInputs, planner: displayPlanner }
       const visibleTavernMessages = activeProjection.tavern?.messages.filter(message => !message.isHidden) ?? []
       const retainedCardFrames = retainedCardFrameMessageIds(visibleTavernMessages, activeCardFrameRenderDepth)
       const visibleFlowItems = [...scroll.querySelectorAll<HTMLElement>(

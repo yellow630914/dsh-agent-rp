@@ -161,21 +161,48 @@ function pureDisplayScript(script: ImportedRegexScript): boolean {
  * library copy for presentation-only rules. This lets a player repair, pause, or
  * remove a display rule without restarting the conversation.
  */
+let mergedFrontendKey: {
+  readonly frontend: ImportedCharacterFrontend
+  readonly current: readonly ImportedRegexScript[] | undefined
+} | undefined
+let mergedFrontendValue: ImportedCharacterFrontend | undefined
+
 export function withCurrentCharacterDisplayScripts(
   frontend: ImportedCharacterFrontend,
   current: readonly ImportedRegexScript[] | undefined,
 ): ImportedCharacterFrontend {
   if (current === undefined) return frontend
-  return {
+  // The display pass reuses its planner while this object is reference-equal,
+  // so returning a fresh merge on every frame would silently disable that.
+  if (mergedFrontendValue !== undefined && mergedFrontendKey?.frontend === frontend
+    && mergedFrontendKey.current === current) return mergedFrontendValue
+  const merged = {
     ...frontend,
     regexScripts: [
       ...frontend.regexScripts.filter(script => !pureDisplayScript(script)),
       ...current.filter(pureDisplayScript),
     ],
   }
+  mergedFrontendKey = { frontend, current }
+  mergedFrontendValue = merged
+  return merged
 }
 
-function compileRegex(value: string): RegExp | undefined {
+/**
+ * Compiled expressions, keyed by the exact source text.
+ *
+ * The display pass reruns on every animation frame the transcript mutates —
+ * during streaming that is every chunk, over every visible row — so building a
+ * fresh `RegExp` per script per row per frame was the dominant cost of having
+ * any display rule at all. Sources are authored data, so the key space is
+ * bounded by the rule count times the macro values substituted into them.
+ */
+const compiledRegexes = new Map<string, RegExp | undefined>()
+
+/** Bound on retained compilations; macro substitution can vary one rule’s source. */
+const MAX_COMPILED_REGEXES = 512
+
+function buildRegex(value: string): RegExp | undefined {
   try {
     const literal = value.match(/^\/([\s\S]*)\/([a-z]*)$/iu)
     if (literal === null) return new RegExp(value)
@@ -185,6 +212,20 @@ function compileRegex(value: string): RegExp | undefined {
   } catch (_invalidRegex) {
     return undefined
   }
+}
+
+function compileRegex(value: string): RegExp | undefined {
+  if (compiledRegexes.has(value)) {
+    const cached = compiledRegexes.get(value)
+    // `String.replace` zeroes `lastIndex` itself, but a shared global instance
+    // should not depend on a future caller keeping that promise.
+    if (cached !== undefined) cached.lastIndex = 0
+    return cached
+  }
+  const compiled = buildRegex(value)
+  if (compiledRegexes.size >= MAX_COMPILED_REGEXES) compiledRegexes.clear()
+  compiledRegexes.set(value, compiled)
+  return compiled
 }
 
 /** Describe executable coverage without returning a script expression or replacement. */

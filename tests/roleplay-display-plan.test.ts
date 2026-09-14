@@ -293,3 +293,29 @@ test('hidden floors leave the transcript, and a shadowed reply does not take its
   })
   assert.deepEqual(regenerated.assistant({ finalSeq: 20, blockText: '原回复' }), { kind: 'host' })
 })
+
+test('plans each row once per planner, so a streamed chunk cannot rerun every rule', () => {
+  // The DOM pass reruns on every animation frame the transcript mutates, which
+  // during streaming is every chunk over every visible row. Everything a plan
+  // depends on besides the row itself is fixed when the planner is built, so a
+  // repeated row must come back as the very same plan without re-executing a
+  // single expression.
+  const planner = createRoleplayDisplayPlanner({
+    projection,
+    frontend: { ...frontend, regexScripts: [displayScript()] },
+    immersive: true,
+    overrides: new Map(),
+  })
+  const first = planner.user({ seq: 10 })
+  assert.equal(planner.user({ seq: 10 }), first, 'the identical row returns the identical plan')
+
+  const streaming = planner.assistant({ finalSeq: 20, blockText: '原回' })
+  assert.equal(planner.assistant({ finalSeq: 20, blockText: '原回' }), streaming)
+  assert.notEqual(
+    planner.assistant({ finalSeq: 20, blockText: '原回复' }),
+    streaming,
+    'a grown chunk is a different row and must be replanned',
+  )
+  // The row that is not streaming keeps its cached plan across those frames.
+  assert.equal(planner.user({ seq: 10 }), first)
+})

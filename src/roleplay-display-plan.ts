@@ -165,84 +165,111 @@ export function createRoleplayDisplayPlanner(input: {
   const rewrittenInputBySeq = new Map(projection.generations
     .flatMap(group => group.rewrittenInput === undefined ? [] : [[group.rewrittenInput.seq, group.rewrittenInput.text] as const]))
 
+  /**
+   * One plan per row, for the life of this planner.
+   *
+   * Everything a plan depends on other than the row itself is fixed when the
+   * planner is built, so a row's inputs are exactly its identity and its text.
+   * The caller reruns the whole pass on every animation frame the transcript
+   * mutates; during streaming only the row being streamed actually changes, and
+   * without this every other row recompiles and reruns every display rule.
+   */
+  const plans = new Map<string, RoleplayDisplayPlan>()
+  const memoized = (
+    key: string,
+    plan: () => RoleplayDisplayPlan,
+  ): RoleplayDisplayPlan => {
+    const cached = plans.get(key)
+    if (cached !== undefined) return cached
+    const next = plan()
+    plans.set(key, next)
+    return next
+  }
+
   return {
-    user: ({ seq, alignedMessage }) => {
-      if (dropped(seq)) return { kind: 'hidden', reason: 'superseded-reply' }
-      const message = alignedMessage ?? messageBySeq.get(seq)
-      const messageId = message?.messageId ?? messageIdBySeq.get(seq)
-      const override = messageId === undefined ? undefined : overrides.get(messageId)
-      if (override !== undefined) return overridePlan(override, messageId!)
-      // A rewritten row must show its replacement even with no display rules
-      // and even when the surface no longer contains this seq: the Host
-      // transcript is append-origin, so the row still carries the superseded
-      // text and nothing else will correct it. The messageId is deliberately
-      // omitted — the DOM adapter gates rendering on card-frame retention, and
-      // showing the old message again is worse than losing frame identity on
-      // one player row.
-      const rewritten = rewrittenInputBySeq.get(seq)
-      if (rewritten !== undefined) {
-        const renderedInput = renderCharacterDisplay(rewritten, {
-          name: projection.characterName,
-          frontend: activeFrontend,
-        }, USER_INPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
-        return {
-          kind: 'render', source: 'rewritten-input', compilation: compileCharacterDisplay(renderedInput),
-        }
-      }
-      if (!hasDisplayRules || message?.role !== 'user' || message.text === '') {
-        return { kind: 'host' }
-      }
-      const rendered = renderCharacterDisplay(message.text, {
-        name: projection.characterName,
-        frontend: activeFrontend,
-      }, USER_INPUT_PLACEMENT, messageDepth(messages, message.messageId), projection.userName, sharedRegexScripts)
-      return rendered === message.text
-        ? { kind: 'host' }
-        : { kind: 'render', source: 'display-regex', compilation: compileCharacterDisplay(rendered), messageId: message.messageId }
-    },
-    assistant: ({ finalSeq, blockText, alignedMessage }) => {
-      if (finalSeq !== undefined && dropped(finalSeq)) {
-        return { kind: 'hidden', reason: 'superseded-reply' }
-      }
-      // A replacement row answers for the row it superseded, so the version
-      // group is found and compared through that anchor, not the row's own seq.
-      const anchoredSeq = finalSeq === undefined ? undefined : anchorOf(finalSeq)
-      const generation = anchoredSeq === undefined
-        ? undefined
-        : projection.generations.find(group => group.assistantSeqs.includes(anchoredSeq)
-          || group.anchorSeq === anchoredSeq)
-      const selected = generation?.versions.find(version => version.seq === generation.selectedVersionSeq)
-      const messageId = (selected === undefined ? undefined : messageIdBySeq.get(selected.seq))
-        ?? alignedMessage?.messageId
-        ?? (finalSeq === undefined ? undefined : messageIdBySeq.get(finalSeq))
-      const override = messageId === undefined ? undefined : overrides.get(messageId)
-      if (override !== undefined) return overridePlan(override, messageId!)
-      if (immersive && generation !== undefined) {
-        if (anchoredSeq !== generation.anchorSeq) return { kind: 'hidden', reason: 'unselected-generation' }
-        if (selected !== undefined) {
-          const rendered = renderCharacterDisplay(selected.text.replaceAll(ROLEPLAY_STATUS_PLACEHOLDER, ''), {
+    user: ({ seq, alignedMessage }) => memoized(
+      JSON.stringify(['u', seq, alignedMessage?.messageId, alignedMessage?.text]),
+      () => {
+        if (dropped(seq)) return { kind: 'hidden', reason: 'superseded-reply' }
+        const message = alignedMessage ?? messageBySeq.get(seq)
+        const messageId = message?.messageId ?? messageIdBySeq.get(seq)
+        const override = messageId === undefined ? undefined : overrides.get(messageId)
+        if (override !== undefined) return overridePlan(override, messageId!)
+        // A rewritten row must show its replacement even with no display rules
+        // and even when the surface no longer contains this seq: the Host
+        // transcript is append-origin, so the row still carries the superseded
+        // text and nothing else will correct it. The messageId is deliberately
+        // omitted — the DOM adapter gates rendering on card-frame retention, and
+        // showing the old message again is worse than losing frame identity on
+        // one player row.
+        const rewritten = rewrittenInputBySeq.get(seq)
+        if (rewritten !== undefined) {
+          const renderedInput = renderCharacterDisplay(rewritten, {
             name: projection.characterName,
             frontend: activeFrontend,
-          }, AI_OUTPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
+          }, USER_INPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
           return {
-            kind: 'render', source: 'selected-generation', compilation: compileCharacterDisplay(rendered),
-            ...(messageId === undefined ? {} : { messageId }),
+            kind: 'render', source: 'rewritten-input', compilation: compileCharacterDisplay(renderedInput),
           }
         }
-      }
-      if (!hasDisplayRules) return { kind: 'host' }
-      const raw = alignedMessage?.role === 'assistant' ? alignedMessage.text : blockText
-      if (raw === '') return { kind: 'host' }
-      const rendered = renderCharacterDisplay(raw.replaceAll(ROLEPLAY_STATUS_PLACEHOLDER, ''), {
-        name: projection.characterName,
-        frontend: activeFrontend,
-      }, AI_OUTPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
-      return rendered === raw
-        ? { kind: 'host' }
-        : {
-            kind: 'render', source: 'display-regex', compilation: compileCharacterDisplay(rendered),
-            ...(messageId === undefined ? {} : { messageId }),
+        if (!hasDisplayRules || message?.role !== 'user' || message.text === '') {
+          return { kind: 'host' }
+        }
+        const rendered = renderCharacterDisplay(message.text, {
+          name: projection.characterName,
+          frontend: activeFrontend,
+        }, USER_INPUT_PLACEMENT, messageDepth(messages, message.messageId), projection.userName, sharedRegexScripts)
+        return rendered === message.text
+          ? { kind: 'host' }
+          : { kind: 'render', source: 'display-regex', compilation: compileCharacterDisplay(rendered), messageId: message.messageId }
+      },
+    ),
+    assistant: ({ finalSeq, blockText, alignedMessage }) => memoized(
+      JSON.stringify(['a', finalSeq, alignedMessage?.messageId, alignedMessage?.text, blockText]),
+      () => {
+        if (finalSeq !== undefined && dropped(finalSeq)) {
+          return { kind: 'hidden', reason: 'superseded-reply' }
+        }
+        // A replacement row answers for the row it superseded, so the version
+        // group is found and compared through that anchor, not the row's own seq.
+        const anchoredSeq = finalSeq === undefined ? undefined : anchorOf(finalSeq)
+        const generation = anchoredSeq === undefined
+          ? undefined
+          : projection.generations.find(group => group.assistantSeqs.includes(anchoredSeq)
+            || group.anchorSeq === anchoredSeq)
+        const selected = generation?.versions.find(version => version.seq === generation.selectedVersionSeq)
+        const messageId = (selected === undefined ? undefined : messageIdBySeq.get(selected.seq))
+          ?? alignedMessage?.messageId
+          ?? (finalSeq === undefined ? undefined : messageIdBySeq.get(finalSeq))
+        const override = messageId === undefined ? undefined : overrides.get(messageId)
+        if (override !== undefined) return overridePlan(override, messageId!)
+        if (immersive && generation !== undefined) {
+          if (anchoredSeq !== generation.anchorSeq) return { kind: 'hidden', reason: 'unselected-generation' }
+          if (selected !== undefined) {
+            const rendered = renderCharacterDisplay(selected.text.replaceAll(ROLEPLAY_STATUS_PLACEHOLDER, ''), {
+              name: projection.characterName,
+              frontend: activeFrontend,
+            }, AI_OUTPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
+            return {
+              kind: 'render', source: 'selected-generation', compilation: compileCharacterDisplay(rendered),
+              ...(messageId === undefined ? {} : { messageId }),
+            }
           }
-    },
+        }
+        if (!hasDisplayRules) return { kind: 'host' }
+        const raw = alignedMessage?.role === 'assistant' ? alignedMessage.text : blockText
+        if (raw === '') return { kind: 'host' }
+        const rendered = renderCharacterDisplay(raw.replaceAll(ROLEPLAY_STATUS_PLACEHOLDER, ''), {
+          name: projection.characterName,
+          frontend: activeFrontend,
+        }, AI_OUTPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
+        return rendered === raw
+          ? { kind: 'host' }
+          : {
+              kind: 'render', source: 'display-regex', compilation: compileCharacterDisplay(rendered),
+              ...(messageId === undefined ? {} : { messageId }),
+            }
+      },
+    ),
   }
 }

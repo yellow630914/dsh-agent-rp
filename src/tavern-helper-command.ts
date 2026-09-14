@@ -12,7 +12,7 @@ import { cardFromImportMeta, readActiveSessionCharacter } from './import/session
 import { readActiveSessionPreset } from './import/session-preset.ts'
 import { presetTavernHelperScripts } from './import/sillytavern-preset.ts'
 import { roleplaySurfaceNodes } from './roleplay-surface-overlay.ts'
-import { executeTavernChatMutation } from './tavern-chat.ts'
+import { executeTavernChatMutation, type EstimateMessage } from './tavern-chat.ts'
 import { tavernChatMessageSeqs } from './tavern-chat.ts'
 import {
   applyTavernHelperMutation,
@@ -92,6 +92,12 @@ export function prepareTavernHelperState(agent: Agent, previous = readTavernHelp
 export function executeTavernHelperMutation(invocation: {
   readonly agent: Agent
   readonly rawInput: string
+  /**
+   * The Host token meter's estimator. Hiding floors prices the range it
+   * shadows for the meter, and that price has to come from the meter's own
+   * estimator or its running total drifts from the surface it describes.
+   */
+  readonly estimateMessage?: EstimateMessage
 }): { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: SessionSeq } {
   const request = parseTavernHelperMutationRequest(invocation.rawInput)
   validateTavernMutationCause(invocation.agent, request.cause)
@@ -141,7 +147,7 @@ export function executeTavernHelperMutation(invocation: {
     throw new Error('Tavern Helper chat mutation belongs to a reply that is no longer selected')
   }
   const chat = isChatMutation
-    ? executeTavernChatMutation(invocation.agent, request, initialized.hiddenPrefix)
+    ? executeTavernChatMutation(invocation.agent, request, initialized.hiddenPrefix, invocation.estimateMessage)
     : undefined
   const mutated = applyTavernHelperMutation(initialized, request)
   const next = chat === undefined ? mutated : {

@@ -52,6 +52,13 @@ export interface RoleplayDisplayProjection {
    */
   readonly surfaceAnchors?: Readonly<Record<string, number>>
   readonly supersededSeqs?: readonly number[]
+  /**
+   * Rows a real surface `replace` dropped — today the floor-hide marker.
+   *
+   * Nothing stands in for them, so unlike `supersededSeqs` these are hidden
+   * unconditionally: the player asked for them to leave the conversation.
+   */
+  readonly shadowedSeqs?: readonly number[]
   readonly generations: readonly {
     readonly anchorSeq: number
     readonly selectedVersionSeq: number
@@ -149,12 +156,18 @@ export function createRoleplayDisplayPlanner(input: {
   const anchorOf = (seq: number): number => anchors?.[String(seq)] ?? seq
   const supersededReplacement = (seq: number): boolean =>
     superseded.has(seq) && anchors?.[String(seq)] !== undefined
+  // Hiding floors drops rows through a real surface `replace`, which leaves no
+  // stand-in row carrying their text — the narrow rule above deliberately does
+  // not match them, because it exists to spare a shadowed model reply that
+  // still carries its turn's only text. These have no such claim.
+  const shadowed = new Set(projection.shadowedSeqs ?? [])
+  const dropped = (seq: number): boolean => shadowed.has(seq) || supersededReplacement(seq)
   const rewrittenInputBySeq = new Map(projection.generations
     .flatMap(group => group.rewrittenInput === undefined ? [] : [[group.rewrittenInput.seq, group.rewrittenInput.text] as const]))
 
   return {
     user: ({ seq, alignedMessage }) => {
-      if (supersededReplacement(seq)) return { kind: 'hidden', reason: 'superseded-reply' }
+      if (dropped(seq)) return { kind: 'hidden', reason: 'superseded-reply' }
       const message = alignedMessage ?? messageBySeq.get(seq)
       const messageId = message?.messageId ?? messageIdBySeq.get(seq)
       const override = messageId === undefined ? undefined : overrides.get(messageId)
@@ -188,7 +201,7 @@ export function createRoleplayDisplayPlanner(input: {
         : { kind: 'render', source: 'display-regex', compilation: compileCharacterDisplay(rendered), messageId: message.messageId }
     },
     assistant: ({ finalSeq, blockText, alignedMessage }) => {
-      if (finalSeq !== undefined && supersededReplacement(finalSeq)) {
+      if (finalSeq !== undefined && dropped(finalSeq)) {
         return { kind: 'hidden', reason: 'superseded-reply' }
       }
       // A replacement row answers for the row it superseded, so the version

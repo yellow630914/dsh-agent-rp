@@ -188,6 +188,14 @@ export interface AgentRpProjection {
    * planner hides them and renders on the replacement row instead.
    */
   readonly supersededSeqs?: readonly number[]
+  /**
+   * Transcript rows a real surface `replace` dropped, in ascending seq order.
+   *
+   * Nothing stands in for these — hiding floors states that the player wants
+   * them gone from the conversation — so the planner hides them outright.
+   * Absent for Sessions that never replaced a surface range.
+   */
+  readonly shadowedSeqs?: readonly number[]
   /** Stable transcript anchor of the model-visible final Roleplay reply. */
   readonly currentReplySeq?: number
   /** Unified present-phase selection behind the visible reply and its runtime state. */

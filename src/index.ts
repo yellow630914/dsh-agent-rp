@@ -8,7 +8,7 @@ import type { CommandId } from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-agent'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, type Message } from '@deepseek-ai/dsh-llm'
 import type { ScopeKey } from '@deepseek-ai/dsh-scope'
 import { SessionSeq, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -912,7 +912,18 @@ export function installAgentRp(
     description: 'persist an isolated Tavern Helper variable namespace',
     input: { hint: '<private Tavern Helper variable payload>' },
     recordInput: false,
-    handler: executeTavernHelperMutation,
+    handler: invocation => {
+      // Hiding floors prices the range it shadows for the token meter. That is
+      // a first-party service but not one this plugin can require — a Host
+      // without it should still load and still hide floors, it just cannot
+      // correct the meter's own bounded running total. Resolved per call so a
+      // meter mounted after this plugin is still found.
+      const meter = ctx.get('tokenMeter') as { estimateMessage(message: Message): number } | undefined
+      return executeTavernHelperMutation({
+        ...invocation,
+        ...(meter === undefined ? {} : { estimateMessage: (message: Message) => meter.estimateMessage(message) }),
+      })
+    },
   })
   commands.register({
     name: 'rp-tavern-trigger',

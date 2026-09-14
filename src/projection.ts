@@ -187,6 +187,13 @@ interface AgentRpProjectionState {
   readonly surfaceAnchors: Readonly<Record<string, number>>
   /** Transcript rows a replacement superseded; the planner hides them. */
   readonly supersededSeqs: readonly number[]
+  /**
+   * Rows dropped from the surface by a real `replace` — today only the
+   * floor-hide marker. Unlike {@link supersededSeqs} these rows have no
+   * stand-in carrying their text: the player asked for them to be gone, so the
+   * planner hides them outright.
+   */
+  readonly shadowedSeqs: readonly number[]
   readonly currentReplySeq?: number
   readonly presentation?: RoleplayTurnPresentation
   readonly tavern?: TavernHelperState
@@ -502,6 +509,34 @@ function applySurfaceOverride(
   }
   if (!placed) next.push(...moved)
   return next
+}
+
+/**
+ * Collect the surface rows one real `replace` dropped.
+ *
+ * A `replace` states that the shadowed range is no longer part of the
+ * conversation at all. The DSH transcript is append-origin and keeps rendering
+ * those rows, so the planner needs their seqs to take them off screen.
+ * @param shadowed - seqs dropped by earlier replacements.
+ * @param surface - surface as it stood before this event.
+ * @param event - the next committed session event.
+ * @returns the accumulated seqs, or the same reference when nothing changed.
+ */
+function applyShadowedSeqs(
+  shadowed: readonly number[],
+  surface: AgentRpProjectionState['surface'],
+  event: SessionEvent,
+): readonly number[] {
+  if (event.type !== 'user/message' && event.type !== 'assistant/message' && event.type !== 'tool/result') {
+    return shadowed
+  }
+  const operation = event.surfaceOp
+  if (operation === undefined || operation === 'append') return shadowed
+  const start = surface.findIndex(value => value.seq === operation.start)
+  const end = surface.findIndex(value => value.seq === operation.end)
+  if (start < 0 || end < start) return shadowed
+  const dropped = surface.slice(start, end + 1).map(value => value.seq)
+  return dropped.length === 0 ? shadowed : [...shadowed, ...dropped]
 }
 
 function applySurface(
@@ -951,14 +986,17 @@ function foldAgentRpProjectionEvent(
   state: AgentRpProjectionState,
   event: SessionEvent,
 ): AgentRpProjectionState {
+  // Reads the surface as it stood BEFORE this event, so it must run first.
+  const shadowedSeqs = applyShadowedSeqs(state.shadowedSeqs, state.surface, event)
   const surface = applySurface(state.surface, event)
   const surfaceAnchors = applySurfaceAnchors(state.surfaceAnchors, event)
   const supersededSeqs = applySupersededSeqs(state.supersededSeqs, event)
   const auxiliaryGenerations = applyTavernAuxiliaryGenerationEvent(state.auxiliaryGenerations, event)
   const withSurface = surface === state.surface && auxiliaryGenerations === state.auxiliaryGenerations
     && surfaceAnchors === state.surfaceAnchors && supersededSeqs === state.supersededSeqs
+    && shadowedSeqs === state.shadowedSeqs
     ? state
-    : { ...state, surface, surfaceAnchors, supersededSeqs, auxiliaryGenerations }
+    : { ...state, surface, surfaceAnchors, supersededSeqs, shadowedSeqs, auxiliaryGenerations }
   const tavernMessageAnnotations = applyTavernMessageAnnotationEvent(withSurface.tavernMessageAnnotations, event)
   if (tavernMessageAnnotations !== withSurface.tavernMessageAnnotations) {
     return { ...withSurface, tavernMessageAnnotations }
@@ -1474,6 +1512,7 @@ export function createAgentRpProjectionDefinition(
     worldInfoConfiguration: { format: 0, revision: 0, overrides: [] },
     replayTime: 0,
     surface: [],
+    shadowedSeqs: [],
     calls: {},
     personaCommands: {},
     nativeStates: [],
@@ -1556,6 +1595,7 @@ export function createAgentRpProjectionDefinition(
         ? {}
         : { surfaceAnchors: state.surfaceAnchors }),
       ...(state.supersededSeqs.length === 0 ? {} : { supersededSeqs: state.supersededSeqs }),
+      ...(state.shadowedSeqs.length === 0 ? {} : { shadowedSeqs: state.shadowedSeqs }),
       ...(state.currentReplySeq === undefined ? {} : { currentReplySeq: state.currentReplySeq }),
       ...(state.presentation === undefined ? {} : { presentation: state.presentation }),
       ...(state.tavern === undefined ? {} : {

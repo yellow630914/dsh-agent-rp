@@ -1,14 +1,30 @@
 /** Durable Tavern Helper chat message mutations over the DSH Session surface. */
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+// Mounts the `compaction/prune` event declaration this module appends.
+import type {} from '@deepseek-ai/dsh-compaction'
+import { createAssistantMessage, createUserMessage, type Message } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
-import { isSurfaceEvent, type SessionEvent, type SurfaceEvent, type SurfaceIntent } from '@deepseek-ai/dsh-session'
+import {
+  isSurfaceEvent,
+  SessionSeq,
+  type SessionEvent,
+  type SurfaceEvent,
+  type SurfaceIntent,
+} from '@deepseek-ai/dsh-session'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
 import { roleplaySurfaceNodes, roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
 import type { TavernChatMessageInput, TavernChatMutationRequest, TavernHiddenMessage } from './tavern-helper.ts'
 
 type JsonRecord = Readonly<Record<string, JsonValue>>
+
+/** The token meter's own estimator, injected so the shadow price cannot drift from it. */
+export type EstimateMessage = (message: Message) => number
+
+/** Model-visible stand-in for a hidden run of floors. */
+function hiddenFloorMarker(count: number): string {
+  return `（此前 ${count} 层对话已被玩家隐藏，不在本次上下文中。）`
+}
 
 type SurfaceEntry =
   | { readonly kind: 'existing'; readonly event: SurfaceEvent }
@@ -332,35 +348,107 @@ function rotateMessages(
   return { hiddenPrefix, messageVariables: {} }
 }
 
+/**
+ * Hide a leading run of floors from everything downstream of the Session.
+ *
+ * Expressed as DSH's own shadow-price protocol rather than this plugin's
+ * overlay: one `compaction/prune` naming the exact shadowed span, immediately
+ * followed by one `user/message` that `replace`s it. The overlay is an
+ * *ignorable* plugin event, so only Agent RP's own reads honor it — the model
+ * request and the context meter are assembled by DSH from the raw surface and
+ * never saw it. A real `replace` is the only thing all three follow.
+ *
+ * The marker carries a plugin source on purpose: that keeps it out of every
+ * "floor" abstraction (`textContent` and the projection both ignore non-player,
+ * non-model messages) while the model still reads it, so hiding floors does not
+ * renumber the Tavern `message_id` space.
+ *
+ * Hiding is **one-way**. `replace` has no inverse, and the only way back would
+ * be re-appending the whole transcript under fresh identities. The text is not
+ * lost: it stays in the log, in `hiddenPrefix`, and therefore in the floor panel
+ * and chat export — it simply cannot re-enter the model's context.
+ * @param estimateMessage - the token meter's own estimator; the shadow price
+ *   must be computed with it or the meter's running total drifts.
+ */
 function setHidden(
   agent: Agent,
   request: Extract<TavernChatMutationRequest, { operation: 'set-chat-hidden' }>,
   hiddenPrefix: readonly TavernHiddenMessage[],
+  estimateMessage: EstimateMessage | undefined,
 ): TavernChatMutationResult {
   const entries = surfaceEntries(agent)
   const current = blocks(entries)
   const visible = visibleMessages(entries)
   const total = hiddenPrefix.length + visible.length
-  if (request.start !== 0 || request.end >= total) throw new Error('当前仅支持从第 0 楼开始隐藏或恢复')
-  if (request.hidden) {
-    const targetLength = request.end + 1
-    if (targetLength <= hiddenPrefix.length) return { hiddenPrefix }
-    const added = targetLength - hiddenPrefix.length
-    if (added >= current.messages.length) throw new Error('至少需要保留一条未隐藏楼层供角色继续对话')
-    const nextHidden = [
-      ...hiddenPrefix,
-      ...visible.slice(0, added).map(message => ({ seq: message.event.seq, role: message.role, text: message.text })),
-    ]
-    rewriteSurface(agent, entries, [...current.prefix, ...current.messages.slice(added).flat()])
-    return { hiddenPrefix: nextHidden }
+  if (request.start !== 0 || request.end >= total) throw new Error('当前仅支持从第 0 楼开始隐藏')
+  if (!request.hidden) {
+    throw new Error('隐藏的楼层无法还原；它们仍可以在楼层面板和导出聊天中查看')
   }
-  if (hiddenPrefix.length === 0) return { hiddenPrefix }
-  if (request.end < hiddenPrefix.length - 1) throw new Error('当前需要一次恢复全部隐藏前缀')
-  const restored: SurfaceEntry[] = hiddenPrefix.map(message => ({
-    kind: 'synthetic', role: message.role, text: message.text,
-  }))
-  rewriteSurface(agent, entries, [...current.prefix, ...restored, ...current.messages.flat()])
-  return { hiddenPrefix: [] }
+  const targetLength = request.end + 1
+  if (targetLength <= hiddenPrefix.length) return { hiddenPrefix }
+  const added = targetLength - hiddenPrefix.length
+  if (added >= current.messages.length) throw new Error('至少需要保留一条未隐藏楼层供角色继续对话')
+  const nextHidden = [
+    ...hiddenPrefix,
+    ...visible.slice(0, added).map(message => ({ seq: message.event.seq, role: message.role, text: message.text })),
+  ]
+
+  // The player picked floors in overlay order, but `replace` is positional over
+  // the raw surface, so the span has to be resolved there. Leading non-message
+  // entries ride along with the first hidden floor.
+  const hiddenEntries = [...current.prefix, ...current.messages.slice(0, added).flat()]
+  const hiding = new Set(hiddenEntries.flatMap(entry => entry.kind === 'existing' ? [Number(entry.event.seq)] : []))
+  const rawNodes = [...agent.session.surface.nodes].map(seq => Number(seq))
+  const cutoff = Math.max(...[...hiding].map(seq => rawNodes.indexOf(seq)))
+  if (cutoff < 0) throw new Error('要隐藏的楼层不在当前会话表层中')
+  // A replacement promoted back to an earlier display position can sit later in
+  // the raw surface than floors the player keeps, so the prefix that covers
+  // every hidden floor can also swallow kept ones. Those cannot simply be
+  // appended after the marker — appends land at the tail, behind floors that
+  // were already there. Shadow the whole surface instead and restate every kept
+  // floor in display order, which is the only arrangement a positional
+  // `replace` can express.
+  const keeping = new Set(roleplaySurfaceNodes(agent.session).map(seq => Number(seq)))
+  const trapped = rawNodes.slice(0, cutoff + 1).some(seq => keeping.has(seq) && !hiding.has(seq))
+  const shadowedSeqs = trapped ? rawNodes : rawNodes.slice(0, cutoff + 1)
+  const restated = trapped ? entries.slice(hiddenEntries.length) : []
+
+  const start = shadowedSeqs[0]
+  const end = shadowedSeqs.at(-1)
+  if (start === undefined || end === undefined) return { hiddenPrefix }
+  // The metering event and its replacement are contractually adjacent: the
+  // meter consumes a claim only from the event immediately before a replace,
+  // and the price must come from its own estimator. Without the meter mounted,
+  // arming a claim we cannot price would push the running total the wrong way —
+  // an unclaimed replace folds to zero delta instead, which merely leaves the
+  // bounded projection uncorrected.
+  if (estimateMessage !== undefined) {
+    const price = estimateMessage
+    agent.session.append('compaction/prune', {
+      shadowedRange: { start: SessionSeq(start), end: SessionSeq(end) },
+      shadowedSeqs: shadowedSeqs.map(seq => SessionSeq(seq)),
+      shadowedTokenCount: shadowedSeqs.reduce((tokens, seq) => {
+        const event = agent.session.snapshotEvents()[seq]
+        if (event === undefined || !isSurfaceEvent(event)) return tokens
+        const message = agent.session.deriveEventMessage(event)
+        return message === null ? tokens : tokens + price(message)
+      }, 0),
+    })
+  }
+  agent.session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: hiddenFloorMarker(nextHidden.length) }],
+    source: {
+      kind: 'plugin',
+      plugin: 'dsh-agent-rp-hidden-floors',
+      form: 'notice',
+      summary: `已隐藏前 ${nextHidden.length} 层对话`,
+    },
+  }), {
+    surfaceOp: { op: 'replace', start: SessionSeq(start), end: SessionSeq(end) },
+    sourceEventSeqs: shadowedSeqs.map(seq => SessionSeq(seq)),
+  })
+  for (const entry of restated) appendEntry(agent, entry, { surfaceOp: 'append' })
+  return { hiddenPrefix: nextHidden }
 }
 
 /** Apply one validated Tavern Helper transcript operation to the current Session surface. */
@@ -368,6 +456,7 @@ export function executeTavernChatMutation(
   agent: Agent,
   request: TavernChatMutationRequest,
   hiddenPrefix: readonly TavernHiddenMessage[] = [],
+  estimateMessage?: EstimateMessage,
 ): TavernChatMutationResult {
   if (request.operation === 'set-chat-messages') return setMessages(agent, request, hiddenPrefix)
   if (request.operation === 'create-chat-messages') return createMessages(agent, request, hiddenPrefix)
@@ -376,5 +465,5 @@ export function executeTavernChatMutation(
   if (request.operation === 'replace-message-annotations') {
     throw new Error('Tavern message annotations must use the Session annotation adapter')
   }
-  return setHidden(agent, request, hiddenPrefix)
+  return setHidden(agent, request, hiddenPrefix, estimateMessage)
 }

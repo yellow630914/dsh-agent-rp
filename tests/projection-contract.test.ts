@@ -1,9 +1,11 @@
 import { blankProjectionSeed } from './session-event-fixture.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionSeq, Session, SessionId } from '@deepseek-ai/dsh-session'
 import { agentRpProjectionDefinition, createAgentRpProjectionDefinition } from '../src/projection.ts'
+import { executeTavernChatMutation } from '../src/tavern-chat.ts'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 
 test('serves the same Agent RP view through current and newer DSH projection contracts', () => {
   const state = agentRpProjectionDefinition.init(...blankProjectionSeed)
@@ -101,4 +103,41 @@ test('returns the same state for events it ignores, and stamps the replay clock 
   assert.notEqual(changed, state)
   assert.equal(changed.replayTime, session.snapshotEvents().at(-1)!.time)
   assert.equal(changed.surface.length, 2)
+})
+
+test('reports the rows a floor hide dropped so the transcript can take them off screen', () => {
+  const session = Session.create(SessionId('projection-hidden-floors'))
+  const append = (role: 'assistant' | 'user', text: string): void => {
+    if (role === 'user') {
+      session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      return
+    }
+    session.append('assistant/message', {
+      turn: 1, step: 1,
+      message: createAssistantMessage({
+        content: [{ type: 'text', text }], source: { provider: 'fixture', model: 'fixture' },
+      }),
+      stream: [],
+    }, { surfaceOp: 'append' })
+  }
+  append('user', '第一句')
+  append('assistant', '第一段回复')
+  append('user', '第二句')
+  append('assistant', '第二段回复')
+
+  executeTavernChatMutation({ session } as unknown as Agent, {
+    format: 0, operation: 'set-chat-hidden', start: 0, end: 1, hidden: true,
+  }, [], () => 3)
+
+  let state = agentRpProjectionDefinition.init(session.header, session.inheritedEventCount)
+  for (const event of session.snapshotEvents()) state = agentRpProjectionDefinition.apply(state, event)
+  const view = agentRpProjectionDefinition.wire.view(state)
+
+  // The display planner hides exactly these; without them the Host keeps
+  // rendering the hidden floors, because its transcript is append-origin.
+  assert.deepEqual(view.shadowedSeqs, [0, 1])
+  // The projection surface follows the real replace, marker included.
+  assert.deepEqual(state.surface.map(node => node.text), [undefined, '第二句', '第二段回复'])
 })

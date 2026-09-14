@@ -4921,17 +4921,25 @@ function FloorVisibilityDialog({ floors, onCommit, onClose }: {
   const committed = floors.filter(floor => floor.hidden).length
   const [hidden, setHidden] = useState(committed)
   const [busy, setBusy] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string>()
   // At least one floor has to stay in context for the character to answer.
   const maximum = Math.max(0, floors.length - 1)
-  const target = Math.min(hidden, maximum)
-  const dirty = target !== committed
+  // Hiding is one-way, so the slider cannot go back below what is already
+  // hidden: the Host has no way to put those floors back into the context.
+  const target = Math.min(Math.max(hidden, committed), maximum)
+  const dirty = target > committed
   const confirm = (): void => {
     if (busy || !dirty) return
+    if (!confirming) {
+      setConfirming(true)
+      return
+    }
     setBusy(true)
     setError(undefined)
     void onCommit(target).then(onClose, (reason: unknown) => {
       setBusy(false)
+      setConfirming(false)
       setError(reason instanceof Error ? reason.message : '无法调整隐藏范围')
     })
   }
@@ -4948,7 +4956,7 @@ function FloorVisibilityDialog({ floors, onCommit, onClose }: {
         <div>
           <h2 style={{ fontSize: '17px', margin: 0 }}>楼层</h2>
           <p style={{ fontSize: '12px', lineHeight: 1.55, margin: '5px 0 0', opacity: .58 }}>
-            隐藏的楼层不会进入下一次回复的上下文，只能从最前面开始隐藏
+            隐藏的楼层不会进入下一次回复的上下文，只能从最前面开始隐藏，而且无法还原
           </p>
         </div>
         <button type="button" disabled={busy} onClick={onClose} style={{
@@ -4969,8 +4977,8 @@ function FloorVisibilityDialog({ floors, onCommit, onClose }: {
           隐藏最前面 {target} 层
         </label>
         <input id="agent-rp-floor-slider" data-agent-rp-floor-slider type="range"
-          min={0} max={maximum} step={1} value={target} disabled={busy || maximum === 0}
-          onChange={event => { setHidden(Number(event.target.value)) }} style={{ width: '100%' }} />
+          min={committed} max={maximum} step={1} value={target} disabled={busy || maximum === committed}
+          onChange={event => { setHidden(Number(event.target.value)); setConfirming(false) }} style={{ width: '100%' }} />
         <div style={{ display: 'flex', fontSize: '11px', gap: '10px', justifyContent: 'space-between', opacity: .55 }}>
           <span>纳入上下文 {floors.length - target} 层</span>
           <span>{dirty ? `当前已隐藏 ${committed} 层，确定后生效` : '与当前一致'}</span>
@@ -4998,14 +5006,27 @@ function FloorVisibilityDialog({ floors, onCommit, onClose }: {
         color: 'var(--dsw-alias-state-danger, #e06470)', fontSize: '12px', lineHeight: 1.5, margin: '12px 0 0',
       }}>{error}</p>}
 
+      {confirming && <p data-agent-rp-floor-confirm role="alert" style={{
+        background: 'color-mix(in srgb, var(--dsw-alias-state-danger, #e06470) 10%, transparent)',
+        borderRadius: '9px', fontSize: '12px', lineHeight: 1.6, margin: '14px 0 0', padding: '10px 12px',
+      }}>
+        这 {target - committed} 层会离开角色的上下文，而且<strong>无法还原</strong>。
+        内容不会消失——楼层面板和「导出聊天」里仍然读得到，但角色不会再看到它们。
+      </p>}
+
       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
-        <button type="button" disabled={busy} onClick={onClose} style={generationButtonStyle}>取消</button>
+        <button type="button" disabled={busy} onClick={() => { if (confirming) setConfirming(false); else onClose() }}
+          style={generationButtonStyle}>{confirming ? '返回' : '取消'}</button>
         <button type="button" data-agent-rp-action="confirm-floors" disabled={busy || !dirty} onClick={confirm} style={{
           ...generationButtonStyle,
-          background: `color-mix(in srgb, ${color} 18%, transparent)`,
-          borderColor: `color-mix(in srgb, ${color} 48%, transparent)`,
+          background: confirming
+            ? 'color-mix(in srgb, var(--dsw-alias-state-danger, #e06470) 22%, transparent)'
+            : `color-mix(in srgb, ${color} 18%, transparent)`,
+          borderColor: confirming
+            ? 'color-mix(in srgb, var(--dsw-alias-state-danger, #e06470) 52%, transparent)'
+            : `color-mix(in srgb, ${color} 48%, transparent)`,
           opacity: busy || !dirty ? .5 : 1,
-        }}>{busy ? '正在调整…' : '确定'}</button>
+        }}>{busy ? '正在隐藏…' : confirming ? `隐藏 ${target - committed} 层（不可还原）` : '确定'}</button>
       </div>
     </section>
   </div>
@@ -12522,6 +12543,14 @@ function roleplayComposerDockComponent(
         if (original === null) continue
         const alignedMessage = alignedTavernMessageByItem.get(item)
         const plan = displayPlanner.user({ seq, ...(alignedMessage === undefined ? {} : { alignedMessage }) })
+        // Mirrors the assistant loop below: a hidden plan has to leave the page,
+        // not fall through to "restore the Host row", which shows it again.
+        if (plan.kind === 'hidden') {
+          restoreHostDisplay(item, original)
+          hideTranscriptDetail(item)
+          continue
+        }
+        restoreTranscriptDetail(item)
         if (plan.kind !== 'render'
           || (plan.messageId !== undefined && !retainedCardFrames.has(plan.messageId))) restoreHostDisplay(item, original)
         else mountRenderedDisplay(
@@ -13207,23 +13236,18 @@ export function apply(ctx: ClientContext): void {
     if (!response.matched) throw new Error('当前 Host 未启用记忆管理')
   }
   /**
-   * Hidden floors are stored as a prefix, and the Host only restores the whole
-   * prefix at once, so shrinking the range means restore-then-hide. Both steps
-   * rewrite the surface, which is why the panel commits once on confirm rather
-   * than while the slider moves.
+   * Hiding floors is one-way and therefore one request.
+   *
+   * The Host drops the range from the Session surface with a real `replace`, and
+   * a `replace` has no inverse — the earlier restore-then-hide pair could also
+   * leave the Session fully restored when its second half failed, silently
+   * undoing a hide the player had already committed.
    */
   const manageFloors = async (sessionId: SessionId, hidden: number, current: number): Promise<void> => {
-    if (hidden === current) return
-    if (hidden < current) {
-      await runTavernMutation(sessionId, {
-        format: 0, operation: 'set-chat-hidden', start: 0, end: current - 1, hidden: false,
-      })
-    }
-    if (hidden > 0) {
-      await runTavernMutation(sessionId, {
-        format: 0, operation: 'set-chat-hidden', start: 0, end: hidden - 1, hidden: true,
-      })
-    }
+    if (hidden <= current) return
+    await runTavernMutation(sessionId, {
+      format: 0, operation: 'set-chat-hidden', start: 0, end: hidden - 1, hidden: true,
+    })
   }
   const manageState = async (sessionId: SessionId, request: RoleplayStateCommandRequest): Promise<void> => {
     const response = await executeAgentRpCommand(sessionId, `/rp-state ${JSON.stringify(request)}`)

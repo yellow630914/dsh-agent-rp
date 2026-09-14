@@ -266,3 +266,30 @@ test('hides a superseded player row so its rewrite is not shown twice', () => {
   assert.deepEqual(planner.user({ seq: 30 }), { kind: 'hidden', reason: 'superseded-reply' })
   assert.deepEqual(planner.user({ seq: 31 }), { kind: 'host' })
 })
+
+test('hidden floors leave the transcript, and a shadowed reply does not take its turn with it', () => {
+  // Hiding floors drops rows with a real surface `replace`, which the Host
+  // transcript keeps rendering because it is append-origin. Nothing stands in
+  // for them, so both row kinds have to come off the page.
+  const planner = createRoleplayDisplayPlanner({
+    projection: { ...projection, shadowedSeqs: [10, 20] },
+    frontend,
+    immersive: true,
+    overrides: new Map(),
+  })
+  assert.deepEqual(planner.user({ seq: 10 }), { kind: 'hidden', reason: 'superseded-reply' })
+  assert.deepEqual(planner.assistant({ finalSeq: 20, blockText: '原回复' }), {
+    kind: 'hidden', reason: 'superseded-reply',
+  })
+  assert.deepEqual(planner.assistant({ finalSeq: 21, blockText: '备选回复' }), { kind: 'host' })
+
+  // The narrow overlay rule stays narrow: a model reply an appended
+  // regeneration shadows still carries its turn's only text and must render.
+  const regenerated = createRoleplayDisplayPlanner({
+    projection: { ...projection, supersededSeqs: [20] },
+    frontend,
+    immersive: true,
+    overrides: new Map(),
+  })
+  assert.deepEqual(regenerated.assistant({ finalSeq: 20, blockText: '原回复' }), { kind: 'host' })
+})

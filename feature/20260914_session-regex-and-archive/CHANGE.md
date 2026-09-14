@@ -97,7 +97,9 @@ powershell -File D:\dsh-tavern-script\deploy-agent-rp.ps1 -Action sessions-delet
 ```
 
 刪除會**先把整份日誌完整備份到 `/var/backups/dsh`** 再移除，並順手清掉投影快取與
-歸檔集合裡那個指不到東西的 id。`workspace.json` 每次改動前也會另存一份。
+registry 裡兩處會留下懸空 id 的地方 —— 全域歸檔集合，以及**每個 workspace 記錄自己的**
+`sessionIds`。兩者在讀取時都會被 header 索引濾掉（所以不會出錯），但留著就是會累積的
+垃圾。`workspace.json` 每次改動前也會另存一份。
 
 實測：`-Action sessions` 列出 46 個歸檔會話（含標題與大小），
 `-Action sessions-restore` 對其中一個執行後，它確實從清單上消失，服務健康。
@@ -165,8 +167,9 @@ session-launch   20 passed
 **歸檔端點已在 VM 上實測**：46 條、`pendingTitles` 4 輪歸零、服務健康、journal 無錯誤。
 面板本身（資源中心的「歸檔會話」分頁）還沒點過。
 
-`-Action sessions` 與 `-Action sessions-restore` **已在 VM 上實測過**；
-`-Action sessions-delete` 只做過語法與流程檢查，沒有真的刪過東西。
+`-Action sessions` 與 `-Action sessions-restore` **已在 VM 上實測過**。
+`-Action sessions-delete` 的 registry 清理邏輯已對 `workspace.json` 的**真實副本**乾跑過
+（兩處引用都清乾淨、JSON 仍可解析），但**沒有真的刪過任何 session 的日誌**。
 
 ## 部署
 

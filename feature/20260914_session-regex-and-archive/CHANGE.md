@@ -155,10 +155,12 @@ session-launch   20 passed
 
 `tsconfig.host.json` 與 `tsconfig.client.json` 兩份型別檢查都通過。
 
-## 尚未驗證
+## 驗證狀態
 
-**正則面板沒有實機點過** —— Host 端邏輯全測過，界面只過了型別檢查。建議上線後開一段
-會話進「設定 → 正則」，停用一條角色卡規則，確認畫面立刻變化。
+**正則面板已實機確認生效。** 上線後第一次試用就撞到一個 DOM 轉接器的舊問題——
+純文字渲染被算進了卡片框預算，導致深度受限的規則對舊樓層無效。那是獨立的一個 bug，
+見 [bug/20260914_display-regex-blocked-by-card-frame-budget](../../bug/20260914_display-regex-blocked-by-card-frame-budget/CHANGE.md)。
+修好之後規則在整段歷史上都作用。
 
 **歸檔端點已在 VM 上實測**：46 條、`pendingTitles` 4 輪歸零、服務健康、journal 無錯誤。
 面板本身（資源中心的「歸檔會話」分頁）還沒點過。

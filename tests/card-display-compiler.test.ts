@@ -5,6 +5,7 @@ import { createContext, runInContext } from 'node:vm'
 import {
   cardDisplayCustomElementTags,
   compileCharacterDisplay,
+  needsCardFrame,
   normalizeLegacyCardHtml,
 } from '../src/card-display-compiler.ts'
 import {
@@ -1123,4 +1124,20 @@ test('keeps an ordinary HTML snippet in a fenced text sample inert', () => {
 
   assert.deepEqual(compiled.segments, [{ kind: 'markdown', text: source }])
   assert.deepEqual(compiled.diagnostics, [])
+})
+
+test('only framed segments count against the card-frame budget', () => {
+  // The retention depth bounds isolated iframes, not text. Counting a plain
+  // markdown result against it made a depth-limited display rule silently stop
+  // applying to exactly the older rows such a rule targets.
+  assert.equal(needsCardFrame({ segments: [{ kind: 'markdown', text: '一段正文' }], diagnostics: [] }), false)
+  assert.equal(needsCardFrame({ segments: [], diagnostics: [] }), false)
+  assert.equal(needsCardFrame({
+    segments: [{ kind: 'markdown', text: '前言' }, { kind: 'inline-html', source: '<b>x</b>' }],
+    diagnostics: [],
+  }), true)
+  assert.equal(needsCardFrame({
+    segments: [{ kind: 'html', source: '<!doctype html><html></html>' }],
+    diagnostics: [],
+  }), true)
 })

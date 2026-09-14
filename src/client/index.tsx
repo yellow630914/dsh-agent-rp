@@ -144,6 +144,7 @@ import {
   ROLEPLAY_STATUS_PLACEHOLDER,
   type RoleplayDisplayPlanner,
 } from '../roleplay-display-plan.ts'
+import { needsCardFrame } from '../card-display-compiler.ts'
 import {
   blockedCardFrameResources, compileCardFrameDocument, inlineCardSanitizerProbeState,
 } from './card-frame.ts'
@@ -1390,16 +1391,24 @@ function hideWhileMounted(elements: readonly (HTMLElement | null | undefined)[])
  * @param projection - current Agent RP projection.
  * @returns the frozen frontend carrying this Session's effective card rules.
  */
+let sessionFrontendKey: AgentRpProjection | undefined
+let sessionFrontendValue: ImportedCharacterFrontend | undefined
+
 function sessionCharacterFrontend(
   projection: AgentRpProjection,
 ): ImportedCharacterFrontend | undefined {
   if (projection.frontend === undefined) return undefined
-  return {
+  // The display pass reuses its planner while this object is reference-equal,
+  // so rebuilding it on every frame would quietly disable that cache.
+  if (sessionFrontendKey === projection && sessionFrontendValue !== undefined) return sessionFrontendValue
+  sessionFrontendKey = projection
+  sessionFrontendValue = {
     ...projection.frontend,
     regexScripts: projection.regex.scripts
       .filter(entry => entry.owner === 'actor' && !entry.deleted)
       .map(entry => entry.script),
   }
+  return sessionFrontendValue
 }
 
 function roleplaySummary(
@@ -12616,8 +12625,13 @@ function roleplayComposerDockComponent(
           continue
         }
         restoreTranscriptDetail(item)
+        // The retention budget bounds card frames — isolated iframes. A plain
+        // markdown render costs nothing to keep, and gating it here made a
+        // display rule silently stop applying once a row fell out of that
+        // budget, which is exactly the rows a depth-limited rule targets.
         if (plan.kind !== 'render'
-          || (plan.messageId !== undefined && !retainedCardFrames.has(plan.messageId))) restoreHostDisplay(item, original)
+          || (plan.messageId !== undefined && needsCardFrame(plan.compilation)
+            && !retainedCardFrames.has(plan.messageId))) restoreHostDisplay(item, original)
         else mountRenderedDisplay(
           item, original, plan.compilation, plan.messageId, activeProjection, activeCharacterDetail, activeCompatibilityMarkers,
         )
@@ -12643,8 +12657,13 @@ function roleplayComposerDockComponent(
           continue
         }
         if (original === null) continue
+        // The retention budget bounds card frames — isolated iframes. A plain
+        // markdown render costs nothing to keep, and gating it here made a
+        // display rule silently stop applying once a row fell out of that
+        // budget, which is exactly the rows a depth-limited rule targets.
         if (plan.kind !== 'render'
-          || (plan.messageId !== undefined && !retainedCardFrames.has(plan.messageId))) restoreHostDisplay(item, original)
+          || (plan.messageId !== undefined && needsCardFrame(plan.compilation)
+            && !retainedCardFrames.has(plan.messageId))) restoreHostDisplay(item, original)
         else mountRenderedDisplay(
           item, original, plan.compilation, plan.messageId, activeProjection, activeCharacterDetail, activeCompatibilityMarkers,
         )

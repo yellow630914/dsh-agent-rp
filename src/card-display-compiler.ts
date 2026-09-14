@@ -6,6 +6,20 @@ export type CharacterDisplaySegment =
   | { readonly kind: 'html'; readonly source: string }
   | { readonly kind: 'inline-html'; readonly source: string }
 
+/**
+ * Whether a compiled display needs a card frame — an isolated iframe — to render.
+ *
+ * Only HTML segments do. A result that is pure markdown is ordinary text, so
+ * bounding it by the card-frame retention depth would discard a cheap render
+ * for no reason: a display rule applied to an older row would silently stop
+ * taking effect once that row fell out of the frame budget.
+ * @param compilation - compiled display result.
+ * @returns true when at least one segment must be framed.
+ */
+export function needsCardFrame(compilation: CompiledCharacterDisplay): boolean {
+  return compilation.segments.some(segment => segment.kind !== 'markdown')
+}
+
 /** Non-sensitive evidence about transformations applied before browser rendering. */
 export interface CardDisplayDiagnostic {
   readonly code: 'frontend-document' | 'inline-html' | 'legacy-center-normalized'

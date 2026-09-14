@@ -2,6 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CommandId } from '@deepseek-ai/dsh-commands'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import {
+  AI_OUTPUT_PLACEMENT,
+  renderCharacterDisplay,
+  renderCharacterPromptView,
+} from '../src/frontend-regex.ts'
 import type { ImportedRegexScript } from '../src/import/types.ts'
 import {
   activeRegexScripts,
@@ -156,4 +161,41 @@ test('carries the overlay through a persisted Session snapshot', () => {
   // Sessions that never opened the manager read as an empty overlay, and a
   // branch inherits whatever its parent had because this is a durable record.
   assert.deepEqual(readRegexConfiguration([]), initial)
+})
+
+test('setting both "only" flags means both views, not neither', () => {
+  // SillyTavern stores the phase as two "only" booleans. The runtime's second
+  // pass picks `markdownOnly` for the display view and `promptOnly` for the
+  // prompt view, so setting both applies in both — the same net effect as
+  // setting neither. The manager offers three choices instead of exposing a
+  // fourth combination that reads like "neither" and does the opposite.
+  const both = script({ markdownOnly: true, promptOnly: true })
+  const neither = script({ markdownOnly: false, promptOnly: false })
+  const card = {
+    name: '角色',
+    frontend: { regexScripts: [], tavernHelperScriptNames: [], tavernHelperScripts: [], tavernHelperVariables: {} },
+  }
+  for (const rule of [both, neither]) {
+    assert.equal(
+      renderCharacterDisplay('藤子', card, AI_OUTPUT_PLACEMENT, undefined, undefined, [rule]),
+      '<b>藤子</b>',
+      JSON.stringify({ markdownOnly: rule.markdownOnly, promptOnly: rule.promptOnly }),
+    )
+    assert.equal(
+      renderCharacterPromptView('藤子', card, AI_OUTPUT_PLACEMENT, undefined, undefined, [rule]),
+      '<b>藤子</b>',
+      JSON.stringify({ markdownOnly: rule.markdownOnly, promptOnly: rule.promptOnly }),
+    )
+  }
+  // The two single-flag combinations are the ones that actually narrow.
+  assert.equal(
+    renderCharacterPromptView('藤子', card, AI_OUTPUT_PLACEMENT, undefined, undefined,
+      [script({ markdownOnly: true, promptOnly: false })]),
+    '藤子',
+  )
+  assert.equal(
+    renderCharacterDisplay('藤子', card, AI_OUTPUT_PLACEMENT, undefined, undefined,
+      [script({ markdownOnly: false, promptOnly: true })]),
+    '藤子',
+  )
 })

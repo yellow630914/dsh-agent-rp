@@ -65,13 +65,40 @@ function scriptTitle(entry: ProjectedScript): string {
   return entry.script.scriptName.trim() || `未命名规则 ${String(entry.index + 1)}`
 }
 
-/** Which views a rule runs in, phrased the way the panel's own switches read. */
+/**
+ * Which views a rule actually runs in.
+ *
+ * SillyTavern stores this as two "only" flags, and setting both does not mean
+ * "neither" — the runtime treats it the same as setting neither, i.e. the rule
+ * runs in both views. The panel offers the three meaningful choices instead of
+ * two booleans whose fourth combination is a trap.
+ */
 function viewLabel(script: RegexEditableScript): string {
   if (script.markdownOnly && !script.promptOnly) return '仅界面显示'
   if (script.promptOnly && !script.markdownOnly) return '仅生成提示'
-  if (script.markdownOnly && script.promptOnly) return '两处都不作用'
   return '显示与生成'
 }
+
+type RegexView = 'both' | 'display' | 'prompt'
+
+function viewOf(script: RegexEditableScript): RegexView {
+  if (script.markdownOnly && !script.promptOnly) return 'display'
+  if (script.promptOnly && !script.markdownOnly) return 'prompt'
+  return 'both'
+}
+
+/** Canonical flag pair for one chosen view; `both` writes neither "only" flag. */
+function viewFlags(view: RegexView): Pick<RegexEditableScript, 'markdownOnly' | 'promptOnly'> {
+  if (view === 'display') return { markdownOnly: true, promptOnly: false }
+  if (view === 'prompt') return { markdownOnly: false, promptOnly: true }
+  return { markdownOnly: false, promptOnly: false }
+}
+
+const VIEW_OPTIONS: readonly (readonly [RegexView, string])[] = [
+  ['both', '显示与生成'],
+  ['display', '仅界面显示'],
+  ['prompt', '仅生成提示'],
+]
 
 function depthLabel(script: RegexEditableScript): string {
   if (script.minDepth === null && script.maxDepth === null) return '不限深度'
@@ -301,16 +328,17 @@ export function RegexManagerDialog({ regex, onSave, onClose }: {
             <fieldset style={{ border: '1px solid var(--dsw-alias-border-l2, #3b3b41)', borderRadius: '8px', margin: 0, padding: '8px 10px' }}>
               <legend style={{ fontSize: '10px', opacity: .6, padding: '0 4px' }}>作用阶段</legend>
               <div style={{ display: 'flex', flexWrap: 'wrap', fontSize: '11px', gap: '12px' }}>
-                <label style={{ alignItems: 'center', display: 'flex', gap: '5px' }}>
-                  <input type="checkbox" disabled={busy} checked={draft.markdownOnly}
-                    onChange={event => { patch({ markdownOnly: event.target.checked }) }} />仅界面显示
-                </label>
-                <label style={{ alignItems: 'center', display: 'flex', gap: '5px' }}>
-                  <input type="checkbox" disabled={busy} checked={draft.promptOnly}
-                    onChange={event => { patch({ promptOnly: event.target.checked }) }} />仅生成提示
-                </label>
-                <span style={{ opacity: .5 }}>两个都不勾＝显示与生成都作用</span>
+                {VIEW_OPTIONS.map(([value, label]) => <label key={value}
+                  style={{ alignItems: 'center', display: 'flex', gap: '5px' }}>
+                  <input type="radio" name="agent-rp-regex-view" disabled={busy}
+                    checked={viewOf(draft) === value}
+                    onChange={() => { patch(viewFlags(value)) }} />{label}
+                </label>)}
               </div>
+              {draft.markdownOnly && draft.promptOnly && <p style={{ fontSize: '10px', lineHeight: 1.6, margin: '6px 0 0', opacity: .55 }}>
+                这条规则的来源同时标了「仅显示」和「仅提示」。运行时把它当成两处都作用——
+                不是两处都不作用——所以这里显示为「显示与生成」。改动这一栏会把它写成规范的组合。
+              </p>}
             </fieldset>
 
             <fieldset style={{ border: '1px solid var(--dsw-alias-border-l2, #3b3b41)', borderRadius: '8px', margin: 0, padding: '8px 10px' }}>

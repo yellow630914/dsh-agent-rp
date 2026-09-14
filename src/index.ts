@@ -129,6 +129,7 @@ import { executeRegexConfiguration } from './regex-configuration.ts'
 import { executeWorldInfoConfiguration } from './world-info-configuration.ts'
 import { WorldInfoLibrary } from './world-info-library.ts'
 import { executeWorldInfoLibraryCommand } from './world-info-library-command.ts'
+import { installArchivedSessionHttp } from './archived-session-http.ts'
 import { installWorldInfoLibraryHttp } from './world-info-library-http.ts'
 import { GeneratedImageLibrary } from './generated-image-library.ts'
 import { executeImageGenerationCommand } from './image-generation-command.ts'
@@ -1821,6 +1822,7 @@ export async function apply(ctx: Context, config: AgentRpConfig): Promise<void> 
           server,
         )
         installWorldInfoLibraryHttp(webCtx, worldInfoLibrary, server)
+        installArchivedSessionHttp(webCtx, ctx, server)
         installWorkspaceSettingsHttp(webCtx, workspaceSettings, server)
         installStoryWorkspaceHttp(webCtx, storyWorkspaces, server)
         installAgentRpCapabilityPresetHttp(webCtx, ctx, server)

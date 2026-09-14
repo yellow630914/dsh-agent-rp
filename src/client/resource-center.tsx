@@ -11,6 +11,7 @@ import type {
 import type { PersonaLibraryEntry, PersonaLibrarySaveRequest } from '../persona-library-protocol.ts'
 import type { PresetLibrarySummary } from '../preset-library-http-protocol.ts'
 import type { RegexPackLibrarySummary } from '../regex-pack-library-protocol.ts'
+import type { ArchivedSessionListResponse } from '../archived-session-protocol.ts'
 import type { WorldInfoLibraryUpload } from '../world-info-library-protocol.ts'
 import {
   WorldInfoEditorDialog,
@@ -25,7 +26,7 @@ import {
   type SillyTavernMigrationScan,
 } from './sillytavern-library-migration.ts'
 
-type ResourceSection = 'characters' | 'world-info' | 'presets' | 'regex-packs' | 'personas'
+type ResourceSection = 'characters' | 'world-info' | 'presets' | 'regex-packs' | 'personas' | 'archived'
 
 interface ResourceCenterProps {
   readonly accent: string
@@ -51,6 +52,7 @@ interface ResourceCenterProps {
   readonly renamePreset: (id: string, name: string) => Promise<PresetLibrarySummary>
   readonly deletePreset: (id: string) => Promise<void>
   readonly listRegexPacks: () => Promise<readonly RegexPackLibrarySummary[]>
+  readonly listArchivedSessions: () => Promise<ArchivedSessionListResponse>
   readonly importRegexPackFile: (file: File) => Promise<RegexPackLibrarySummary>
   readonly deleteRegexPack: (id: string) => Promise<void>
   readonly listPersonas: () => Promise<readonly PersonaLibraryEntry[]>
@@ -86,7 +88,20 @@ function sectionName(section: ResourceSection): string {
   if (section === 'world-info') return '世界书'
   if (section === 'presets') return '预设'
   if (section === 'regex-packs') return '正则包'
+  if (section === 'archived') return '归档会话'
   return '身份'
+}
+
+function archivedAge(createdAt: number | undefined): string {
+  if (createdAt === undefined) return '时间未知'
+  return new Date(createdAt).toLocaleString()
+}
+
+function archivedSize(bytes: number | undefined): string {
+  if (bytes === undefined) return ''
+  if (bytes < 1024) return ` · ${String(bytes)} B`
+  if (bytes < 1024 * 1024) return ` · ${(bytes / 1024).toFixed(1)} KB`
+  return ` · ${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function migrationKindName(kind: SillyTavernMigrationAssetKind): string {
@@ -384,12 +399,13 @@ export function RoleplayResourceCenter({
   listWorldInfos, importWorldInfoFile, setWorldInfoDefault, deleteWorldInfo,
   loadWorldInfoEntries, saveWorldInfoEntries,
   listPresets, importPresetFile, renamePreset, deletePreset,
-  listRegexPacks, importRegexPackFile, deleteRegexPack,
+  listRegexPacks, importRegexPackFile, deleteRegexPack, listArchivedSessions,
   listPersonas, savePersona, deletePersona,
   onConfigureWorldInfo,
   onClose,
 }: ResourceCenterProps) {
   const [section, setSection] = useState<ResourceSection>(initialSection)
+  const [archived, setArchived] = useState<ArchivedSessionListResponse>()
   const [query, setQuery] = useState('')
   const [characters, setCharacters] = useState<readonly CharacterLibrarySummary[]>()
   const [worldInfos, setWorldInfos] = useState<readonly WorldInfoLibraryUpload[]>()
@@ -432,9 +448,10 @@ export function RoleplayResourceCenter({
     void listWorldInfos().then(value => { if (current) setWorldInfos(value) }, failed('world-info'))
     void listPresets().then(value => { if (current) setPresets(value) }, failed('presets'))
     void listRegexPacks().then(value => { if (current) setRegexPacks(value) }, failed('regex-packs'))
+    void listArchivedSessions().then(value => { if (current) setArchived(value) }, failed('archived'))
     void listPersonas().then(value => { if (current) setPersonas(value) }, failed('personas'))
     return () => { current = false }
-  }, [listCharacters, listPersonas, listPresets, listRegexPacks, listWorldInfos])
+  }, [listArchivedSessions, listCharacters, listPersonas, listPresets, listRegexPacks, listWorldInfos])
 
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const matches = (...values: readonly string[]): boolean => normalizedQuery === ''
@@ -445,6 +462,10 @@ export function RoleplayResourceCenter({
   const visiblePresets = useMemo(() => (presets ?? []).filter(entry => matches(entry.name)), [presets, normalizedQuery])
   const visibleRegexPacks = useMemo(() => (regexPacks ?? []).filter(entry => matches(entry.name)), [regexPacks, normalizedQuery])
   const visiblePersonas = useMemo(() => (personas ?? []).filter(entry => matches(entry.name, entry.description)), [personas, normalizedQuery])
+  const visibleArchived = useMemo(
+    () => (archived?.entries ?? []).filter(entry => matches(entry.title ?? entry.id, entry.cwd ?? '')),
+    [archived, normalizedQuery],
+  )
   const worldInfoById = useMemo(() => new Map((worldInfos ?? []).map(entry => [entry.id, entry])), [worldInfos])
 
   const startAction = (key: string): void => {
@@ -654,14 +675,18 @@ export function RoleplayResourceCenter({
     presets: presets?.length,
     'regex-packs': regexPacks?.length,
     personas: personas?.length,
+    archived: archived?.entries.length,
   }
-  const sections: readonly ResourceSection[] = ['characters', 'world-info', 'presets', 'regex-packs', 'personas']
+  const sections: readonly ResourceSection[] = [
+    'characters', 'world-info', 'presets', 'regex-packs', 'personas', 'archived',
+  ]
   const loading = counts[section] === undefined
   const empty = section === 'characters' ? visibleCharacters.length === 0
     : section === 'world-info' ? visibleWorldInfos.length === 0
       : section === 'presets' ? visiblePresets.length === 0
-        : section === 'regex-packs' ? visibleRegexPacks.length === 0 : visiblePersonas.length === 0
-  const canImport = section !== 'personas'
+        : section === 'regex-packs' ? visibleRegexPacks.length === 0
+          : section === 'archived' ? visibleArchived.length === 0 : visiblePersonas.length === 0
+  const canImport = section !== 'personas' && section !== 'archived'
   const importLabel = section === 'characters' ? '导入角色卡' : section === 'world-info' ? '导入世界书'
     : section === 'regex-packs' ? '导入正则包' : '导入预设'
   const importBusy = busy === (section === 'characters' ? 'import-character'
@@ -711,7 +736,7 @@ export function RoleplayResourceCenter({
           }}>×</button>}
         </div>
         <div role="tablist" aria-label="资源类型" style={{
-          display: 'grid', gap: narrow ? '4px' : '5px', gridTemplateColumns: narrow ? 'repeat(5, minmax(0, 1fr))' : 'minmax(0, 1fr)',
+          display: 'grid', gap: narrow ? '4px' : '5px', gridTemplateColumns: narrow ? 'repeat(6, minmax(0, 1fr))' : 'minmax(0, 1fr)',
         }}>
           {sections.map(value => <button key={value} type="button" role="tab" aria-selected={section === value}
             onClick={() => { setSection(value); setQuery(''); setError(undefined); setNotice(undefined) }} style={{
@@ -951,6 +976,22 @@ export function RoleplayResourceCenter({
                 {busy === `regex-pack:${entry.id}` ? '移除中…'
                   : confirmingRegexPackId === entry.id ? '确认移除' : '移除'}
               </button>
+            </div>)}
+            {section === 'archived' && visibleArchived.map((entry, index) => <div key={entry.id}
+              data-agent-rp-archived-session={entry.id}
+              style={{ ...rowStyle, alignItems: 'flex-start', borderTop: index === 0 ? 'none' : rowStyle.borderTop }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <strong style={{ display: 'block', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {entry.title ?? '（未命名会话）'}
+                </strong>
+                <span style={{ display: 'block', fontSize: '10px', lineHeight: 1.6, marginTop: '4px', opacity: .48, overflowWrap: 'anywhere' }}>
+                  {archivedAge(entry.createdAt)}
+                  {entry.eventCount === undefined ? '' : ` · ${String(entry.eventCount)} 条事件`}
+                  {archivedSize(entry.sizeBytes)}
+                  {entry.stored ? '' : ' · 日志已不存在'}
+                </span>
+                <code style={{ display: 'block', fontSize: '10px', marginTop: '3px', opacity: .38, overflowWrap: 'anywhere' }}>{entry.id}</code>
+              </div>
             </div>)}
             {section === 'personas' && visiblePersonas.map((entry, index) => <div key={entry.id} style={{ ...rowStyle, alignItems: 'flex-start', borderTop: index === 0 ? 'none' : rowStyle.borderTop }}>
               <div style={{ flex: 1, minWidth: 0 }}>

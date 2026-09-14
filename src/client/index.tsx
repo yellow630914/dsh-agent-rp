@@ -116,6 +116,8 @@ import { TavernScriptStatusList } from './tavern-script-status.tsx'
 import { worldInfoFailureReport } from './world-info-failure-report.ts'
 import { availableWorldInfoLibraryUploads } from './world-info-library-selection.ts'
 import type { PresetConfigurationRequest } from '../preset-configuration-types.ts'
+import { RegexManagerDialog } from './regex-manager.tsx'
+import type { RegexConfigurationRequest } from '../regex-configuration-types.ts'
 import type { WorldInfoConfigurationRequest, WorldInfoEditableEntry } from '../world-info-configuration-types.ts'
 import type { LoadWorldInfoEntries, SaveWorldInfoEntries } from './world-info-editor.tsx'
 import { exportSillyTavernPresetJson } from '../preset-export.ts'
@@ -134,7 +136,7 @@ import {
 } from '../preset-library-http-protocol.ts'
 import {
   AI_OUTPUT_PLACEMENT, compileCharacterDisplay, renderCharacterDisplay, splitCharacterDisplay,
-  summarizeCharacterRegexScript, USER_INPUT_PLACEMENT, withCurrentCharacterDisplayScripts, type CompiledCharacterDisplay,
+  summarizeCharacterRegexScript, USER_INPUT_PLACEMENT, type CompiledCharacterDisplay,
   type CharacterDisplaySegment, type CharacterRegexScriptSummary,
 } from '../frontend-regex.ts'
 import {
@@ -280,6 +282,7 @@ import {
   importRegexPackFile,
   listRegexPacks,
 } from './regex-pack-library-client.ts'
+import { listArchivedSessions } from './archived-session-client.ts'
 import type { RegexPackLibrarySummary } from '../regex-pack-library-protocol.ts'
 import { fetchRoleplayResourceDetail } from './roleplay-resource-detail.ts'
 import {
@@ -593,6 +596,7 @@ type HeaderProps = PropsRuntime<'conversation.session.header.actions'> & {
   readonly importPreset: (sessionId: SessionId, file: File) => Promise<void>
   readonly managePresetLibrary: (sessionId: SessionId, request: PresetLibraryRequest) => Promise<void>
   readonly configureWorldInfo: (sessionId: SessionId, request: WorldInfoConfigurationRequest) => Promise<void>
+  readonly configureRegex: (sessionId: SessionId, request: RegexConfigurationRequest) => Promise<void>
   readonly importWorldInfo: (sessionId: SessionId, file: File) => Promise<void>
   readonly attachWorldInfo: (sessionId: SessionId, importId: string) => Promise<void>
   readonly listWorldInfos: () => Promise<readonly WorldInfoLibraryUpload[]>
@@ -1373,6 +1377,28 @@ function hideWhileMounted(elements: readonly (HTMLElement | null | undefined)[])
       if (display === '') element.style.removeProperty('display')
       else element.style.setProperty('display', display, priority)
     }
+  }
+}
+
+/**
+ * The character's regex rules as THIS Session holds them.
+ *
+ * The card was frozen into the Session when it started and the Session owns an
+ * overlay on top of it. Reading the character library instead would let an edit
+ * made there rewrite what every already-running Session displays, which is the
+ * one place the card was never actually frozen.
+ * @param projection - current Agent RP projection.
+ * @returns the frozen frontend carrying this Session's effective card rules.
+ */
+function sessionCharacterFrontend(
+  projection: AgentRpProjection,
+): ImportedCharacterFrontend | undefined {
+  if (projection.frontend === undefined) return undefined
+  return {
+    ...projection.frontend,
+    regexScripts: projection.regex.scripts
+      .filter(entry => entry.owner === 'actor' && !entry.deleted)
+      .map(entry => entry.script),
   }
 }
 
@@ -3196,6 +3222,7 @@ function SidebarRoleplayDestination({
       saveWorldInfoEntries={saveWorldInfoEntries}
       listPresets={listPresets}
       listRegexPacks={listRegexPacks}
+      listArchivedSessions={listArchivedSessions}
       importPresetFile={importPresetFile}
       renamePreset={renamePreset}
       deletePreset={deletePreset}
@@ -4310,7 +4337,7 @@ function RpDistributionBridgeSection({
 
 function RoleplayHeader({
   sessionId, useProjection, useSessions, loadAvatar, renameSession, configurePreset, importPresetFile, importPreset, managePresetLibrary,
-  configureWorldInfo, importWorldInfo, attachWorldInfo,
+  configureWorldInfo, configureRegex, importWorldInfo, attachWorldInfo,
   listCharacters, readCharacter, setCharacterArchived, importCharacterFile, listWorldInfos,
   prepareChatMigration, prepareRpDistributionChatMigration, launchPreparedChatMigration,
   startCharacterSession, exportChat,
@@ -4330,6 +4357,7 @@ function RoleplayHeader({
   const [statusOpen, setStatusOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
   const [worldInfoOpen, setWorldInfoOpen] = useState(false)
+  const [regexOpen, setRegexOpen] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [migrationOpen, setMigrationOpen] = useState(false)
   const [personaOpen, setPersonaOpen] = useState(false)
@@ -4409,7 +4437,7 @@ function RoleplayHeader({
     : characterLibraryImageUrl(projection.avatarLibraryId, expression.index)
   const imported = projection.importedMessageCount > 0
   const displayFrontend = projection.frontend === undefined ? undefined
-    : withCurrentCharacterDisplayScripts(projection.frontend, storedCharacterRuntime?.displayRegexScripts)
+    : sessionCharacterFrontend(projection)
   const status = displayFrontend === undefined || projection.mvu === undefined
     ? undefined
     : renderCharacterDisplay(statusPlaceholder, {
@@ -4536,6 +4564,10 @@ function RoleplayHeader({
           <button type="button" role="menuitem" data-agent-rp-action="open-world-info-manager"
             onClick={() => { setSettingsOpen(false); setWorldInfoOpen(true) }} style={headerMenuItemStyle}>
             世界书{projection.worldInfo.activeCount === 0 ? '' : ` · ${projection.worldInfo.activeCount}`}
+          </button>
+          <button type="button" role="menuitem" data-agent-rp-action="open-regex-manager"
+            onClick={() => { setSettingsOpen(false); setRegexOpen(true) }} style={headerMenuItemStyle}>
+            正则{projection.regex.scripts.length === 0 ? '' : ` · ${projection.regex.scripts.filter(entry => !entry.deleted && !entry.script.disabled).length}`}
           </button>
           <button type="button" role="menuitem" data-agent-rp-action="toggle-debug-view"
             aria-pressed={viewMode === 'debug'} onClick={() => {
@@ -4753,6 +4785,11 @@ function RoleplayHeader({
           onSave={request => configurePreset(sessionId, request)}
           onLibrary={request => managePresetLibrary(sessionId, request)}
         />)}
+    {regexOpen && <RegexManagerDialog
+      regex={projection.regex}
+      onSave={request => configureRegex(sessionId, request)}
+      onClose={() => { setRegexOpen(false) }}
+    />}
     {worldInfoOpen && <WorldInfoManagerDialog
       debugEnabled={debugEnabled}
       worldInfo={projection.worldInfo}
@@ -9809,7 +9846,7 @@ function TavernScriptRuntime({
   }[]>())
   const runtimeProjection = projection.frontend === undefined ? projection : {
     ...projection,
-    frontend: withCurrentCharacterDisplayScripts(projection.frontend, characterDisplayRegexScripts),
+    frontend: sessionCharacterFrontend(projection)!,
   }
   const projectionRef = useRef(runtimeProjection)
   const executionScope = useRef<{ readonly sessionId: SessionId; readonly planSignature: string }>()
@@ -12478,7 +12515,6 @@ function roleplayComposerDockComponent(
         characterStatus: activeCharacterStatus,
         compatibilityMarkers: activeCompatibilityMarkers,
         displayOverrides: activeDisplayOverrides,
-        displayRegexScripts: activeCharacterDisplayRegexScripts,
         projection: activeProjection,
         viewMode: activeViewMode,
       } = displayStateRef.current
@@ -12486,7 +12522,7 @@ function roleplayComposerDockComponent(
       if (activeProjection.avatarLibraryId !== undefined && activeCharacterDetail === undefined
         && activeCharacterStatus !== 'error') return
       const frontend = activeProjection.frontend === undefined ? undefined
-        : withCurrentCharacterDisplayScripts(activeProjection.frontend, activeCharacterDisplayRegexScripts)
+        : sessionCharacterFrontend(activeProjection)
       // Reused while its inputs are identical so its per-row memo survives
       // between frames. The projection only changes when a surface event lands,
       // never per streamed chunk, so during streaming this keeps every row but
@@ -13713,6 +13749,10 @@ export function apply(ctx: ClientContext): void {
     const response = await executeAgentRpCommand(sessionId, `/rp-world-info ${JSON.stringify(request)}`)
     if (!response.matched) throw new Error('当前 Host 未启用世界书管理')
   }
+  const configureRegex = async (sessionId: SessionId, request: RegexConfigurationRequest): Promise<void> => {
+    const response = await executeAgentRpCommand(sessionId, `/rp-regex ${JSON.stringify(request)}`)
+    if (!response.matched) throw new Error('当前 Host 未启用正则管理')
+  }
   const importWorldInfoFile = async (file: File): Promise<WorldInfoLibraryUpload> => {
     if (!/\.json$/iu.test(file.name)) throw new Error('请选择 SillyTavern World Info JSON 文件')
     const response = await fetch(`${WORLD_INFO_LIBRARY_PATH}?filename=${encodeURIComponent(file.name)}`, {
@@ -13948,7 +13988,7 @@ export function apply(ctx: ClientContext): void {
   }
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
     name: 'conversation.session.header.actions', id: 'agent-rp-character-header', order: -100,
-  }, props => <RoleplayHeader {...props} runtimeDiagnostics={runtimeDiagnostics} workspaceSettings={workspaceSettings} loadAvatar={loadAvatar} renameSession={renameSession} configurePreset={configurePreset} importPresetFile={importPresetFile} importPreset={importPreset} managePresetLibrary={managePresetLibrary} configureWorldInfo={configureWorldInfo} importWorldInfo={importWorldInfo} attachWorldInfo={attachWorldInfo} listWorldInfos={listWorldInfos} listCharacters={listCharacters} readCharacter={readCharacter} setCharacterArchived={setCharacterArchived} deleteCharacter={deleteCharacter} importCharacterFile={importCharacterFile} prepareChatMigration={prepareChatMigration} prepareRpDistributionChatMigration={prepareRpDistributionChatMigration} launchPreparedChatMigration={launchPreparedChatMigration} exportChat={exportChat} listMemory={listMemory} manageMemory={manageMemory} manageFloors={manageFloors} manageState={manageState} manageTurnMode={manageTurnMode} startCharacterSession={startCharacterFromCurrentSession} listPresets={listPresets} listRegexPacks={listRegexPacks} importRegexPackFile={importRegexPackFile} deleteRegexPack={deleteRegexPack} listAgentCapabilityPresets={listAgentCapabilityPresets} listPersonas={listPersonas} savePersona={savePersona} deletePersona={deletePersona} applyPersona={applyPersona} loadModelCapabilities={loadModelCapabilities} />))
+  }, props => <RoleplayHeader {...props} runtimeDiagnostics={runtimeDiagnostics} workspaceSettings={workspaceSettings} loadAvatar={loadAvatar} renameSession={renameSession} configurePreset={configurePreset} importPresetFile={importPresetFile} importPreset={importPreset} managePresetLibrary={managePresetLibrary} configureWorldInfo={configureWorldInfo} configureRegex={configureRegex} importWorldInfo={importWorldInfo} attachWorldInfo={attachWorldInfo} listWorldInfos={listWorldInfos} listCharacters={listCharacters} readCharacter={readCharacter} setCharacterArchived={setCharacterArchived} deleteCharacter={deleteCharacter} importCharacterFile={importCharacterFile} prepareChatMigration={prepareChatMigration} prepareRpDistributionChatMigration={prepareRpDistributionChatMigration} launchPreparedChatMigration={launchPreparedChatMigration} exportChat={exportChat} listMemory={listMemory} manageMemory={manageMemory} manageFloors={manageFloors} manageState={manageState} manageTurnMode={manageTurnMode} startCharacterSession={startCharacterFromCurrentSession} listPresets={listPresets} listRegexPacks={listRegexPacks} importRegexPackFile={importRegexPackFile} deleteRegexPack={deleteRegexPack} listAgentCapabilityPresets={listAgentCapabilityPresets} listPersonas={listPersonas} savePersona={savePersona} deletePersona={deletePersona} applyPersona={applyPersona} loadModelCapabilities={loadModelCapabilities} />))
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'agent-rp',

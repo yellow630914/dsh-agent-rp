@@ -987,12 +987,19 @@ export function RoleplayResourceCenter({
                   : confirmingRegexPackId === entry.id ? '确认移除' : '移除'}
               </button>
             </div>)}
+            {section === 'archived' && visibleArchived.some(entry => entry.title === undefined) && <p style={{
+              fontSize: '11px', lineHeight: 1.6, margin: 0, opacity: .5, padding: '10px 2px',
+            }}>
+              只列出编号的会话，是 DSH 还没把它们的日志迁到当前格式——标题只存在于日志事件里，
+              这里刻意不为了读一个标题去触发迁移。需要看标题时用部署脚本的
+              <code style={{ opacity: .8 }}> -Action sessions</code>。
+            </p>}
             {section === 'archived' && visibleArchived.map((entry, index) => <div key={entry.id}
               data-agent-rp-archived-session={entry.id}
               style={{ ...rowStyle, alignItems: 'flex-start', borderTop: index === 0 ? 'none' : rowStyle.borderTop }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <strong style={{ display: 'block', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {entry.title ?? '（未命名会话）'}
+                <strong style={{ display: 'block', fontSize: '13px', overflowWrap: 'anywhere' }}>
+                  {entry.title ?? entry.id}
                 </strong>
                 <span style={{ display: 'block', fontSize: '10px', lineHeight: 1.6, marginTop: '4px', opacity: .48, overflowWrap: 'anywhere' }}>
                   {archivedAge(entry.createdAt)}
@@ -1000,7 +1007,7 @@ export function RoleplayResourceCenter({
                   {archivedSize(entry.sizeBytes)}
                   {entry.stored ? '' : ' · 日志已不存在'}
                 </span>
-                <code style={{ display: 'block', fontSize: '10px', marginTop: '3px', opacity: .38, overflowWrap: 'anywhere' }}>{entry.id}</code>
+                {entry.title !== undefined && <code style={{ display: 'block', fontSize: '10px', marginTop: '3px', opacity: .38, overflowWrap: 'anywhere' }}>{entry.id}</code>}
               </div>
             </div>)}
             {section === 'personas' && visiblePersonas.map((entry, index) => <div key={entry.id} style={{ ...rowStyle, alignItems: 'flex-start', borderTop: index === 0 ? 'none' : rowStyle.borderTop }}>

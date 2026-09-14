@@ -53,6 +53,11 @@ interface SessionPersistenceLike {
  * means decoding the whole Session. Archived logs do not change, so one read per
  * Session is the whole cost; the revision is in the key so an unarchived and
  * resumed Session still refreshes.
+ *
+ * A Session whose log is still in an older format has no current generation to
+ * resolve, and it stays untitled here on purpose: opening it would run the
+ * migration chain and write a new artifact, which a read-only panel must never
+ * do as a side effect of showing a name.
  */
 const titles = new Map<string, string | undefined>()
 

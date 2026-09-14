@@ -135,6 +135,24 @@ export interface AgentRpProjection {
     readonly promptCount: number
     readonly scripts: readonly ImportedRegexScript[]
   }[]
+  /**
+   * Every imported rule after this Session's own overlay, in execution order.
+   *
+   * The display pass and the regex manager read this one list, so what the
+   * player edits is exactly what runs. `(owner, index)` addresses a rule
+   * identically here and on the prompt side; `session` owns rules this Session
+   * authored itself.
+   */
+  readonly regex: {
+    readonly revision: number
+    readonly scripts: readonly {
+      readonly owner: 'regex' | 'prompt-policy' | 'actor' | 'session'
+      readonly index: number
+      readonly modified: boolean
+      readonly deleted: boolean
+      readonly script: ImportedRegexScript
+    }[]
+  }
   /** Latest model-facing regex pass without expressions or message text. */
   readonly promptRegex?: PromptRegexTraceRecord
   readonly mvu?: {

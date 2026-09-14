@@ -75,6 +75,8 @@ import {
 } from './tavern-message-annotation.ts'
 import { substituteSillyTavernIdentityMacros } from './sillytavern-identity-macro.ts'
 import { summarizeRegexPackScripts } from './regex-pack.ts'
+import { configuredRegexScripts, decodeRegexConfiguration } from './regex-configuration-core.ts'
+import type { RegexConfigurationState } from './regex-configuration-types.ts'
 import { parseSessionRegexPack, type SessionRegexPackSnapshot } from './session-regex-pack.ts'
 
 export type { AgentRpProjection } from './projection-types.ts'
@@ -160,7 +162,7 @@ type ImportCall = 'character-card' | 'world-info' | 'preset'
 interface AgentRpProjectionState {
   readonly character: Omit<AgentRpProjection, 'worldInfoCount' | 'worldInfo' | 'presetLibrary' | 'lastRequest'
   | 'generations' | 'auxiliaryGenerations' | 'presentation' | 'nativeStates' | 'turnMode' | 'hostCapabilities'
-  | 'regexPacks' | 'floors'>
+  | 'regexPacks' | 'regex' | 'floors'>
   readonly turnMode: RoleplayTurnMode
   readonly cardWorldInfoCount: number
   readonly cardLorebook?: SessionLorebookSource
@@ -200,6 +202,7 @@ interface AgentRpProjectionState {
   readonly tavernMessageAnnotations: TavernMessageAnnotationState
   readonly auxiliaryGenerations: TavernAuxiliaryGenerationReplay
   readonly regexPacks: readonly SessionRegexPackSnapshot[]
+  readonly regexConfiguration: RegexConfigurationState
 }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
@@ -1004,6 +1007,15 @@ function foldAgentRpProjectionEvent(
   if (event.type === 'agent-rp/turn-mode') {
     return { ...withSurface, turnMode: parseRoleplayTurnModeRecord(event.data).mode }
   }
+  if (event.type === 'command/done' && event.data.kind === 'success') {
+    let regexConfiguration
+    try {
+      regexConfiguration = decodeRegexConfiguration(event.data.text)
+    } catch {
+      regexConfiguration = undefined
+    }
+    if (regexConfiguration !== undefined) return { ...withSurface, regexConfiguration }
+  }
   if (event.type === 'agent-rp/regex-pack-seed') {
     try {
       const pack = parseSessionRegexPack(event.data)
@@ -1523,6 +1535,7 @@ export function createAgentRpProjectionDefinition(
     tavernMessageAnnotations: {},
     auxiliaryGenerations: EMPTY_TAVERN_AUXILIARY_GENERATION_REPLAY,
     regexPacks: [],
+    regexConfiguration: { format: 0, revision: 0, overrides: [], added: [] },
   }),
   /**
    * Stamp the replay clock only when the event actually changed something.
@@ -1578,6 +1591,23 @@ export function createAgentRpProjectionDefinition(
         ...summarizeRegexPackScripts(pack.scripts),
         scripts: pack.scripts.map(script => ({ ...script })),
       })),
+      // Every imported rule after this Session's own overlay, in execution
+      // order. Both the display pass and the manager read this one list, so
+      // what the player edits is exactly what runs.
+      regex: {
+        revision: state.regexConfiguration.revision,
+        scripts: configuredRegexScripts([
+          { owner: 'regex' as const, scripts: state.regexPacks.flatMap(pack => pack.scripts) },
+          { owner: 'prompt-policy' as const, scripts: state.preset?.regexScripts ?? [] },
+          { owner: 'actor' as const, scripts: state.character.frontend?.regexScripts ?? [] },
+        ], state.regexConfiguration).map(entry => ({
+          owner: entry.owner,
+          index: entry.index,
+          modified: entry.modified,
+          deleted: entry.deleted,
+          script: { ...entry.script },
+        })),
+      },
       ...(state.mvu === undefined ? {} : { mvu: state.mvu }),
       ...(state.preset === undefined ? {} : { preset: state.preset }),
       presetLibrary: state.presetLibrary,

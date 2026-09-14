@@ -1394,6 +1394,7 @@ function roleplaySummary(
           ...projection,
           nativeStates: Array.isArray(nativeStates) ? nativeStates : [],
           regexPacks: Array.isArray(regexPacks) ? regexPacks : [],
+          regex: { revision: 0, scripts: [] },
           turnMode: turnMode === 'agent' ? 'agent' : 'conversation',
         }
   }
@@ -1424,6 +1425,7 @@ function roleplaySummary(
       books: [],
     },
     regexPacks: [],
+    regex: { revision: 0, scripts: [] },
     presetLibrary: [],
     generations: [],
     source: 'preset' as const,

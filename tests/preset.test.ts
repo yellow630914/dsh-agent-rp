@@ -300,6 +300,7 @@ test('mounts commands when public DSH omits prompt extension gateways', async (c
     'rp-generation',
     'rp-draw',
     'rp-world-info',
+    'rp-regex',
     'rp-world-info-import',
   ])
   assert.equal(commandInputs.get('rp-tavern-trigger'), undefined)

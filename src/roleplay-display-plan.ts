@@ -51,6 +51,13 @@ export interface RoleplayDisplayProjection {
    * never superseded a reply.
    */
   readonly surfaceAnchors?: Readonly<Record<string, number>>
+  /** Every imported rule after this Session's overlay, in execution order. */
+  readonly regex?: {
+    readonly scripts: readonly {
+      readonly deleted: boolean
+      readonly script: ImportedRegexScript
+    }[]
+  }
   readonly supersededSeqs?: readonly number[]
   /**
    * Rows a real surface `replace` dropped — today the floor-hide marker.
@@ -139,11 +146,21 @@ export function createRoleplayDisplayPlanner(input: {
   const messages = projection.tavern?.messages
   const messageBySeq = new Map(messages?.map(message => [message.seq, message]))
   const messageIdBySeq = new Map(messages?.map(message => [message.seq, message.messageId]))
-  const sharedRegexScripts = [
+  // One list for both views: the Host already applied this Session's overlay
+  // over every imported collection, in execution order. Falling back to the
+  // raw collections keeps Sessions projected by an older Host rendering.
+  const configuredScripts = projection.regex?.scripts
+    .filter(entry => !entry.deleted)
+    .map(entry => entry.script)
+  const sharedRegexScripts = configuredScripts ?? [
     ...(projection.regexPacks ?? []).flatMap(pack => pack.scripts),
     ...(projection.preset?.regexScripts ?? []),
+    ...activeFrontend.regexScripts,
   ]
-  const hasDisplayRules = immersive && activeFrontend.regexScripts.length + sharedRegexScripts.length > 0
+  // The card's own rules already ride in `sharedRegexScripts`; passing them a
+  // second time through the frontend would run every card rule twice.
+  const displayFrontend = { ...activeFrontend, regexScripts: [] }
+  const hasDisplayRules = immersive && sharedRegexScripts.length > 0
   // Agent RP's own replacements are append-origin under DSH 0.1.3, so the Host
   // keeps rendering the ones that were themselves later superseded — the
   // blanking message a regeneration writes, and every switched-away copy.
@@ -206,7 +223,7 @@ export function createRoleplayDisplayPlanner(input: {
         if (rewritten !== undefined) {
           const renderedInput = renderCharacterDisplay(rewritten, {
             name: projection.characterName,
-            frontend: activeFrontend,
+            frontend: displayFrontend,
           }, USER_INPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
           return {
             kind: 'render', source: 'rewritten-input', compilation: compileCharacterDisplay(renderedInput),
@@ -217,7 +234,7 @@ export function createRoleplayDisplayPlanner(input: {
         }
         const rendered = renderCharacterDisplay(message.text, {
           name: projection.characterName,
-          frontend: activeFrontend,
+          frontend: displayFrontend,
         }, USER_INPUT_PLACEMENT, messageDepth(messages, message.messageId), projection.userName, sharedRegexScripts)
         return rendered === message.text
           ? { kind: 'host' }
@@ -248,7 +265,7 @@ export function createRoleplayDisplayPlanner(input: {
           if (selected !== undefined) {
             const rendered = renderCharacterDisplay(selected.text.replaceAll(ROLEPLAY_STATUS_PLACEHOLDER, ''), {
               name: projection.characterName,
-              frontend: activeFrontend,
+              frontend: displayFrontend,
             }, AI_OUTPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
             return {
               kind: 'render', source: 'selected-generation', compilation: compileCharacterDisplay(rendered),
@@ -261,7 +278,7 @@ export function createRoleplayDisplayPlanner(input: {
         if (raw === '') return { kind: 'host' }
         const rendered = renderCharacterDisplay(raw.replaceAll(ROLEPLAY_STATUS_PLACEHOLDER, ''), {
           name: projection.characterName,
-          frontend: activeFrontend,
+          frontend: displayFrontend,
         }, AI_OUTPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
         return rendered === raw
           ? { kind: 'host' }

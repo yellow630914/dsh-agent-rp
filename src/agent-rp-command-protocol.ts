@@ -20,6 +20,7 @@ export const AGENT_RP_COMMAND_NAMES = Object.freeze([
   'rp-draw',
   'rp-world-info',
   'rp-world-info-import',
+  'rp-regex',
 ] as const)
 
 export type AgentRpCommandName = typeof AGENT_RP_COMMAND_NAMES[number]

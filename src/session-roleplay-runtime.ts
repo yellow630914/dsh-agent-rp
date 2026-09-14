@@ -53,6 +53,8 @@ import {
 import { readRoleplayTurnMode, type RoleplayTurnMode } from './roleplay-turn-mode.ts'
 import { readNativePromptPolicy, type NativePromptPolicySnapshot } from './native-prompt-policy.ts'
 import { supportsAgentRpSessionEvents } from './session-event-compat.ts'
+import { readRegexConfiguration } from './regex-configuration-core.ts'
+import type { RegexConfigurationState } from './regex-configuration-types.ts'
 import { readSessionRegexPacks, type SessionRegexPackSnapshot } from './session-regex-pack.ts'
 
 /** One source plus the Session overlay that will be evaluated for this turn. */
@@ -72,6 +74,8 @@ export interface ResolvedSessionRoleplayRuntime {
   readonly preset?: ActiveSessionPreset
   readonly nativePromptPolicy?: NativePromptPolicySnapshot
   readonly regexPacks: readonly SessionRegexPackSnapshot[]
+  /** This Session's own regex overlay over every imported collection. */
+  readonly regexConfiguration: RegexConfigurationState
   readonly tavern?: TavernHelperState
   readonly mvu?: MvuStateSnapshot
   readonly lorebooks: readonly ConfiguredRoleplayLorebook[]
@@ -119,6 +123,7 @@ export function resolveSessionRoleplayRuntime(input: {
   const preset = readActiveSessionPreset(events)
   const nativePromptPolicy = readNativePromptPolicy(events)
   const regexPacks = readSessionRegexPacks(events)
+  const regexConfiguration = readRegexConfiguration(events)
   if (preset !== undefined && nativePromptPolicy !== undefined) {
     throw new Error('Roleplay Session cannot activate imported and native prompt policies together')
   }
@@ -306,6 +311,7 @@ export function resolveSessionRoleplayRuntime(input: {
   return {
     snapshot,
     regexPacks,
+    regexConfiguration,
     turnMode,
     nativeStates,
     ...(card === undefined ? {} : { card }),

@@ -125,6 +125,7 @@ import { installSillyTavernChatExportHttp } from './sillytavern-chat-export-http
 import { installSessionLaunchHttp } from './session-launch-http.ts'
 import { executeGenerationCommand } from './generation.ts'
 import type { AgentRpHttpServer } from './host-http.ts'
+import { executeRegexConfiguration } from './regex-configuration.ts'
 import { executeWorldInfoConfiguration } from './world-info-configuration.ts'
 import { WorldInfoLibrary } from './world-info-library.ts'
 import { executeWorldInfoLibraryCommand } from './world-info-library-command.ts'
@@ -1014,6 +1015,13 @@ export function installAgentRp(
     input: { hint: '<private world-info-manager payload>' },
     recordInput: false,
     handler: executeWorldInfoConfiguration,
+  })
+  commands.register({
+    name: 'rp-regex',
+    description: 'manage this roleplay Session regex rules',
+    input: { hint: '<private regex-manager payload>' },
+    recordInput: false,
+    handler: executeRegexConfiguration,
   })
   commands.register({
     name: 'rp-world-info-import',

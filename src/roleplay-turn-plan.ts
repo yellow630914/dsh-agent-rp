@@ -46,6 +46,7 @@ import {
   type RoleplayStateBinding,
   type RoleplayWorldBinding,
 } from './roleplay-runtime.ts'
+import { configuredRegexScripts } from './regex-configuration-core.ts'
 import type { ResolvedSessionRoleplayRuntime } from './session-roleplay-runtime.ts'
 import { ROLEPLAY_STATE_MODULE_ID } from './roleplay-state.ts'
 import { renderRoleplayStateContext } from './roleplay-runtime-context.ts'
@@ -295,14 +296,18 @@ function promptTransforms(
   actorName: string,
   participantName: string | undefined,
 ): RoleplayPromptTransformPlan {
-  const regex = resolved.regexPacks.flatMap(pack => pack.scripts)
-  const promptPolicy = resolved.preset === undefined ? [] : presetRegexScripts(resolved.preset.preset)
-  const actor = resolved.card?.frontend.regexScripts ?? []
-  const operations = [
-    ...regex.map((script, index) => promptTransform(script, 'regex', index)),
-    ...promptPolicy.map((script, index) => promptTransform(script, 'prompt-policy', index)),
-    ...actor.map((script, index) => promptTransform(script, 'actor', index)),
-  ].filter((operation): operation is RoleplayPromptRegexTransform => operation !== undefined)
+  // The Session's own overlay decides which imported rules run and what they
+  // say; `(owner, index)` addresses them identically here and in the display
+  // pass, so one edit reaches both views.
+  const configured = configuredRegexScripts([
+    { owner: 'regex', scripts: resolved.regexPacks.flatMap(pack => pack.scripts) },
+    { owner: 'prompt-policy', scripts: resolved.preset === undefined ? [] : presetRegexScripts(resolved.preset.preset) },
+    { owner: 'actor', scripts: resolved.card?.frontend.regexScripts ?? [] },
+  ], resolved.regexConfiguration)
+  const operations = configured
+    .filter(entry => !entry.deleted)
+    .map(entry => promptTransform(entry.script, entry.owner === 'session' ? 'regex' : entry.owner, entry.index))
+    .filter((operation): operation is RoleplayPromptRegexTransform => operation !== undefined)
   return {
     actorName,
     ...(participantName === undefined ? {} : { participantName }),

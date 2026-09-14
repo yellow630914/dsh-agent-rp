@@ -28,4 +28,12 @@ export interface ArchivedSessionListResponse {
    * than showing an empty list that looks like "nothing archived".
    */
   readonly available: boolean
+  /**
+   * Archived Sessions whose title this request did not get to yet.
+   *
+   * A title only exists as a `session/title` event, so resolving one decodes the
+   * whole log. Reads are bounded per request and cached forever, so refetching
+   * while this is above zero fills the rest in without ever stalling a request.
+   */
+  readonly pendingTitles?: number
 }

@@ -448,7 +448,17 @@ export function RoleplayResourceCenter({
     void listWorldInfos().then(value => { if (current) setWorldInfos(value) }, failed('world-info'))
     void listPresets().then(value => { if (current) setPresets(value) }, failed('presets'))
     void listRegexPacks().then(value => { if (current) setRegexPacks(value) }, failed('regex-packs'))
-    void listArchivedSessions().then(value => { if (current) setArchived(value) }, failed('archived'))
+    // Titles are decoded from the log and cached Host-side, a bounded number
+    // per request, so a large archive fills in over a few rounds instead of
+    // stalling the first one.
+    const loadArchived = (round: number): void => {
+      void listArchivedSessions().then(value => {
+        if (!current) return
+        setArchived(value)
+        if ((value.pendingTitles ?? 0) > 0 && round < 12) loadArchived(round + 1)
+      }, failed('archived'))
+    }
+    loadArchived(0)
     void listPersonas().then(value => { if (current) setPersonas(value) }, failed('personas'))
     return () => { current = false }
   }, [listArchivedSessions, listCharacters, listPersonas, listPresets, listRegexPacks, listWorldInfos])

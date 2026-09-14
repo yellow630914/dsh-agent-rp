@@ -20,5 +20,10 @@ export async function listArchivedSessions(): Promise<ArchivedSessionListRespons
   if (!response.ok || value.format !== 0 || !Array.isArray(value.entries)) {
     throw new Error(value.error ?? `归档会话读取失败（${response.status}）`)
   }
-  return { format: 0, entries: value.entries, available: value.available === true }
+  return {
+    format: 0,
+    entries: value.entries,
+    available: value.available === true,
+    ...(typeof value.pendingTitles === 'number' ? { pendingTitles: value.pendingTitles } : {}),
+  }
 }

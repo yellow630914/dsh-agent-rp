@@ -533,6 +533,15 @@ function applyShadowedSeqs(
   if (event.type !== 'user/message' && event.type !== 'assistant/message' && event.type !== 'tool/result') {
     return shadowed
   }
+  // A prompt-regex view replaces a row for the MODEL only: the human still saw
+  // the original and must keep seeing it, which is why `applySurface` skips
+  // these events entirely. Counting their shadowed range here took the player's
+  // own message off the screen the moment they sent it.
+  const message = event.type === 'user/message' ? event.data : event.data.message
+  if (event.type !== 'tool/result'
+    && typeof (message.source as unknown as Record<string, unknown>)[PROMPT_REGEX_SOURCE_MARKER] === 'object') {
+    return shadowed
+  }
   const operation = event.surfaceOp
   if (operation === undefined || operation === 'append') return shadowed
   const start = surface.findIndex(value => value.seq === operation.start)

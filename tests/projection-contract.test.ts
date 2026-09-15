@@ -5,6 +5,7 @@ import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionSeq, Session, SessionId } from '@deepseek-ai/dsh-session'
 import { agentRpProjectionDefinition, createAgentRpProjectionDefinition } from '../src/projection.ts'
 import { executeTavernChatMutation } from '../src/tavern-chat.ts'
+import { PROMPT_REGEX_SOURCE_MARKER } from '../src/frontend-regex.ts'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 
 test('serves the same Agent RP view through current and newer DSH projection contracts', () => {
@@ -140,4 +141,34 @@ test('reports the rows a floor hide dropped so the transcript can take them off 
   assert.deepEqual(view.shadowedSeqs, [0, 1])
   // The projection surface follows the real replace, marker included.
   assert.deepEqual(state.surface.map(node => node.text), [undefined, '第二句', '第二段回复'])
+})
+
+test('a prompt-only rewrite of a player message never takes that row off the screen', () => {
+  // prompt-regex replaces a row for the MODEL. The human already saw the
+  // original and must keep seeing it, so its shadowed range must not join the
+  // set the display planner hides — otherwise the player's message vanishes the
+  // moment they send it, and the next reply appears to follow the previous one.
+  const session = Session.create(SessionId('projection-prompt-regex'))
+  session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: '玩家发言' }], source: { kind: 'user' },
+  }), { surfaceOp: 'append' })
+  const original = session.snapshotEvents().at(-1)!
+  session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: '玩家发言（提示词视图）' }],
+    source: {
+      kind: 'user',
+      [PROMPT_REGEX_SOURCE_MARKER]: { format: 0, originalSeq: Number(original.seq) },
+    } as never,
+  }), {
+    surfaceOp: { op: 'replace', start: SessionSeq(Number(original.seq)), end: SessionSeq(Number(original.seq)) },
+    sourceEventSeqs: [SessionSeq(Number(original.seq))],
+  })
+
+  let state = agentRpProjectionDefinition.init(session.header, session.inheritedEventCount)
+  for (const event of session.snapshotEvents()) state = agentRpProjectionDefinition.apply(state, event)
+  const view = agentRpProjectionDefinition.wire.view(state)
+
+  assert.equal(view.shadowedSeqs, undefined, 'a model-only view shadows nothing the player can see')
+  assert.deepEqual(state.surface.map(node => node.text), ['玩家发言'],
+    'the projection surface keeps the row the player actually sent')
 })

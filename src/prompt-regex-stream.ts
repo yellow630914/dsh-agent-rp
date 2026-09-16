@@ -27,8 +27,10 @@ import { appendAgentRpSessionEvent, supportsAgentRpSessionEvents } from './sessi
 import { roleplaySurfaceNodes, roleplayModelHistory, roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
 import type { ImportedRegexScript } from './import/types.ts'
 import {
-  prepareSillyTavernProviderMessages,
+  prepareAttributedProviderMessages,
+  type AttributedMessage,
 } from './preset-prompt.ts'
+import { capturePromptPreview } from './prompt-preview.ts'
 import type {
   RoleplayPromptRegexTransform,
   RoleplayPromptTransformPlan,
@@ -235,18 +237,29 @@ function preparePromptRegexStreamOptions(
   const hasManagedSurface = dialogueNodes(agent.session)
     .some(node => sourceMarker(messageOf(node.current).source) !== undefined)
   const hasPromptScripts = plan.transforms.operations.length > 0
-  if (!hasPromptScripts && !hasManagedSurface
+  const inert = !hasPromptScripts && !hasManagedSurface
     && plan.beforeHistory.length === 0 && plan.afterHistory.length === 0 && plan.inChat.length === 0
-    && plan.includeHistory && plan.continuation === undefined) return undefined
+    && plan.includeHistory && plan.continuation === undefined
   let messages = options.messages
-  if (hasPromptScripts || hasManagedSurface) {
+  if (!inert && (hasPromptScripts || hasManagedSurface)) {
     const trace = applyPromptRegexSurface(agent.session, plan.transforms)
     if (trace !== undefined && trace.replacementCount > 0) messages = roleplayModelHistory(agent.session)
   }
-  return {
-    ...options,
-    messages: prepareSillyTavernProviderMessages(messages, plan),
-  }
+  // An inert plan changes nothing, so the history is already the final array —
+  // but it is still what the provider receives, and the preview must show it.
+  const attributed: readonly AttributedMessage[] = inert
+    ? messages.map(message => ({ message, origins: [] }))
+    : prepareAttributedProviderMessages(messages, plan)
+  capturePromptPreview({
+    sessionId: String(options.sessionId),
+    messages: attributed,
+    ...(options.system === undefined ? {} : { system: options.system }),
+    toolNames: (options.tools ?? []).map(tool => tool.name),
+    provider: options.provider,
+    model: options.model,
+  })
+  if (inert) return undefined
+  return { ...options, messages: attributed.map(item => item.message) }
 }
 
 function installPromptRegexStreamHandler(

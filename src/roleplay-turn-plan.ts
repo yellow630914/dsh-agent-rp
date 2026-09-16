@@ -10,6 +10,7 @@ import {
 } from './ejs-template.ts'
 import type { LorebookActivationReason } from './import/lorebook.ts'
 import { presetRegexScripts } from './import/sillytavern-preset.ts'
+import { worldInfoOrigin, type RoleplayPromptOrigin } from './prompt-origin.ts'
 import type { ImportedRegexScript } from './import/types.ts'
 import { readAgentRpMemoryHistory } from './memory.ts'
 import {
@@ -116,6 +117,10 @@ export interface RoleplayWorldResourcePlan {
   readonly beforeActor: readonly string[]
   readonly afterActor: readonly string[]
   readonly entries: readonly RoleplayWorldEntryDecision[]
+  /** Authorship paired positionally with `beforeActor`, for the prompt preview. */
+  readonly beforeActorOrigins?: readonly RoleplayPromptOrigin[]
+  /** Authorship paired positionally with `afterActor`, for the prompt preview. */
+  readonly afterActorOrigins?: readonly RoleplayPromptOrigin[]
 }
 
 /** World preparation result in semantic experience/actor order. */
@@ -129,6 +134,13 @@ export interface RoleplayWorldPlan {
   readonly experienceAfterActor: readonly string[]
   readonly approximateTokens: number
   readonly tokenBudget?: number
+  /** Authorship paired positionally with the four content arrays above. */
+  readonly origins?: {
+    readonly experienceBeforeActor: readonly RoleplayPromptOrigin[]
+    readonly actorBefore: readonly RoleplayPromptOrigin[]
+    readonly actorAfter: readonly RoleplayPromptOrigin[]
+    readonly experienceAfterActor: readonly RoleplayPromptOrigin[]
+  }
 }
 
 /** Content-free phase outcome useful for diagnostics and later orchestration. */
@@ -326,51 +338,103 @@ function templateOptions(engine: EjsTemplateEngine | undefined, context: EjsTemp
   }
 }
 
+/** Stand-in when a book's emitted strings could not be paired back to its entries. */
+const UNATTRIBUTED_WORLD_ORIGIN: RoleplayPromptOrigin = { kind: 'world-info', label: '世界书条目' }
+
 function worldPlan(
   resolved: ResolvedSessionRoleplayRuntime,
   rendered: ReturnType<typeof renderSessionLorebooks>,
 ): RoleplayWorldPlan {
+  // Collected per rendered book so the combined `inChat` array — which the
+  // engine flattens in this same book order — can be paired back to its entries.
+  const inChatOriginsByBook: (readonly RoleplayPromptOrigin[] | undefined)[] = []
   const resources = rendered.books.map((book, index): RoleplayWorldResourcePlan => {
     const resource = resolved.snapshot.world.bindings.find(binding => binding.id === book.id)
     const configured = resolved.lorebooks[index]?.configured
     if (resource === undefined || configured === undefined || resource.id !== book.id) {
       throw new Error('Roleplay world bindings do not match the evaluated resources')
     }
+    const decided = book.inspected.entries.map((decision) => {
+      const source = configured.entries[decision.index]
+      if (source === undefined) throw new Error('Roleplay world decision references a missing entry')
+      return { decision, source }
+    })
+    // `activeContent` in import/lorebook.ts buckets the active entries by
+    // position after sorting them this way, so walking the same order pairs each
+    // emitted string with the entry that produced it. `originsFor` asserts the
+    // lengths agree rather than trusting the two to stay in step silently.
+    const activeSorted = decided.filter(item => item.decision.active).sort((left, right) =>
+      left.source.insertionOrder - right.source.insertionOrder || left.decision.index - right.decision.index)
+    const originsFor = (
+      position: 'before_char' | 'after_char' | 'at_depth',
+      emitted: readonly string[],
+    ): readonly RoleplayPromptOrigin[] | undefined => {
+      const matching = activeSorted.filter(item => item.source.position === position)
+      if (matching.length !== emitted.length) return undefined
+      return matching.map(item => worldInfoOrigin({
+        bookName: resource.name,
+        entryId: item.source.sourceId,
+        ...(item.source.name === undefined ? {} : { entryName: item.source.name }),
+        matchedKeys: item.decision.matchedKeys,
+        constant: item.source.constant,
+      }))
+    }
+    const beforeActorOrigins = originsFor('before_char', book.inspected.beforeCharacter)
+    const afterActorOrigins = originsFor('after_char', book.inspected.afterCharacter)
+    inChatOriginsByBook.push(originsFor('at_depth', book.inspected.inChat.map(entry => entry.content)))
     return {
       resource,
       beforeActor: book.inspected.beforeCharacter,
       afterActor: book.inspected.afterCharacter,
-      entries: book.inspected.entries.map((decision) => {
-        const source = configured.entries[decision.index]
-        if (source === undefined) throw new Error('Roleplay world decision references a missing entry')
-        return {
-          entryId: source.sourceId,
-          index: decision.index,
-          active: decision.active,
-          reason: decision.reason,
-          matchedKeys: decision.matchedKeys,
-          matchedSecondaryKeys: decision.matchedSecondaryKeys,
-          approximateTokens: decision.approximateTokens,
-          ...(decision.template === undefined ? {} : { template: decision.template }),
-        }
-      }),
+      ...(beforeActorOrigins === undefined ? {} : { beforeActorOrigins }),
+      ...(afterActorOrigins === undefined ? {} : { afterActorOrigins }),
+      entries: decided.map(({ decision, source }) => ({
+        entryId: source.sourceId,
+        index: decision.index,
+        active: decision.active,
+        reason: decision.reason,
+        matchedKeys: decision.matchedKeys,
+        matchedSecondaryKeys: decision.matchedSecondaryKeys,
+        approximateTokens: decision.approximateTokens,
+        ...(decision.template === undefined ? {} : { template: decision.template }),
+      })),
     }
   })
   const renderedIds = new Set(resources.map(resource => resource.resource.id))
-  const externalResources = resolved.snapshot.world.bindings
+  const externalResources: readonly RoleplayWorldResourcePlan[] = resolved.snapshot.world.bindings
     .filter(resource => !renderedIds.has(resource.id))
     .map(resource => ({ resource, beforeActor: [], afterActor: [], entries: [] }))
   const allResources = [...resources, ...externalResources]
   const contributions = (placement: RoleplayWorldBinding['placement'], side: 'beforeActor' | 'afterActor') =>
     allResources.filter(item => item.resource.placement === placement).flatMap(item => item[side])
+  // Same walk as `contributions`, so each origin lands at the same index as the
+  // string it describes. A book whose pairing failed contributes blanks of the
+  // right length, which keeps every later book aligned.
+  const originContributions = (
+    placement: RoleplayWorldBinding['placement'],
+    side: 'beforeActor' | 'afterActor',
+  ): readonly RoleplayPromptOrigin[] =>
+    allResources.filter(item => item.resource.placement === placement).flatMap(item =>
+      item[side === 'beforeActor' ? 'beforeActorOrigins' : 'afterActorOrigins']
+        ?? item[side].map(() => UNATTRIBUTED_WORLD_ORIGIN))
+  const inChatOrigins = rendered.books.flatMap((book, index) =>
+    inChatOriginsByBook[index] ?? book.inspected.inChat.map(() => UNATTRIBUTED_WORLD_ORIGIN))
   return {
     engine: rendered.engine,
     resources: allResources,
-    inChat: rendered.inChat,
+    inChat: inChatOrigins.length === rendered.inChat.length
+      ? rendered.inChat.map((prompt, index) => ({ ...prompt, origin: inChatOrigins[index]! }))
+      : rendered.inChat,
     experienceBeforeActor: contributions('experience', 'beforeActor'),
     actorBefore: contributions('actor', 'beforeActor'),
     actorAfter: contributions('actor', 'afterActor'),
     experienceAfterActor: contributions('experience', 'afterActor'),
+    origins: {
+      experienceBeforeActor: originContributions('experience', 'beforeActor'),
+      actorBefore: originContributions('actor', 'beforeActor'),
+      actorAfter: originContributions('actor', 'afterActor'),
+      experienceAfterActor: originContributions('experience', 'afterActor'),
+    },
     approximateTokens: rendered.approximateTokens,
     ...(rendered.tokenBudget === undefined ? {} : { tokenBudget: rendered.tokenBudget }),
   }
@@ -489,10 +553,18 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
   const experienceAfter = world.experienceAfterActor
   const loreBefore = [...experienceBefore, ...world.actorBefore]
   const loreAfter = [...world.actorAfter, ...experienceAfter]
+  // Built by the same concatenation as `loreBefore`/`loreAfter` so each origin
+  // keeps the index of the entry text it describes.
+  const loreBeforeOrigins = [...world.origins?.experienceBeforeActor ?? [], ...world.origins?.actorBefore ?? []]
+  const loreAfterOrigins = [...world.origins?.actorAfter ?? [], ...world.origins?.experienceAfterActor ?? []]
+  const tavernOrigin = (label: string): RoleplayPromptOrigin => ({ kind: 'tavern-helper', label })
   const injectedPrompts = {
-    beforeHistory: tavernInjectedOrderedPrompts(tavern, 'before'),
-    afterHistory: tavernInjectedOrderedPrompts(tavern, 'after'),
-    inChat: tavernInjectedInChatPrompts(tavern),
+    beforeHistory: tavernInjectedOrderedPrompts(tavern, 'before')
+      .map(prompt => ({ ...prompt, origin: tavernOrigin('脚本注入（历史之前）') })),
+    afterHistory: tavernInjectedOrderedPrompts(tavern, 'after')
+      .map(prompt => ({ ...prompt, origin: tavernOrigin('脚本注入（历史之后）') })),
+    inChat: tavernInjectedInChatPrompts(tavern)
+      .map(prompt => ({ ...prompt, origin: tavernOrigin('脚本注入（对话内）') })),
   }
   let providerPrompt = nativeProviderPrompt()
   let systemPromptText = ''
@@ -530,6 +602,8 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
         ? {} : { userPersona: snapshot.participant.description }),
       worldInfoBefore: loreBefore,
       worldInfoAfter: loreAfter,
+      worldInfoBeforeOrigins: loreBeforeOrigins,
+      worldInfoAfterOrigins: loreAfterOrigins,
       session: input.session,
       pendingMessages,
       macroContext,
@@ -565,7 +639,11 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
         snapshot.participant?.description,
         mvuOutputEnabled,
       )
-      nativeActorTail = [{ role: 'system', content: renderedCardPrompt }]
+      nativeActorTail = [{
+        role: 'system',
+        content: renderedCardPrompt,
+        origin: { kind: 'card', label: '角色卡', id: resolved.card.name },
+      }]
     } else {
       systemPromptText = renderedCardPrompt
     }
@@ -596,15 +674,29 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
     const guidance = renderRoleplayStateActionGuidance(stateActionTarget, mvuUpdateInstructions!)
     providerPrompt = {
       ...providerPrompt,
-      afterHistory: [...providerPrompt.afterHistory, { role: 'system', content: guidance }],
+      afterHistory: [...providerPrompt.afterHistory, {
+        role: 'system',
+        content: guidance,
+        origin: { kind: 'state', label: '状态操作说明' },
+      }],
     }
   }
 
   const transforms = promptTransforms(resolved, characterName, userName)
+  // Outside the modules strategy each World Info entry is its own message, so
+  // the origin computed above lands one-to-one rather than as module parts.
   const nativeWorldBefore = snapshot.prompt.strategy === 'modules'
-    ? [] : loreBefore.map(content => ({ role: 'system' as const, content }))
+    ? [] : loreBefore.map((content, index) => ({
+        role: 'system' as const,
+        content,
+        ...(loreBeforeOrigins[index] === undefined ? {} : { origin: loreBeforeOrigins[index]! }),
+      }))
   const nativeWorldAfter = snapshot.prompt.strategy === 'modules'
-    ? [] : loreAfter.map(content => ({ role: 'system' as const, content }))
+    ? [] : loreAfter.map((content, index) => ({
+        role: 'system' as const,
+        content,
+        ...(loreAfterOrigins[index] === undefined ? {} : { origin: loreAfterOrigins[index]! }),
+      }))
   const deferredInjectedBefore = providerPrompt.includeHistory ? injectedPrompts.beforeHistory : []
   let prompt: RoleplayTurnPromptPlan = {
     ...providerPrompt,
@@ -660,7 +752,11 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
   if (stateContext !== '') {
     prompt = {
       ...prompt,
-      afterHistory: [...prompt.afterHistory, { role: 'system', content: stateContext }],
+      afterHistory: [...prompt.afterHistory, {
+        role: 'system',
+        content: stateContext,
+        origin: { kind: 'state', label: '状态变量' },
+      }],
     }
   }
   const memoryHistory = readAgentRpMemoryHistory(input.session.snapshotEvents())

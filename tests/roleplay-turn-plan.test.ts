@@ -33,6 +33,16 @@ import {
   resolveRoleplayPrepareModuleOutcomes,
   resolveRoleplayRecallModuleOutcomes,
 } from '../src/roleplay-turn-plan.ts'
+
+/**
+ * Drop the preview-only attribution so a placement assertion stays about
+ * placement. Attribution has its own test in prompt-preview.test.ts.
+ */
+function placed<T extends { readonly origin?: unknown }>(
+  prompts: readonly T[],
+): readonly Omit<T, 'origin'>[] {
+  return prompts.map(({ origin: _origin, ...rest }) => rest)
+}
 import { resolveSessionRoleplayRuntime } from '../src/session-roleplay-runtime.ts'
 import {
   appendTavernHelperState,
@@ -519,7 +529,7 @@ test('routes active world depth entries through the shared provider-message plan
   const resolved = resolveSessionRoleplayRuntime({ session, deployment })
   const plan = prepareRoleplayTurn({ session, deployment, resolved })
 
-  assert.deepEqual(plan.world.inChat, [{
+  assert.deepEqual(placed(plan.world.inChat), [{
     role: 'user', content: '深度一的玩家侧世界提示。', depth: 1, order: 77,
   }])
   assert.deepEqual(plan.prompt.inChat, plan.world.inChat)
@@ -714,17 +724,17 @@ test('compiles modular prompts, EJS, MVU, generation, and script injections into
   })
 
   assert.equal(plan.prompt.systemPromptText, '稳定系统前缀')
-  assert.deepEqual(direct.beforeHistory, [{ role: 'system', content: '稳定系统前缀' }])
+  assert.deepEqual(placed(direct.beforeHistory), [{ role: 'system', content: '稳定系统前缀' }])
   assert.deepEqual(plan.prompt.beforeHistory, [])
-  assert.deepEqual(plan.prompt.afterHistory, [
+  assert.deepEqual(placed(plan.prompt.afterHistory), [
     { role: 'system', content: '脚本前置注入' },
-    ...direct.afterHistory,
+    ...placed(direct.afterHistory),
     { role: 'system', content: '脚本后置注入' },
     { role: 'system', content: renderRoleplayTurnStateContext(plan) },
   ])
   assert.deepEqual(plan.prompt.continuation, direct.continuation)
   assert.deepEqual(plan.prompt.inChat.slice(0, direct.inChat.length), direct.inChat)
-  assert.deepEqual(plan.prompt.inChat.at(-1), {
+  assert.deepEqual(placed([plan.prompt.inChat.at(-1)!])[0], {
     role: 'system', content: '脚本本轮注入', depth: 0, order: 100,
   })
   assert.deepEqual(plan.prompt.transforms, {

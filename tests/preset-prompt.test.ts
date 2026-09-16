@@ -21,6 +21,16 @@ import {
 } from '../src/preset-prompt.ts'
 import { EjsTemplateEngine } from '../src/ejs-template.ts'
 
+/**
+ * Drop the preview-only attribution so a placement assertion stays about
+ * placement. Attribution has its own test below.
+ */
+function placed<T extends { readonly origin?: unknown }>(
+  prompts: readonly T[],
+): readonly Omit<T, 'origin'>[] {
+  return prompts.map(({ origin: _origin, ...rest }) => rest)
+}
+
 const card: ImportedCharacterCard = {
   format: 0,
   version: 2,
@@ -99,7 +109,7 @@ test('assembles markers and nested variables on the correct side of chat history
   assert.match(afterText, /OUTPUT/u)
   assert.deepEqual(assembled.afterHistory.map(prompt => prompt.role), ['system', 'system', 'system', 'assistant'])
   assert.doesNotMatch(`${beforeText}\n${afterText}`, /\{\{|不进入提示词|暂不应进入请求|绝不能出现/u)
-  assert.deepEqual(assembled.inChat, [{
+  assert.deepEqual(placed(assembled.inChat), [{
     role: 'system', content: '暂不应进入请求', depth: 2, order: 100,
   }])
   assert.equal(assembled.enabledPromptCount, 13)
@@ -162,10 +172,10 @@ test('assembles a standalone World Info preset without inventing character-card 
     session: Session.create(SessionId('world-info-preset')),
   })
 
-  assert.deepEqual(assembled.beforeHistory, [
+  assert.deepEqual(placed(assembled.beforeHistory), [
     { role: 'user', content: '天琴座回应旅人' },
   ])
-  assert.deepEqual(assembled.afterHistory, [
+  assert.deepEqual(placed(assembled.afterHistory), [
     { role: 'system', content: '<world>星港仍在运转。</world>' },
     { role: 'assistant', content: '继续剧情' },
   ])
@@ -324,7 +334,7 @@ test('preserves extension-owned macros while resolving nested built-ins and addi
     card, worldInfoBefore: [], worldInfoAfter: [], session: Session.create(SessionId('extension-macro-handoff')),
   })
 
-  assert.deepEqual(assembled.beforeHistory, [
+  assert.deepEqual(placed(assembled.beforeHistory), [
     { role: 'system', content: '{{压缩相邻消息::自然流畅::5}}' },
   ])
   assert.equal(assembled.unsupportedMacroCount, 1)
@@ -352,7 +362,7 @@ test('replays random macros from the exact Session input boundary', () => {
   })
 
   assert.deepEqual(replay.beforeHistory, first.beforeHistory)
-  assert.deepEqual(first.beforeHistory, [{ role: 'system', content: '乙/二' }])
+  assert.deepEqual(placed(first.beforeHistory), [{ role: 'system', content: '乙/二' }])
 })
 
 test('resolves replay-safe card, persona, dialogue, and utility macros in preset modules', () => {
@@ -427,7 +437,7 @@ test('renders EJS in imported preset modules and drops only a failing module', a
     renderTemplate: template => engine.render(template, context),
   })
 
-  assert.deepEqual(assembled.beforeHistory, [{ role: 'system', content: '&lt;白露&gt;回应<宝宝>' }])
+  assert.deepEqual(placed(assembled.beforeHistory), [{ role: 'system', content: '&lt;白露&gt;回应<宝宝>' }])
   assert.equal(assembled.templateRenderCount, 1)
   assert.equal(assembled.templateFailureCount, 1)
 })
@@ -661,7 +671,7 @@ test('keeps modules after a disabled chatHistory entry on the prompt side', () =
   })
 
   assert.equal(assembled.includeHistory, false)
-  assert.deepEqual(assembled.beforeHistory, [
+  assert.deepEqual(placed(assembled.beforeHistory), [
     { role: 'system', content: '主提示' },
     { role: 'user', content: '仍是预设提示' },
   ])

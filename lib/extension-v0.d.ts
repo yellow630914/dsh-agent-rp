@@ -248,6 +248,40 @@ interface ImportedSillyTavernChatMessage {
 }
 /** Why one normalized lorebook entry did or did not enter the current prompt. */
 type LorebookActivationReason = 'active-constant' | 'active-keyword' | 'disabled' | 'deleted' | 'empty-content' | 'compatibility-unsupported' | 'decorator-unsupported' | 'template-unsupported' | 'template-error' | 'regex-runtime-unavailable' | 'regex-invalid' | 'regex-execution-limit' | 'regex-resource-limit' | 'primary-unmatched' | 'secondary-unmatched' | 'budget-excluded' | 'session-budget-excluded';
+/**
+ * Where one piece of the provider prompt came from.
+ *
+ * The final message array is flat: preset modules, World Info entries, script
+ * injections and chat rows all arrive as plain `{ role, content }`. Once they
+ * are merged — several in-chat modules join into one message, several World
+ * Info entries join into one `worldInfoBefore` module — the source is gone, and
+ * no amount of reading the final array recovers it.
+ *
+ * So each contribution carries its origin from the point of construction, where
+ * the identity is still known. Nothing in the send path reads these; they exist
+ * for the prompt preview, which is why every field is optional to produce and a
+ * missing origin degrades to "unattributed" rather than failing an assembly.
+ */
+/** Which subsystem authored one prompt contribution. */
+type RoleplayPromptOriginKind = 'preset' | 'world-info' | 'card' | 'persona' | 'memory' | 'state' | 'mvu' | 'tavern-helper' | 'history' | 'continuation';
+/**
+ * One attributable prompt contribution.
+ *
+ * `label` is what a reader should see; `detail` qualifies it (the book a World
+ * Info entry belongs to, the keys that activated it). `parts` exists because a
+ * single module can be a join of several independently-authored pieces — the
+ * `worldInfoBefore` marker is one module holding every before-character entry —
+ * and the preview must be able to open it back up.
+ */
+interface RoleplayPromptOrigin {
+  readonly kind: RoleplayPromptOriginKind;
+  readonly label: string;
+  readonly detail?: string;
+  /** Stable identity within its kind, when one exists (preset identifier, entry id). */
+  readonly id?: string;
+  /** Independently-authored pieces joined into this one contribution, in order. */
+  readonly parts?: readonly RoleplayPromptOrigin[];
+}
 /** Role assigned to one Prompt Manager entry. */
 type SillyTavernPresetRole = 'system' | 'user' | 'assistant';
 /** One losslessly ordered Prompt Manager module. */
@@ -332,6 +366,8 @@ type RoleplayPromptRole = 'system' | 'user' | 'assistant';
 interface RoleplayOrderedPrompt {
   readonly role: RoleplayPromptRole;
   readonly content: string;
+  /** Authorship, carried for the prompt preview; never read on the send path. */
+  readonly origin?: RoleplayPromptOrigin;
 }
 /** Host-compatible prompt split around the conversation history. */
 interface RoleplayAssembledPrompt {
@@ -359,6 +395,8 @@ interface RoleplayInChatPrompt {
   readonly content: string;
   readonly depth: number;
   readonly order: number;
+  /** Authorship, carried for the prompt preview; never read on the send path. */
+  readonly origin?: RoleplayPromptOrigin;
 }
 interface FileAttachmentRef {
   readonly kind: 'file';
@@ -996,6 +1034,10 @@ interface RoleplayWorldResourcePlan {
   readonly beforeActor: readonly string[];
   readonly afterActor: readonly string[];
   readonly entries: readonly RoleplayWorldEntryDecision[];
+  /** Authorship paired positionally with `beforeActor`, for the prompt preview. */
+  readonly beforeActorOrigins?: readonly RoleplayPromptOrigin[];
+  /** Authorship paired positionally with `afterActor`, for the prompt preview. */
+  readonly afterActorOrigins?: readonly RoleplayPromptOrigin[];
 }
 /** World preparation result in semantic experience/actor order. */
 interface RoleplayWorldPlan {
@@ -1008,6 +1050,13 @@ interface RoleplayWorldPlan {
   readonly experienceAfterActor: readonly string[];
   readonly approximateTokens: number;
   readonly tokenBudget?: number;
+  /** Authorship paired positionally with the four content arrays above. */
+  readonly origins?: {
+    readonly experienceBeforeActor: readonly RoleplayPromptOrigin[];
+    readonly actorBefore: readonly RoleplayPromptOrigin[];
+    readonly actorAfter: readonly RoleplayPromptOrigin[];
+    readonly experienceAfterActor: readonly RoleplayPromptOrigin[];
+  };
 }
 /** Content-free phase outcome useful for diagnostics and later orchestration. */
 interface RoleplayPhaseModuleOutcome {

@@ -8,6 +8,7 @@ import type {
   SillyTavernPresetContinuation,
   SillyTavernPresetPrompt,
 } from './import/sillytavern-preset.ts'
+import type { RoleplayPromptOrigin } from './prompt-origin.ts'
 import { roleplayModelHistory } from './roleplay-surface-overlay.ts'
 import type { EjsTemplateResult } from './ejs-template.ts'
 import {
@@ -26,6 +27,14 @@ export interface PresetPromptInputs {
   readonly userPersona?: string
   readonly worldInfoBefore: readonly string[]
   readonly worldInfoAfter: readonly string[]
+  /**
+   * Per-entry authorship for the two World Info markers, positionally paired
+   * with the arrays above. The markers join every entry into one module, so
+   * without this the preview can only say "world info" for a block that may
+   * hold thirty independently-activated entries.
+   */
+  readonly worldInfoBeforeOrigins?: readonly RoleplayPromptOrigin[]
+  readonly worldInfoAfterOrigins?: readonly RoleplayPromptOrigin[]
   readonly session: Session
   readonly pendingMessages?: readonly UserMessage[]
   /** Prepared turn context shared with native card and world adapters. */
@@ -42,6 +51,8 @@ export type RoleplayPromptRole = 'system' | 'user' | 'assistant'
 export interface RoleplayOrderedPrompt {
   readonly role: RoleplayPromptRole
   readonly content: string
+  /** Authorship, carried for the prompt preview; never read on the send path. */
+  readonly origin?: RoleplayPromptOrigin
 }
 
 /** Host-compatible prompt split around the conversation history. */
@@ -76,6 +87,8 @@ export interface RoleplayInChatPrompt {
   readonly content: string
   readonly depth: number
   readonly order: number
+  /** Authorship, carried for the prompt preview; never read on the send path. */
+  readonly origin?: RoleplayPromptOrigin
 }
 
 /** Compatibility names retained for existing adapter callers. */
@@ -291,13 +304,29 @@ function trailingToolTransactionStart(messages: readonly Message[]): number {
   }
 }
 
+/**
+ * One provider message beside the contributions that produced it.
+ *
+ * A chat row carries no origins — it is its own source, and the preview names it
+ * from the message itself. A module message carries exactly one. An in-chat
+ * message carries every prompt that was joined into it, in join order.
+ */
+export interface AttributedMessage {
+  readonly message: Message
+  readonly origins: readonly RoleplayPromptOrigin[]
+}
+
+function carried(messages: readonly Message[]): AttributedMessage[] {
+  return messages.map(message => ({ message, origins: [] }))
+}
+
 /** Insert expanded in-chat modules using SillyTavern's depth, priority, and role ordering. */
-export function injectSillyTavernInChatPrompts(
-  messages: readonly Message[],
+export function injectAttributedInChatPrompts(
+  messages: readonly AttributedMessage[],
   prompts: readonly RoleplayInChatPrompt[],
-): Message[] {
+): AttributedMessage[] {
   if (prompts.length === 0) return [...messages]
-  const transactionStart = trailingToolTransactionStart(messages)
+  const transactionStart = trailingToolTransactionStart(messages.map(item => item.message))
   const result = messages.slice(0, transactionStart)
   const transaction = messages.slice(transactionStart)
   const baseLength = result.length
@@ -305,25 +334,34 @@ export function injectSillyTavernInChatPrompts(
   for (const depth of depths) {
     const atDepth = prompts.filter(prompt => prompt.depth === depth)
     const orders = [...new Set(atDepth.map(prompt => prompt.order))].sort((left, right) => right - left)
-    const injected: Message[] = []
+    const injected: AttributedMessage[] = []
     for (const order of orders) {
       for (const role of ['system', 'user', 'assistant'] as const) {
-        const content = atDepth
-          .filter(prompt => prompt.order === order && prompt.role === role)
-          .map(prompt => prompt.content.trim())
-          .filter(Boolean)
-          .join('\n')
+        const contributing = atDepth
+          .filter(prompt => prompt.order === order && prompt.role === role && prompt.content.trim() !== '')
+        const content = contributing.map(prompt => prompt.content.trim()).join('\n')
         if (content === '') continue
-        injected.push(createMessage({
-          role,
-          source: { kind: 'plugin', plugin: 'dsh-agent-rp-preset-in-chat' },
-          content: [{ type: 'text', text: content }],
-        }))
+        injected.push({
+          message: createMessage({
+            role,
+            source: { kind: 'plugin', plugin: 'dsh-agent-rp-preset-in-chat' },
+            content: [{ type: 'text', text: content }],
+          }),
+          origins: contributing.flatMap(prompt => prompt.origin === undefined ? [] : [prompt.origin]),
+        })
       }
     }
     result.splice(Math.max(0, baseLength - depth), 0, ...injected)
   }
   return [...result, ...transaction]
+}
+
+/** Insert expanded in-chat modules using SillyTavern's depth, priority, and role ordering. */
+export function injectSillyTavernInChatPrompts(
+  messages: readonly Message[],
+  prompts: readonly RoleplayInChatPrompt[],
+): Message[] {
+  return injectAttributedInChatPrompts(carried(messages), prompts).map(item => item.message)
 }
 
 function orderedMessage(prompt: RoleplayOrderedPrompt): Message {
@@ -338,18 +376,29 @@ function orderedMessage(prompt: RoleplayOrderedPrompt): Message {
  * Place ordinary Prompt Manager modules on their original side of chatHistory,
  * retaining user/assistant roles instead of flattening them into the system slot.
  */
+export function injectAttributedPromptPlan(
+  messages: readonly AttributedMessage[],
+  plan: RoleplayProviderPromptPlan,
+): AttributedMessage[] {
+  const history = plan.includeHistory ? injectAttributedInChatPrompts(messages, plan.inChat) : []
+  const transactionStart = trailingToolTransactionStart(history.map(item => item.message))
+  const ordered = (prompt: RoleplayOrderedPrompt): AttributedMessage => ({
+    message: orderedMessage(prompt),
+    origins: prompt.origin === undefined ? [] : [prompt.origin],
+  })
+  return [
+    ...plan.beforeHistory.map(ordered),
+    ...history.slice(0, transactionStart),
+    ...plan.afterHistory.map(ordered),
+    ...history.slice(transactionStart),
+  ]
+}
+
 export function injectSillyTavernPromptPlan(
   messages: readonly Message[],
   plan: RoleplayProviderPromptPlan,
 ): Message[] {
-  const history = plan.includeHistory ? injectSillyTavernInChatPrompts(messages, plan.inChat) : []
-  const transactionStart = trailingToolTransactionStart(history)
-  return [
-    ...plan.beforeHistory.map(orderedMessage),
-    ...history.slice(0, transactionStart),
-    ...plan.afterHistory.map(orderedMessage),
-    ...history.slice(transactionStart),
-  ]
+  return injectAttributedPromptPlan(carried(messages), plan).map(item => item.message)
 }
 
 function isContinueInstruction(message: Message): boolean {
@@ -373,25 +422,57 @@ function withContinuationPostfix(message: Message, postfix: SillyTavernPresetCon
 }
 
 /** Apply SillyTavern continue-prefill or continue-nudge semantics after all prompt modules are placed. */
+export function applyAttributedContinuation(
+  messages: readonly AttributedMessage[],
+  continuation: RoleplayContinuationPlan | undefined,
+): AttributedMessage[] {
+  if (continuation === undefined) return [...messages]
+  const instructionIndex = messages.findLastIndex(item => isContinueInstruction(item.message))
+  if (instructionIndex < 0) return [...messages]
+  const assistantIndex = messages.findLastIndex((item, index) =>
+    index < instructionIndex && item.message.role === 'assistant')
+  if (assistantIndex < 0) return [...messages]
+  const assistant = messages[assistantIndex]!
+  if (continuation.prefill) {
+    const retained = messages.filter((_item, index) => index !== assistantIndex && index !== instructionIndex)
+    return [...retained, {
+      message: withContinuationPostfix(assistant.message, continuation.postfix),
+      origins: [...assistant.origins, { kind: 'continuation', label: '续写前缀' }],
+    }]
+  }
+  const nudge = continuation.nudgePrompt
+    .replace(/\{\{lastchatmessage\}\}/giu, messageText(assistant.message).trim()).trim()
+  if (nudge === '') return [...messages]
+  return messages.map((item, index) => index === instructionIndex
+    ? {
+        message: { ...item.message, role: 'system' as const, content: [{ type: 'text' as const, text: nudge }] },
+        origins: [{ kind: 'continuation' as const, label: '续写推动' }],
+      }
+    : item)
+}
+
 export function applySillyTavernContinuation(
   messages: readonly Message[],
   continuation: RoleplayContinuationPlan | undefined,
 ): Message[] {
-  if (continuation === undefined) return [...messages]
-  const instructionIndex = messages.findLastIndex(isContinueInstruction)
-  if (instructionIndex < 0) return [...messages]
-  const assistantIndex = messages.findLastIndex((message, index) => index < instructionIndex && message.role === 'assistant')
-  if (assistantIndex < 0) return [...messages]
-  const assistant = messages[assistantIndex]!
-  if (continuation.prefill) {
-    const retained = messages.filter((_message, index) => index !== assistantIndex && index !== instructionIndex)
-    return [...retained, withContinuationPostfix(assistant, continuation.postfix)]
-  }
-  const nudge = continuation.nudgePrompt.replace(/\{\{lastchatmessage\}\}/giu, messageText(assistant).trim()).trim()
-  if (nudge === '') return [...messages]
-  return messages.map((message, index) => index === instructionIndex
-    ? { ...message, role: 'system', content: [{ type: 'text', text: nudge }] }
-    : message)
+  return applyAttributedContinuation(carried(messages), continuation).map(item => item.message)
+}
+
+/**
+ * Produce the exact provider-facing order, each message beside its sources.
+ *
+ * This is the one assembly: {@link prepareSillyTavernProviderMessages} is this
+ * function with the attribution dropped, so the prompt preview can never show an
+ * order the provider did not receive.
+ */
+export function prepareAttributedProviderMessages(
+  messages: readonly Message[],
+  plan: RoleplayProviderPromptPlan,
+): AttributedMessage[] {
+  return applyAttributedContinuation(
+    injectAttributedPromptPlan(carried(messages), plan),
+    plan.continuation,
+  )
 }
 
 /** Produce the exact provider-facing order after prompt placement and continuation handling. */
@@ -399,7 +480,29 @@ export function prepareSillyTavernProviderMessages(
   messages: readonly Message[],
   plan: RoleplayProviderPromptPlan,
 ): Message[] {
-  return applySillyTavernContinuation(injectSillyTavernPromptPlan(messages, plan), plan.continuation)
+  return prepareAttributedProviderMessages(messages, plan).map(item => item.message)
+}
+
+/**
+ * Attribute one expanded Prompt Manager module.
+ *
+ * The two World Info markers are the only modules that are a join of several
+ * independently-authored pieces, so they carry those pieces as `parts` and the
+ * preview can open the block back up into one row per entry.
+ */
+function presetPromptOrigin(
+  prompt: SillyTavernPresetPrompt,
+  inputs: PresetPromptInputs,
+): RoleplayPromptOrigin {
+  const parts = prompt.identifier === 'worldInfoBefore' ? inputs.worldInfoBeforeOrigins
+    : prompt.identifier === 'worldInfoAfter' ? inputs.worldInfoAfterOrigins
+      : undefined
+  return {
+    kind: 'preset',
+    label: prompt.name.trim() === '' ? prompt.identifier : prompt.name,
+    id: prompt.identifier,
+    ...(parts === undefined || parts.length === 0 ? {} : { parts }),
+  }
 }
 
 /** Assemble every ordered module around the retained chat history. */
@@ -445,6 +548,7 @@ export function assembleSillyTavernPreset(
     }
     const expanded = promptText(prompt, preset, inputs, macros, diagnostics)
     if (expanded === undefined || expanded.text.trim() === '') continue
+    const origin = presetPromptOrigin(prompt, inputs)
     if (prompt.injectionPosition === 1) {
       inChat.push({
         role: prompt.role,
@@ -453,10 +557,11 @@ export function assembleSillyTavernPreset(
           ? prompt.injectionDepth! : 4,
         order: typeof prompt.injectionOrder === 'number' && Number.isFinite(prompt.injectionOrder)
           ? prompt.injectionOrder : 100,
+        origin,
       })
       continue
     }
-    const ordered = { role: prompt.role, content: expanded.text }
+    const ordered = { role: prompt.role, content: expanded.text, origin }
     if (hasHistory && !pastHistory && expanded.turnVariant) {
       deferred.push(ordered)
       continue
@@ -467,6 +572,7 @@ export function assembleSillyTavernPreset(
     after.push({
       role: 'system',
       content: '每次回复都必须在正文末尾完整输出一个 <UpdateVariable><Analysis>…</Analysis><JSONPatch>[…]</JSONPatch></UpdateVariable>；没有变量变化时 JSONPatch 也输出空数组。',
+      origin: { kind: 'mvu', label: '变量更新指令' },
     })
   }
   const continuation = continuationPlan(preset.continuation, macros)

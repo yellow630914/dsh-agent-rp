@@ -117,6 +117,7 @@ import { worldInfoFailureReport } from './world-info-failure-report.ts'
 import { availableWorldInfoLibraryUploads } from './world-info-library-selection.ts'
 import type { PresetConfigurationRequest } from '../preset-configuration-types.ts'
 import { RegexManagerDialog } from './regex-manager.tsx'
+import { PromptPreviewDialog } from './prompt-preview.tsx'
 import type { RegexConfigurationRequest } from '../regex-configuration-types.ts'
 import type { WorldInfoConfigurationRequest, WorldInfoEditableEntry } from '../world-info-configuration-types.ts'
 import type { LoadWorldInfoEntries, SaveWorldInfoEntries } from './world-info-editor.tsx'
@@ -4367,6 +4368,7 @@ function RoleplayHeader({
   const [presetOpen, setPresetOpen] = useState(false)
   const [worldInfoOpen, setWorldInfoOpen] = useState(false)
   const [regexOpen, setRegexOpen] = useState(false)
+  const [promptPreviewOpen, setPromptPreviewOpen] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [migrationOpen, setMigrationOpen] = useState(false)
   const [personaOpen, setPersonaOpen] = useState(false)
@@ -4577,6 +4579,10 @@ function RoleplayHeader({
           <button type="button" role="menuitem" data-agent-rp-action="open-regex-manager"
             onClick={() => { setSettingsOpen(false); setRegexOpen(true) }} style={headerMenuItemStyle}>
             正则{projection.regex.scripts.length === 0 ? '' : ` · ${projection.regex.scripts.filter(entry => !entry.deleted && !entry.script.disabled).length}`}
+          </button>
+          <button type="button" role="menuitem" data-agent-rp-action="open-prompt-preview"
+            onClick={() => { setSettingsOpen(false); setPromptPreviewOpen(true) }} style={headerMenuItemStyle}>
+            发送给模型的内容
           </button>
           <button type="button" role="menuitem" data-agent-rp-action="toggle-debug-view"
             aria-pressed={viewMode === 'debug'} onClick={() => {
@@ -4798,6 +4804,10 @@ function RoleplayHeader({
       regex={projection.regex}
       onSave={request => configureRegex(sessionId, request)}
       onClose={() => { setRegexOpen(false) }}
+    />}
+    {promptPreviewOpen && <PromptPreviewDialog
+      sessionId={sessionId}
+      onClose={() => { setPromptPreviewOpen(false) }}
     />}
     {worldInfoOpen && <WorldInfoManagerDialog
       debugEnabled={debugEnabled}

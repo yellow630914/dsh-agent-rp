@@ -103,7 +103,8 @@ test('adds, runs, edits, and deletes one session-owned module', () => {
     },
     worldInfoBefore: [], worldInfoAfter: [], session: Session.create(SessionId('custom-preset-prompt')), pendingMessages: [],
   })
-  assert.deepEqual(assembled.beforeHistory.at(-1), { role: 'user', content: '只在本会话使用' })
+  const last = assembled.beforeHistory.at(-1)
+  assert.deepEqual([last?.role, last?.content], ['user', '只在本会话使用'])
 
   const deleted = configurePreset({ ...active, preset: added, revision: 1 }, {
     operation: 'replace', revision: 1, prompts,

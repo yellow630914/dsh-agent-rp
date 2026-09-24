@@ -8,13 +8,17 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
   appendMvuState,
   applyMvuOperations,
-  MVU_ROLEPLAY_MODULE_ID,
-  MVU_ROLEPLAY_STATE_ID,
   type MvuStateOperation,
   type MvuStateSnapshot,
 } from './mvu.ts'
 import { collectRoleplayStagedStateSettlement } from './roleplay-staged-state-settlement.ts'
 import { parseRoleplayStateOperations } from './roleplay-state-operations.ts'
+import { appendRoleplayState, readRoleplayStates } from './roleplay-state.ts'
+import {
+  ROLEPLAY_STATE_SCHEME_MODULE_ID,
+  type RoleplayStateSchemeSnapshot,
+  type RoleplayStateSchemeValue,
+} from './roleplay-state-scheme.ts'
 import type { RoleplayTurnPlanReference } from './roleplay-turn-settlement.ts'
 
 /** Model-facing tool that records semantic state work without mutating state mid-turn. */
@@ -23,9 +27,12 @@ export const ROLEPLAY_STATE_ACTION_TOOL = 'apply_roleplay_state'
 /** Durable tool-result metadata format. */
 export const ROLEPLAY_STATE_ACTION_FORMAT = 'agent-rp.state-action' as const
 
+/** Semantic engine backing one prepared state contract; both share the same operation set. */
+export type RoleplayStateActionEngine = 'mvu-v0' | 'native-v0'
+
 /** Prepared capability contract frozen before one model step. */
 export interface RoleplayStateActionPlan {
-  readonly engine: 'mvu-v0'
+  readonly engine: RoleplayStateActionEngine
   readonly tool: typeof ROLEPLAY_STATE_ACTION_TOOL
   readonly moduleId: string
   readonly stateId: string
@@ -221,9 +228,10 @@ export function installRoleplayStateActionTool(ctx: Context): void {
       if (!sameArguments(call.data.arguments, stateId, operations)) {
         throw new Error('Roleplay state action arguments do not match the recorded tool call')
       }
+      // The prepared plan names the namespace and its owning module, so the
+      // contract is read from it rather than pinned to one imported adapter.
       const target = actionTarget(plan.data.reference, stateId)
-      if (target === undefined || target.tool !== ROLEPLAY_STATE_ACTION_TOOL
-        || target.moduleId !== MVU_ROLEPLAY_MODULE_ID || target.stateId !== MVU_ROLEPLAY_STATE_ID) {
+      if (target === undefined || target.tool !== ROLEPLAY_STATE_ACTION_TOOL || target.stateId !== stateId) {
         throw new Error('This prepared Roleplay step does not allow that state action')
       }
       if (operations.some(operation => !target.operations.includes(operation.op))) {
@@ -328,7 +336,83 @@ function sameNumbers(left: readonly number[], right: readonly number[]): boolean
   return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
-/** Reduce accepted intents exactly once and return the Session prefix containing the resulting MVU snapshot. */
+/**
+ * Apply one settled native-scheme calculation through the durable state namespace.
+ *
+ * The MVU adapter reduces into its own `agent-rp/mvu-state` snapshot; a native
+ * scheme instead owns a real state namespace, so it goes through the same
+ * compare-and-set write a player edit uses. Re-entry is detected from the
+ * revision rather than a per-turn marker: once the namespace has moved past the
+ * revision this turn prepared, the write either already landed or a player edit
+ * superseded it, and in both cases it must not be applied twice.
+ * @param input - closed-turn boundary plus the calculation to reduce.
+ * @returns the Session prefix containing the resulting revision.
+ */
+function settleNativeSchemeStateActions(input: {
+  readonly session: Session
+  readonly closingSeq: number
+  readonly scheme: {
+    readonly snapshot: RoleplayStateSchemeSnapshot
+    readonly current: RoleplayStateSchemeValue
+  }
+  readonly resultEventSeqs: readonly number[]
+  readonly operations: readonly MvuStateOperation[]
+  readonly expectedRevisions: ReadonlySet<number>
+  readonly successfulUnchanged: boolean
+  readonly error?: string
+}): RoleplayStateActionSettlement {
+  const { snapshot: scheme, current } = input.scheme
+  const live = readRoleplayStates(input.session.snapshotEvents()).find(state => state.id === scheme.stateId)
+  if ((live?.revision ?? 0) > current.revision) {
+    return {
+      session: sessionThrough(input.session, live!.eventSeq),
+      resultEventSeqs: input.resultEventSeqs,
+      outcome: 'applied',
+    }
+  }
+  if (input.error === undefined && (input.successfulUnchanged || input.operations.length === 0)) {
+    return {
+      session: sessionThrough(input.session, input.closingSeq),
+      resultEventSeqs: input.resultEventSeqs,
+      outcome: 'idle',
+    }
+  }
+  const laterRequired = input.session.snapshotEvents().some(event => event.seq > input.closingSeq
+    && event.type !== 'session/end-seed' && event.ignorable !== true)
+  if (laterRequired) throw new Error('Roleplay state actions cannot be inserted after a later required Session event')
+  let error = input.error
+  let next: JsonValue = snapshotJsonValue(current.value) as JsonValue
+  try {
+    if (error !== undefined) throw new Error(error)
+    if (input.expectedRevisions.size !== 1 || !input.expectedRevisions.has(current.revision)) {
+      throw new Error(`Native state revision conflict: prepared ${[...input.expectedRevisions].join(', ')}, current ${String(current.revision)}`)
+    }
+    next = applyMvuOperations(next, input.operations).statData
+  } catch (reason: unknown) {
+    error = reason instanceof Error ? reason.message : String(reason)
+  }
+  if (error !== undefined) {
+    return {
+      session: sessionThrough(input.session, input.closingSeq),
+      resultEventSeqs: input.resultEventSeqs,
+      outcome: 'failed',
+      error,
+    }
+  }
+  const written = appendRoleplayState(input.session, {
+    id: scheme.stateId,
+    expectedRevision: current.revision,
+    writerModuleId: ROLEPLAY_STATE_SCHEME_MODULE_ID,
+    value: next,
+  })
+  return {
+    session: sessionThrough(input.session, written.eventSeq),
+    resultEventSeqs: input.resultEventSeqs,
+    outcome: 'applied',
+  }
+}
+
+/** Reduce accepted intents exactly once and return the Session prefix containing the resulting snapshot. */
 export function settleSessionRoleplayStateActions(input: {
   readonly session: Session
   /** Exact event prefix through the closing turn/end, without Session reconstruction markers. */
@@ -336,6 +420,11 @@ export function settleSessionRoleplayStateActions(input: {
   readonly turn: number
   readonly plans: readonly RoleplayTurnPlanReference[]
   readonly base?: MvuStateSnapshot
+  /** Native contract in force; present only when this Session was launched with one. */
+  readonly scheme?: {
+    readonly snapshot: RoleplayStateSchemeSnapshot
+    readonly current: RoleplayStateSchemeValue
+  }
 }): RoleplayStateActionSettlement {
   const closing = input.boundary.at(-1)
   if (closing?.type !== 'turn/end' || closing.data.turn !== input.turn) {
@@ -369,6 +458,19 @@ export function settleSessionRoleplayStateActions(input: {
     ? new Set(collected.map(item => item.intent.expectedRevision))
     : new Set([staged.target.expectedRevision])
   const successfulUnchanged = staged?.outcome === 'success' && operations.length === 0
+  const settledStateId = staged?.target.stateId ?? collected[0]?.intent.stateId
+  if (input.scheme !== undefined && settledStateId === input.scheme.snapshot.stateId) {
+    return settleNativeSchemeStateActions({
+      session: input.session,
+      closingSeq: closing.seq,
+      scheme: input.scheme,
+      resultEventSeqs,
+      operations,
+      expectedRevisions,
+      successfulUnchanged,
+      ...(staged?.error === undefined ? {} : { error: staged.error }),
+    })
+  }
   const existing = input.session.snapshotEvents().filter((event): event is SessionEvent<'agent-rp/mvu-state'> =>
     event.type === 'agent-rp/mvu-state' && event.data.source?.kind === 'agent-action'
       && event.data.source.turn === input.turn)

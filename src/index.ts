@@ -32,6 +32,11 @@ import { characterLibraryRoleplayResourceId } from './roleplay-resource-library-
 import { installRoleplayResourceCatalogHttp } from './roleplay-resource-catalog-http.ts'
 import { RegexPackLibrary } from './regex-pack-library.ts'
 import { installRegexPackLibraryHttp } from './regex-pack-library-http.ts'
+import { installStateSchemeLibraryHttp } from './state-scheme-library-http.ts'
+import { installRoleplayStateResettleHttp } from './roleplay-state-resettle-http.ts'
+import { installRoleplayStateSchemeSessionHttp } from './roleplay-state-scheme-session-http.ts'
+import { StateSchemeLibrary } from './state-scheme-library.ts'
+import { roleplayStateSchemeResourceProvider } from './roleplay-state-scheme.ts'
 import { tavernResourceLibraryPreflightContributors } from './tavern-resource-library-preflight.ts'
 import {
   TAVERN_RESOURCE_PREFLIGHT_KEY,
@@ -835,6 +840,10 @@ export function installAgentRp(
       phase: 'settle',
       async run(input) {
         if (input.plan.plan.act.stateActions.length === 0) return { outcome: 'skipped' }
+        // "Only on request" still prepares the contract so the state stays
+        // readable and a manual settlement remains possible; it just declines
+        // to spend two model requests on every turn.
+        if (!input.plan.plan.tools.behavior.state.settleAutomatically) return { outcome: 'skipped' }
         const hasInlineStateAction = input.agent.session.snapshotEvents().some((event) => {
           if (event.type !== 'tool/result' || event.data.turn !== input.turn || event.data.error !== undefined) return false
           const block = event.data.message.content[0]
@@ -1764,6 +1773,7 @@ export async function apply(ctx: Context, config: AgentRpConfig): Promise<void> 
     const personaLibrary = new PersonaLibrary()
     const presetLibrary = new PresetLibrary()
     const regexPackLibrary = new RegexPackLibrary()
+    const stateSchemeLibrary = new StateSchemeLibrary()
     const chatLibrary = new SillyTavernChatLibrary()
     const workspaceSettings = new WorkspaceSettingsStore()
     const storyWorkspaces = new StoryWorkspaceStore()
@@ -1774,7 +1784,10 @@ export async function apply(ctx: Context, config: AgentRpConfig): Promise<void> 
       presets: presetLibrary,
       regexPacks: regexPackLibrary,
       worldInfos: worldInfoLibrary,
-    }).concat(nativePromptPolicyResourceProvider())) ctx.effect(
+    }).concat(
+      nativePromptPolicyResourceProvider(),
+      roleplayStateSchemeResourceProvider(stateSchemeLibrary),
+    )) ctx.effect(
       () => resourceCatalog.register(provider),
       `agent-rp: built-in resource provider ${provider.id}`,
     )
@@ -1799,6 +1812,14 @@ export async function apply(ctx: Context, config: AgentRpConfig): Promise<void> 
         installPersonaLibraryHttp(webCtx, personaLibrary, server)
         installPresetLibraryHttp(webCtx, presetLibrary, server)
         installRegexPackLibraryHttp(webCtx, regexPackLibrary, server)
+        installStateSchemeLibraryHttp(webCtx, stateSchemeLibrary, server)
+        installRoleplayStateSchemeSessionHttp(webCtx, ctx, server, stateSchemeLibrary)
+        installRoleplayStateResettleHttp(webCtx, ctx, server, {
+          deployment: resolved,
+          workspaceSettings,
+          ...(ejsTemplateEngine === undefined ? {} : { templateEngine: ejsTemplateEngine }),
+          extensions: runtimeExtensions,
+        })
         const tavernExecutionPlans = new TavernExecutionPlanCache(undefined, 64, {
           persistentRoot: dshHomePath('agent-rp', 'cache', 'tavern-execution-plans'),
         })

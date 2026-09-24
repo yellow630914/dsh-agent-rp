@@ -20,6 +20,11 @@ import {
 } from './import/sillytavern-preset.ts'
 import { DEFAULT_AGENT_RP_CHARACTER_NAME, type AgentRpProjection } from './projection-types.ts'
 import { applyMvuReply, readCurrentMvuState, readCurrentMvuStateFromLorebooks, substituteMvuMacros } from './mvu.ts'
+import {
+  parseRoleplayStateScheme,
+  roleplayStateSchemeLibraryId,
+  type RoleplayStateSchemeSnapshot,
+} from './roleplay-state-scheme.ts'
 import { canEditPresetPrompt, canTogglePresetPrompt } from './preset-configuration.ts'
 import { configurePreset, parsePresetConfigurationRequest } from './preset-configuration-core.ts'
 import { parsePresetLibraryResult } from './preset-library-protocol.ts'
@@ -130,9 +135,38 @@ const projectionSchema = {
       || !Array.isArray(record.presetLibrary)
       || (record.lastRequest !== undefined && (typeof record.lastRequest !== 'object' || record.lastRequest === null))
       || (record.promptRegex !== undefined && (typeof record.promptRegex !== 'object' || record.promptRegex === null))
+      || (record.stateScheme !== undefined && !validStateScheme(record.stateScheme))
+      || (record.stateSettlement !== undefined && !validStateSettlement(record.stateSettlement))
       || !validSource) throw new Error('invalid agentRp projection')
     return value as AgentRpProjection
   },
+}
+
+function validStateScheme(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return typeof record.id === 'string' && record.id !== ''
+    && typeof record.name === 'string'
+    && typeof record.stateId === 'string' && record.stateId !== ''
+    && typeof record.revision === 'number' && Number.isSafeInteger(record.revision) && record.revision >= 0
+    && typeof record.rules === 'string'
+    && (record.libraryId === undefined || typeof record.libraryId === 'string')
+    && Object.prototype.hasOwnProperty.call(record, 'value')
+}
+
+function validStateSettlement(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (!Number.isSafeInteger(record.turn) || !Array.isArray(record.stages)) return false
+  if (record.outcome !== undefined && typeof record.outcome !== 'string') return false
+  return record.stages.every((stage) => {
+    if (typeof stage !== 'object' || stage === null || Array.isArray(stage)) return false
+    const entry = stage as Record<string, unknown>
+    return (entry.stage === 'proposal' || entry.stage === 'verification')
+      && (entry.outcome === 'success' || entry.outcome === 'failure')
+      && (entry.operations === undefined || Array.isArray(entry.operations))
+      && (entry.error === undefined || typeof entry.error === 'string')
+  })
 }
 
 function validNativeStates(value: readonly unknown[]): boolean {
@@ -178,6 +212,13 @@ interface AgentRpProjectionState {
   readonly calls: Readonly<Record<string, ImportCall>>
   readonly personaCommands: Readonly<Record<string, number>>
   readonly nativeStates: readonly RoleplayStateSnapshot[]
+  readonly stateScheme?: RoleplayStateSchemeSnapshot
+  readonly stateSettlementTrail: readonly {
+    readonly seq: number
+    readonly kind: 'request' | 'result' | 'worker'
+    readonly turn: number
+    readonly data: JsonValue
+  }[]
   readonly mvu?: AgentRpProjection['mvu']
   readonly preset?: AgentRpProjection['preset']
   readonly presetState?: ActiveSessionPreset
@@ -1035,6 +1076,24 @@ function foldAgentRpProjectionEvent(
     }
   }
   if (event.type === 'agent-rp/mvu-state') return { ...withSurface, mvu: event.data }
+  if (event.type === 'agent-rp/staged-state-request' || event.type === 'agent-rp/staged-state-result'
+    || (event.type === 'agent-rp/turn-worker-result' && event.data.workerId === 'state-settlement')) {
+    const kind = event.type === 'agent-rp/staged-state-request' ? 'request' as const
+      : event.type === 'agent-rp/staged-state-result' ? 'result' as const : 'worker' as const
+    // A result carries no turn of its own; it is matched to its request by seq.
+    const turn = kind === 'result' ? -1 : Number((event.data as { turn?: unknown }).turn ?? -1)
+    const entry = { seq: event.seq, kind, turn, data: event.data as unknown as JsonValue }
+    // Only the newest turn is ever displayed, so the trail stays bounded.
+    const trail = [...withSurface.stateSettlementTrail, entry].slice(-40)
+    return { ...withSurface, stateSettlementTrail: trail }
+  }
+  if (event.type === 'agent-rp/state-scheme-seed') {
+    try {
+      return { ...withSurface, stateScheme: parseRoleplayStateScheme(event.data) }
+    } catch {
+      return withSurface
+    }
+  }
   if (event.type === 'agent-rp/world-info-library-seed') {
     try {
       const semantics = worldInfoLibrarySeedSemantics(event)
@@ -1537,6 +1596,7 @@ export function createAgentRpProjectionDefinition(
     calls: {},
     personaCommands: {},
     nativeStates: [],
+    stateSettlementTrail: [],
     presetLibrary: [],
     generations: {},
     surfaceAnchors: {},
@@ -1618,6 +1678,72 @@ export function createAgentRpProjectionDefinition(
         })),
       },
       ...(state.mvu === undefined ? {} : { mvu: state.mvu }),
+      ...(state.stateSettlementTrail.length === 0 ? {} : {
+        stateSettlement: (() => {
+          const trail = state.stateSettlementTrail
+          const turns = trail.flatMap(item => item.turn >= 0 ? [item.turn] : [])
+          const turn = turns.length === 0 ? -1 : Math.max(...turns)
+          const requests = new Map<number, { readonly stage: string; readonly turn: number }>()
+          for (const item of trail) {
+            if (item.kind !== 'request') continue
+            const data = item.data as { readonly stage?: unknown; readonly turn?: unknown }
+            requests.set(item.seq, {
+              stage: typeof data.stage === 'string' ? data.stage : 'proposal',
+              turn: Number(data.turn ?? -1),
+            })
+          }
+          const stages = trail.flatMap((item) => {
+            if (item.kind !== 'result') return []
+            const data = item.data as {
+              readonly requestSeq?: unknown
+              readonly result?: { readonly kind?: unknown; readonly operations?: unknown; readonly failure?: unknown
+                readonly detail?: { readonly message?: unknown } }
+            }
+            const request = requests.get(Number(data.requestSeq ?? -1))
+            if (request === undefined || request.turn !== turn) return []
+            const result = data.result ?? {}
+            const success = result.kind === 'success'
+            return [{
+              stage: request.stage === 'verification' ? 'verification' as const : 'proposal' as const,
+              outcome: success ? 'success' as const : 'failure' as const,
+              ...(success && Array.isArray(result.operations)
+                ? { operations: result.operations as JsonValue[] } : {}),
+              ...(success ? {} : {
+                error: typeof result.detail?.message === 'string'
+                  ? result.detail.message
+                  : String(result.failure ?? '状态结算失败'),
+              }),
+            }]
+          })
+          const worker = trail.findLast(item => item.kind === 'worker' && item.turn === turn)
+          const outcome = worker === undefined
+            ? undefined
+            : (worker.data as { readonly outcome?: unknown }).outcome
+          return {
+            turn,
+            ...(typeof outcome === 'string' ? { outcome: outcome as 'applied' } : {}),
+            stages,
+          }
+        })(),
+      }),
+      ...(state.stateScheme === undefined ? {} : {
+        stateScheme: (() => {
+          const scheme = state.stateScheme
+          const current = state.nativeStates.find(value => value.id === scheme.stateId)
+          const libraryId = roleplayStateSchemeLibraryId(scheme.source)
+          return {
+            id: scheme.id,
+            name: scheme.name,
+            stateId: scheme.stateId,
+            value: current?.value ?? scheme.initial,
+            revision: current?.revision ?? 0,
+            rules: scheme.rules,
+            ...(libraryId === undefined ? {} : { libraryId }),
+            ...(scheme.verificationMaxTokens === undefined
+              ? {} : { verificationMaxTokens: scheme.verificationMaxTokens }),
+          }
+        })(),
+      }),
       ...(state.preset === undefined ? {} : { preset: state.preset }),
       presetLibrary: state.presetLibrary,
       ...(state.lastRequest === undefined ? {} : { lastRequest: state.lastRequest }),
@@ -1658,7 +1784,7 @@ export function createAgentRpProjectionDefinition(
     }
   },
   },
-  stateVersion: 16,
+  stateVersion: 18,
   }
   return {
     ...definition,

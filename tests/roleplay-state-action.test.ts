@@ -633,7 +633,10 @@ test('settles MVU after the visible reply through a replayable local-provider st
   assert.match(verificationSystem, /从 current_state 直接到核验后状态/u)
   assert.doesNotMatch(verificationText, /<proposal_operations>|<candidate_state>/u)
   assert.deepEqual(requestReasoning, ['off', 'max'])
-  assert.deepEqual(requestMaxTokens, [4096, 4096])
+  // Reasoning shares the completion budget, so only the proposal — which turns
+  // it off — can spend all 4096 on the answer. A verification that thinks needs
+  // room for both, or it returns nothing at all.
+  assert.deepEqual(requestMaxTokens, [4096, 16384])
   assert.deepEqual(requestModels, [
     { provider: 'fixture', model: 'fixture' },
     { provider: 'fast-fixture', model: 'verification-fixture' },

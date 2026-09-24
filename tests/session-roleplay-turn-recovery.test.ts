@@ -127,6 +127,7 @@ test('persists one content-free plan receipt before dispatch and rejects retry d
     includeFramework: false,
     includeAgentRp: true,
     imageMode: 'always' as const,
+    stateMode: 'auto' as const,
     custom: [{ id: 'fixture-image', enabled: true, text: 'Use the configured fixture image producer.' }],
   }
   const plan = prepareRoleplayTurn({
@@ -157,7 +158,7 @@ test('persists one content-free plan receipt before dispatch and rejects retry d
   const reopened = Session.create(session.id, session.snapshotEvents())
   const records = readSessionRoleplayTurnPlans(reopened.snapshotEvents())
   assert.equal(records.length, 1)
-  assert.equal(records[0]?.data.reference.receipt.preparedPlanSchema, 5)
+  assert.equal(records[0]?.data.reference.receipt.preparedPlanSchema, 6)
   assert.deepEqual(records[0]?.data.toolGuidance, toolGuidance)
   assert.equal(records[0]?.data.reference.receipt.memoryWriteAvailable, true)
   assert.deepEqual(records[0]?.data.reference.receipt.recall, dispatchedPlan.recall)

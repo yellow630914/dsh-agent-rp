@@ -41,6 +41,14 @@ import {
   installStExtensionSurface,
 } from './st-extension-surface.tsx'
 import { StoryWorkspaceEditor } from './story-workspace-editor.tsx'
+import { RoleplayStatePanel } from './state-panel.tsx'
+import { RoleplayStateSchemeSection } from './state-scheme-session-panel.tsx'
+import { listStateSchemes, resettleRoleplayState } from './state-scheme-client.ts'
+import type { StateSchemeLibrarySummary } from '../state-scheme-library-protocol.ts'
+import {
+  BASIC_ROLEPLAY_STATE_SCHEME_ID,
+  roleplayStateSchemeResourceId as stateSchemeResourceId,
+} from '../roleplay-state-scheme-ids.ts'
 
 interface SidebarDestinationOwnerProps {
   readonly wide: boolean
@@ -642,6 +650,7 @@ type HeaderProps = PropsRuntime<'conversation.session.header.actions'> & {
     resourcePermissions?: AgentRpSessionResourcePermissions,
     agentPresetId?: string,
     regexPackIds?: readonly string[],
+    stateSchemeId?: string,
   ) => Promise<void>
   readonly listPresets: () => Promise<readonly PresetLibrarySummary[]>
   readonly listRegexPacks: () => Promise<readonly RegexPackLibrarySummary[]>
@@ -2853,6 +2862,7 @@ type SidebarRoleplayWorkbenchProps = Pick<HeaderProps,
     resourcePermissions?: AgentRpSessionResourcePermissions,
     agentPresetId?: string,
     regexPackIds?: readonly string[],
+    stateSchemeId?: string,
   ) => Promise<void>
   readonly renamePreset: (id: string, name: string) => Promise<PresetLibrarySummary>
   readonly deletePreset: (id: string) => Promise<void>
@@ -2946,7 +2956,7 @@ function SidebarRoleplayDestination({
   const [migrationOpen, setMigrationOpen] = useState(false)
   const [resourceCenterOpen, setResourceCenterOpen] = useState(false)
   const [storyWorkspaceOpen, setStoryWorkspaceOpen] = useState(false)
-  const [resourceCenterSection, setResourceCenterSection] = useState<'characters' | 'world-info' | 'regex-packs'>('characters')
+  const [resourceCenterSection, setResourceCenterSection] = useState<'characters' | 'world-info' | 'regex-packs' | 'state-schemes'>('characters')
   const [worldInfoLaunch, setWorldInfoLaunch] = useState<WorldInfoLibraryUpload>()
   const [launchSessionId, setLaunchSessionId] = useState<SessionId | undefined>(undefined)
   const [accessSaving, setAccessSaving] = useState(false)
@@ -3193,13 +3203,13 @@ function SidebarRoleplayDestination({
         setResourceCenterSection(section)
         setResourceCenterOpen(true)
       }}
-      onStartCharacter={(character, greetingIndex, persona, presetId, worldInfoIds, regexPackIds, resourcePermissions, agentPresetId) => startCharacterSession(
+      onStartCharacter={(character, greetingIndex, persona, presetId, worldInfoIds, regexPackIds, resourcePermissions, agentPresetId, stateSchemeId) => startCharacterSession(
         launchSessionId, character, greetingIndex, persona, presetId, worldInfoIds,
-        undefined, resourcePermissions, agentPresetId, regexPackIds,
+        undefined, resourcePermissions, agentPresetId, regexPackIds, stateSchemeId,
       )}
-      onStartWorldInfo={(worldInfo, persona, presetId, worldInfoIds, regexPackIds, resourcePermissions, agentPresetId) => startWorldInfoSession(
+      onStartWorldInfo={(worldInfo, persona, presetId, worldInfoIds, regexPackIds, resourcePermissions, agentPresetId, stateSchemeId) => startWorldInfoSession(
         launchSessionId, worldInfo, persona, presetId, worldInfoIds,
-        resourcePermissions, agentPresetId, regexPackIds,
+        resourcePermissions, agentPresetId, regexPackIds, stateSchemeId,
       )}
     />, document.body)}
     {migrationOpen && launchSessionId !== undefined && createPortal(<SillyTavernImportDialog
@@ -3737,6 +3747,7 @@ type ToolStrategyDraft = {
   includeFramework: boolean
   includeAgentRp: boolean
   imageMode: AgentRpSettings['toolGuidance']['imageMode']
+  stateMode: AgentRpSettings['toolGuidance']['stateMode']
   custom: Array<{ id: string; enabled: boolean; text: string }>
 }
 
@@ -3916,6 +3927,11 @@ function ToolStrategySettingsPanel({ settings, writable, onSave }: {
     { value: 'auto', title: '按场景判断', detail: '需要插图时由 Agent 自主决定' },
     { value: 'always', title: '每回合尝试', detail: '已配置生图工具时至多尝试一次' },
   ] as const
+  const stateModes = [
+    { value: 'never', title: '关闭状态结算', detail: '本轮不准备状态契约，状态只能手动编辑' },
+    { value: 'requested', title: '仅手动触发', detail: '保留状态，但只有你在状态栏点重新结算时才计算' },
+    { value: 'auto', title: '每回合结算', detail: '正文结束后由后台 Worker 结算，不占用上下文' },
+  ] as const
   const save = (): void => {
     if (validationError !== undefined) return
     onSave({
@@ -3962,6 +3978,28 @@ function ToolStrategySettingsPanel({ settings, writable, onSave }: {
     {!draft.enabled && <p style={{ fontSize: '11px', lineHeight: 1.55, margin: '9px 0 0', opacity: .56 }}>
       工具策略已停用；Agent RP 的图片发布工具也不会出现在下一次请求中
     </p>}
+    <div style={{ marginTop: '18px' }}>
+      <strong style={{ display: 'block', fontSize: '12px' }}>状态结算</strong>
+      <span style={{ display: 'block', fontSize: '11px', lineHeight: 1.5, marginTop: '3px', opacity: .52 }}>
+        决定角色正文结束后是否自动计算状态变化；只影响 Agent 模式下已配置状态的会话
+      </span>
+      <div style={{ display: 'grid', gap: '8px', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', marginTop: '10px' }}>
+        {stateModes.map(option => {
+          const active = draft.stateMode === option.value
+          return <button key={option.value} type="button" disabled={!writable} onClick={() => {
+            setDraft(current => ({ ...current, stateMode: option.value }))
+          }} style={{
+            background: active ? 'color-mix(in srgb, var(--dsw-alias-accent, #6ea8fe) 12%, transparent)' : 'transparent',
+            border: `1px solid ${active ? 'color-mix(in srgb, var(--dsw-alias-accent, #6ea8fe) 48%, transparent)' : 'var(--dsw-alias-border-l2, #3d3d43)'}`,
+            borderRadius: '10px', color: 'inherit', cursor: writable ? 'pointer' : 'default',
+            minHeight: '70px', padding: '10px 11px', textAlign: 'left', width: '100%',
+          }}>
+            <strong style={{ display: 'block', fontSize: '12px', fontWeight: 620 }}>{option.title}</strong>
+            <span style={{ display: 'block', fontSize: '11px', lineHeight: 1.45, marginTop: '4px', opacity: .55 }}>{option.detail}</span>
+          </button>
+        })}
+      </div>
+    </div>
     <details style={{ border: '1px solid var(--dsw-alias-border-l2, #3d3d43)', borderRadius: '10px', marginTop: '13px' }}>
       <summary style={{ cursor: 'pointer', fontSize: '12px', fontWeight: 580, padding: '11px 12px' }}>
         第三方工具与兼容设置（高级）
@@ -4631,6 +4669,8 @@ function RoleplayHeader({
     />}
     {stateOpen && <RoleplayStateManagerDialog
       states={projection.nativeStates}
+      {...(projection.stateScheme === undefined ? {} : { scheme: projection.stateScheme })}
+      sessionId={String(sessionId)}
       onClose={() => { setStateOpen(false) }}
       onManage={request => manageState(sessionId, request)}
     />}
@@ -4823,8 +4863,10 @@ function RoleplayHeader({
 
 type NativeRoleplayStateView = AgentRpProjection['nativeStates'][number]
 
-function RoleplayStateManagerDialog({ states, onManage, onClose }: {
+function RoleplayStateManagerDialog({ states, scheme, sessionId, onManage, onClose }: {
   readonly states: readonly NativeRoleplayStateView[]
+  readonly scheme?: AgentRpProjection['stateScheme']
+  readonly sessionId: string
   readonly onManage: (request: RoleplayStateCommandRequest) => Promise<void>
   readonly onClose: () => void
 }) {
@@ -4907,6 +4949,13 @@ function RoleplayStateManagerDialog({ states, onManage, onClose }: {
           }} aria-label="关闭状态数据">×</button>
         </div>
       </header>
+      {scheme !== undefined && <RoleplayStateSchemeSection
+        scheme={scheme}
+        sessionId={sessionId}
+        settledRevision={states.find(state => state.id === scheme.stateId)?.revision ?? 0}
+        onManage={onManage}
+        onChanged={() => { setError(undefined) }}
+      />}
       {formVisible && <div style={{
         background: 'var(--dsw-alias-bg-layer-1, #222226)', border: `1px solid color-mix(in srgb, ${color} 34%, transparent)`,
         borderRadius: '11px', display: 'grid', gap: '10px', marginTop: '18px', padding: '13px',
@@ -4935,8 +4984,14 @@ function RoleplayStateManagerDialog({ states, onManage, onClose }: {
       {states.length === 0 && !formVisible && <div style={{
         background: 'var(--dsw-alias-bg-layer-1, #222226)', borderRadius: '10px', marginTop: '18px', padding: '22px', textAlign: 'center',
       }}>
-        <strong style={{ display: 'block', fontSize: '13px' }}>当前没有原生状态</strong>
-        <span style={{ display: 'block', fontSize: '12px', marginTop: '6px', opacity: .52 }}>普通对话不会额外创建状态；需要时再添加即可</span>
+        <strong style={{ display: 'block', fontSize: '13px' }}>
+          {scheme === undefined ? '当前没有原生状态' : '状态还没有结算过'}
+        </strong>
+        <span style={{ display: 'block', fontSize: '12px', marginTop: '6px', opacity: .52 }}>
+          {scheme === undefined
+            ? '普通对话不会额外创建状态；需要时再添加即可'
+            : '方案的初始值就是当前值；第一次结算后这里会出现一条可编辑的状态记录'}
+        </span>
       </div>}
       {states.length > 0 && <div style={{ display: 'grid', gap: '10px', marginTop: '18px' }}>
         {states.map(state => <article key={state.id} style={{
@@ -6364,7 +6419,7 @@ function RoleplayLaunchComposer({
   readonly listAgentCapabilityPresets: HeaderProps['listAgentCapabilityPresets']
   readonly listPersonas: HeaderProps['listPersonas']
   readonly onClose: () => void
-  readonly onManageResources: (section: 'characters' | 'world-info' | 'regex-packs') => void
+  readonly onManageResources: (section: 'characters' | 'world-info' | 'regex-packs' | 'state-schemes') => void
   readonly onStartCharacter: (
     character: CharacterLibraryDetail,
     greetingIndex: number,
@@ -6374,6 +6429,7 @@ function RoleplayLaunchComposer({
     regexPackIds?: readonly string[],
     resourcePermissions?: AgentRpSessionResourcePermissions,
     agentPresetId?: string,
+    stateSchemeId?: string,
   ) => Promise<void>
   readonly onStartWorldInfo: (
     worldInfo: WorldInfoLibraryUpload,
@@ -6383,6 +6439,7 @@ function RoleplayLaunchComposer({
     regexPackIds?: readonly string[],
     resourcePermissions?: AgentRpSessionResourcePermissions,
     agentPresetId?: string,
+    stateSchemeId?: string,
   ) => Promise<void>
 }) {
   const narrow = useNarrowCharacterLibrary()
@@ -6397,6 +6454,8 @@ function RoleplayLaunchComposer({
   const [selectedWorldInfoIds, setSelectedWorldInfoIds] = useState<readonly string[]>()
   const [regexPacks, setRegexPacks] = useState<readonly RegexPackLibrarySummary[]>()
   const [selectedRegexPackIds, setSelectedRegexPackIds] = useState<readonly string[]>([])
+  const [stateSchemes, setStateSchemes] = useState<readonly StateSchemeLibrarySummary[]>()
+  const [stateSchemeId, setStateSchemeId] = useState('')
   const [personas, setPersonas] = useState<readonly PersonaLibraryEntry[]>()
   const [personaId, setPersonaId] = useState('')
   const [greetingIndex, setGreetingIndex] = useState(0)
@@ -6454,6 +6513,16 @@ function RoleplayLaunchComposer({
     })
     return () => { current = false }
   }, [listRegexPacks])
+  useEffect(() => {
+    let current = true
+    // A missing scheme library only removes the choice; it must never block a launch.
+    void listStateSchemes().then(entries => {
+      if (current) setStateSchemes(entries)
+    }, () => {
+      if (current) setStateSchemes([])
+    })
+    return () => { current = false }
+  }, [])
   useEffect(() => {
     let current = true
     void listPersonas().then(entries => {
@@ -6642,6 +6711,7 @@ function RoleplayLaunchComposer({
         await onStartCharacter(
           approval.character, greetingIndex, persona, selectedPresetId,
           additionalWorldInfoIds, selectedRegexPackIds, approval.resourcePermissions, agentCapabilityPresetId,
+          stateSchemeId,
         )
         return true
       }
@@ -6652,7 +6722,7 @@ function RoleplayLaunchComposer({
       await onStartWorldInfo(
         primaryWorldInfo, persona, selectedPresetId, additionalWorldInfoIds, selectedRegexPackIds,
         tavern?.permissions === undefined ? undefined : { tavern: tavern.permissions, card: [] },
-        agentCapabilityPresetId,
+        agentCapabilityPresetId, stateSchemeId,
       )
       return true
     })().then(started => {
@@ -6884,6 +6954,31 @@ function RoleplayLaunchComposer({
                   </label>
                 })}
               </div>}
+        </section>
+
+        <section data-agent-rp-launch-resource="state-scheme" style={{ ...resourcePanelStyle, marginTop: '12px' }}>
+          <div style={{ alignItems: 'baseline', display: 'flex', gap: '10px' }}>
+            <span style={{ flex: 1 }}>
+              <strong style={{ display: 'block', fontSize: '12px' }}>状态方案</strong>
+              <span style={{ display: 'block', fontSize: '10px', lineHeight: 1.5, marginTop: '3px', opacity: .48 }}>
+                决定本次会话保存哪些状态字段与结算规则；启动后冻结，状态栏模板仍可随时修改
+              </span>
+            </span>
+            <button type="button" onClick={() => { onManageResources('state-schemes') }} style={{
+              background: 'transparent', border: 0, color, cursor: 'pointer', font: 'inherit', fontSize: '11px', padding: 0,
+            }}>管理</button>
+          </div>
+          <select value={stateSchemeId} onChange={event => { setStateSchemeId(event.target.value) }} style={{
+            background: 'var(--dsw-alias-bg-elevated, #202126)', border: '1px solid var(--dsw-alias-border-l2, #3d3d43)',
+            borderRadius: '8px', color: 'inherit', font: 'inherit', fontSize: '12px', marginTop: '9px',
+            padding: '7px 9px', width: '100%',
+          }}>
+            <option value="">不启用状态</option>
+            <option value={BASIC_ROLEPLAY_STATE_SCHEME_ID}>Agent RP · 基础状态（内置）</option>
+            {(stateSchemes ?? []).map(entry => <option key={entry.id} value={stateSchemeResourceId(entry.id)}>
+              {entry.name}（{entry.stateId}）
+            </option>)}
+          </select>
         </section>
 
         {expectsResourcePreflight && <section data-agent-rp-launch-preflight={launchPhase}
@@ -11747,6 +11842,15 @@ function roleplayComposerDockComponent(
   ).value
   const debugEnabled = agentRpSettings.debug.enabled
   const cardFrameRenderDepth = agentRpSettings.lightFrontend.renderDepth
+  const statePanelCollapsed = agentRpSettings.statePanel.collapsed
+  const setStatePanelCollapsed = useCallback((collapsed: boolean): void => {
+    // Display-only preference: it stays in workspace settings and never
+    // reaches a Session, so collapsing cannot affect replay or the transcript.
+    void workspaceSettings.set({
+      ...workspaceSettings.getSnapshot().value,
+      statePanel: { collapsed },
+    }).catch(() => {})
+  }, [workspaceSettings])
   const viewMode = useRoleplayViewMode(sessionId)
   const [drawOpen, setDrawOpen] = useState(false)
   const [displayOverrides, setDisplayOverrides] = useState<ReadonlyMap<number, string>>(() => new Map())
@@ -12879,7 +12983,17 @@ function roleplayComposerDockComponent(
     data-agent-rp-world-engine-template-unsupported={worldEngineFailures.templateUnsupported}
     data-agent-rp-world-engine-template-error={worldEngineFailures.templateError}
     style={{ alignItems: 'center', display: 'flex', gap: '4px', minWidth: 0 }}>
-    {statusPanelHost !== undefined && createPortal(<TavernStatusPanels projection={projection} />, statusPanelHost)}
+    {statusPanelHost !== undefined && createPortal(<>
+      {projection.stateScheme !== undefined && <RoleplayStatePanel
+        scheme={projection.stateScheme}
+        sessionId={String(sessionId)}
+        {...(projection.stateSettlement === undefined ? {} : { settlement: projection.stateSettlement })}
+        collapsed={statePanelCollapsed}
+        onToggle={setStatePanelCollapsed}
+        actions={{ resettle: async () => { await resettleRoleplayState(String(sessionId)) } }}
+      />}
+      <TavernStatusPanels projection={projection} />
+    </>, statusPanelHost)}
     {storedCharacterRuntime?.status === 'error' && <span role="status"
       title={storedCharacterRuntime.error} style={{
         color: 'var(--dsw-alias-state-warning, #d6a955)', fontSize: '11px', lineHeight: 1.45, padding: '3px 6px',
@@ -13472,8 +13586,10 @@ export function apply(ctx: ClientContext): void {
     resourcePermissions?: AgentRpSessionResourcePermissions,
     agentPresetId?: string,
     regexPackIds?: readonly string[],
+    stateSchemeId?: string,
   ): Promise<void> => {
-    if (memory === undefined && (worldInfoIds !== undefined || regexPackIds !== undefined)) {
+    if (memory === undefined
+      && (worldInfoIds !== undefined || regexPackIds !== undefined || stateSchemeId !== undefined)) {
       await launchRoleplaySession(characterExperienceLaunchRequest({
         sourceSessionId: sessionId,
         characterId: character.id,
@@ -13483,6 +13599,7 @@ export function apply(ctx: ClientContext): void {
         ...(agentPresetId === undefined ? {} : { agentPresetId }),
         worldInfoIds: worldInfoIds ?? [],
         ...(regexPackIds === undefined ? {} : { regexPackIds }),
+        ...(stateSchemeId === undefined ? {} : { stateSchemeId }),
       }), resourcePermissions)
       return
     }
@@ -13508,8 +13625,9 @@ export function apply(ctx: ClientContext): void {
     resourcePermissions?: AgentRpSessionResourcePermissions,
     agentPresetId?: string,
     regexPackIds?: readonly string[],
+    stateSchemeId?: string,
   ): Promise<void> => {
-    if (worldInfoIds !== undefined || regexPackIds !== undefined) {
+    if (worldInfoIds !== undefined || regexPackIds !== undefined || stateSchemeId !== undefined) {
       await launchRoleplaySession(sceneExperienceLaunchRequest({
         sourceSessionId: sessionId,
         primaryWorldInfoId: worldInfo.id,
@@ -13518,6 +13636,7 @@ export function apply(ctx: ClientContext): void {
         ...(agentPresetId === undefined ? {} : { agentPresetId }),
         supportingWorldInfoIds: worldInfoIds ?? [],
         ...(regexPackIds === undefined ? {} : { regexPackIds }),
+        ...(stateSchemeId === undefined ? {} : { stateSchemeId }),
       }), resourcePermissions)
       return
     }
@@ -13551,12 +13670,13 @@ export function apply(ctx: ClientContext): void {
     resourcePermissions?: AgentRpSessionResourcePermissions,
     agentPresetId?: string,
     regexPackIds?: readonly string[],
+    stateSchemeId?: string,
   ): Promise<void> => {
     const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
     if (summary === undefined || !summary.blank) throw new Error('只能从尚未开始的会话选择角色')
     await startCharacterSession(
       sessionId, character, greetingIndex, persona, presetId, worldInfoIds,
-      undefined, resourcePermissions, agentPresetId, regexPackIds,
+      undefined, resourcePermissions, agentPresetId, regexPackIds, stateSchemeId,
     )
     await archiveConsumedBlankSession(sessionId)
   }
@@ -13569,11 +13689,13 @@ export function apply(ctx: ClientContext): void {
     resourcePermissions?: AgentRpSessionResourcePermissions,
     agentPresetId?: string,
     regexPackIds?: readonly string[],
+    stateSchemeId?: string,
   ): Promise<void> => {
     const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
     if (summary === undefined || !summary.blank) throw new Error('只能从尚未开始的会话选择世界书剧情')
     await startWorldInfoSession(
       sessionId, worldInfo, persona, presetId, worldInfoIds, resourcePermissions, agentPresetId, regexPackIds,
+      stateSchemeId,
     )
     await archiveConsumedBlankSession(sessionId)
   }
@@ -13588,10 +13710,11 @@ export function apply(ctx: ClientContext): void {
     resourcePermissions?: AgentRpSessionResourcePermissions,
     agentPresetId?: string,
     regexPackIds?: readonly string[],
+    stateSchemeId?: string,
   ): Promise<void> => {
     await startCharacterSession(
       sessionId, character, greetingIndex, persona, presetId, worldInfoIds,
-      memory, resourcePermissions, agentPresetId, regexPackIds,
+      memory, resourcePermissions, agentPresetId, regexPackIds, stateSchemeId,
     )
   }
   const prepareChatMigration = async (

@@ -160,6 +160,39 @@ export interface AgentRpProjection {
     readonly updateCount: number
     readonly lastError?: string
   }
+  /** Native state contract frozen at launch plus the revision currently in force. */
+  readonly stateScheme?: {
+    readonly id: string
+    readonly name: string
+    readonly stateId: string
+    readonly value: JsonValue
+    readonly revision: number
+    /** This Session's own settlement rules, which may differ from the library entry. */
+    readonly rules: string
+    /** Library entry backing the editable panel template, when one exists. */
+    readonly libraryId?: string
+    /** Per-scheme completion budget for the verification stage, when one is set. */
+    readonly verificationMaxTokens?: number
+  }
+  /**
+   * What the post-narrative settlement did on the most recent turn that ran it.
+   *
+   * The settlement deliberately writes plugin events no transcript layer can
+   * see, which keeps it off the floor list but also leaves the player with no
+   * way to tell a silent skip from a failed verification. This is that view.
+   */
+  readonly stateSettlement?: {
+    readonly turn: number
+    /** Terminal Worker outcome, absent while the Worker has not reported yet. */
+    readonly outcome?: 'applied' | 'unchanged' | 'skipped' | 'failed'
+    readonly stages: readonly {
+      readonly stage: 'proposal' | 'verification'
+      readonly outcome: 'success' | 'failure'
+      /** Operations the stage produced, bounded by the settlement contract. */
+      readonly operations?: readonly JsonValue[]
+      readonly error?: string
+    }[]
+  }
   /** Isolated Tavern Helper scripts, durable variables, and their visible transcript input. */
   readonly tavern?: TavernHelperState & {
     readonly messages: readonly {

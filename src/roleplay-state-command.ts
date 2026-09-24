@@ -9,6 +9,10 @@ import {
   parseRoleplayStateCommandRequest,
   prepareUserRoleplayState,
 } from './roleplay-state.ts'
+import {
+  readRoleplayStateScheme,
+  ROLEPLAY_STATE_SCHEME_MODULE_ID,
+} from './roleplay-state-scheme.ts'
 import { supportsAgentRpSessionEvents } from './session-event-compat.ts'
 
 /** Apply one private player state request without invoking the character model. */
@@ -26,10 +30,14 @@ export function executeRoleplayStateCommand(invocation: {
     || String(source.data.commandId) !== String(invocation.commandId)) {
     throw new Error('状态操作命令不是当前 Session 事件')
   }
+  // A namespace declared by this Session's scheme stays owned by the scheme
+  // module even when the player is the first to write it.
+  const scheme = readRoleplayStateScheme(invocation.agent.session.snapshotEvents())
+  const owner = scheme?.stateId === request.id ? ROLEPLAY_STATE_SCHEME_MODULE_ID : undefined
   if (supportsAgentRpSessionEvents(invocation.agent.session)) {
-    const written = appendUserRoleplayState(invocation.agent.session, request, source.seq)
+    const written = appendUserRoleplayState(invocation.agent.session, request, source.seq, owner)
     return { kind: 'success', sourceEventSeq: SessionSeq(written.eventSeq) }
   }
-  const record = prepareUserRoleplayState(invocation.agent.session, request, source.seq)
+  const record = prepareUserRoleplayState(invocation.agent.session, request, source.seq, owner)
   return { kind: 'success', text: encodeRoleplayStateRecord(record) }
 }

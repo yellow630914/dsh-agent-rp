@@ -88,3 +88,32 @@ test('accepts only the exact bounded actor detail requested by the browser', () 
     detail: { kind: 'actor', openings: [{ id: 'greeting:0', label: '默认开场' }] },
   }, reference), /资源详情响应无效/u)
 })
+
+test('carries an explicitly selected state scheme into the launch request and preflight order', () => {
+  const request = characterExperienceLaunchRequest({
+    sourceSessionId: 'source-session',
+    characterId: 'card-0123456789abcdef0123456789abcdef',
+    greetingIndex: 0,
+    worldInfoIds: [],
+    stateSchemeId: 'state-scheme:library:scheme-0123456789abcdef0123456789abcdef',
+  })
+
+  assert.deepEqual(parseAgentRpSessionLaunchRequest(request), request)
+  assert.deepEqual(request.stateScheme, {
+    kind: 'state-scheme',
+    id: 'state-scheme:library:scheme-0123456789abcdef0123456789abcdef',
+  })
+  assert.deepEqual(experiencePreflightResources(request), [request.actor, request.stateScheme])
+})
+
+test('omits the state scheme when the launcher left it unselected', () => {
+  const unselected = sceneExperienceLaunchRequest({
+    sourceSessionId: 'source-session',
+    primaryWorldInfoId: 'world-info-0123456789abcdef0123456789abcdef',
+    supportingWorldInfoIds: [],
+    stateSchemeId: '',
+  })
+
+  assert.equal('stateScheme' in unselected, false)
+  assert.deepEqual(parseAgentRpSessionLaunchRequest(unselected), unselected)
+})

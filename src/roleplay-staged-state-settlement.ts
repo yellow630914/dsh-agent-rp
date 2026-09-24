@@ -15,6 +15,8 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { foldSurface, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { roleplaySurfaceNodes } from './roleplay-surface-overlay.ts'
+import { readRoleplayStateScheme } from './roleplay-state-scheme.ts'
 import { jsonrepair } from 'jsonrepair'
 import {
   roleplayActModelDispatch,
@@ -131,6 +133,9 @@ function parseStateSettlementResponse(text: unknown): readonly MvuStateOperation
   const unfenced = text.trim().replace(/^```(?:json)?\s*/iu, '').replace(/\s*```$/u, '')
   const start = unfenced.indexOf('{')
   const end = unfenced.lastIndexOf('}')
+  if (unfenced === '') {
+    throw new Error('Roleplay staged state result is empty; the model may have spent its whole completion budget on reasoning')
+  }
   if (start < 0 || end < start) throw new Error('Roleplay staged state result has no JSON object')
   const value = JSON.parse(jsonrepair(unfenced.slice(start, end + 1))) as unknown
   if (typeof value !== 'object' || value === null || Array.isArray(value)
@@ -150,6 +155,17 @@ function parseStateSettlementResponse(text: unknown): readonly MvuStateOperation
 
 const MAX_SETTLEMENT_TEXT_LENGTH = 128 * 1024
 const STATE_SETTLEMENT_MAX_TOKENS = 4_096
+
+/**
+ * Completion budget for a verification that may spend tokens thinking.
+ *
+ * Reasoning shares the completion budget with the answer. The proposal turns
+ * reasoning off, so 4k is ample for a handful of operations; a verification
+ * left on the provider's default effort can spend the entire budget thinking
+ * and return no text at all — which surfaces as "no JSON object" rather than
+ * "out of room", and makes the default configuration fail on every turn.
+ */
+const STATE_VERIFICATION_REASONING_MAX_TOKENS = 16_384
 const MAX_FAILURE_CODE_LENGTH = 128
 const MAX_FAILURE_MESSAGE_LENGTH = 2_000
 
@@ -245,15 +261,31 @@ function playerInputText(
   return boundedSettlementText(text)
 }
 
+/**
+ * Read the reply this settlement should judge.
+ *
+ * `nodes` decides which transcript layer answers "what is visible": the
+ * canonical surface for an automatic settlement, and the Agent RP overlay for
+ * a player-requested one, because only the overlay follows a reply-version
+ * switch and the player is looking at the version they selected.
+ * @param events - complete Session events.
+ * @param turn - closed turn being settled.
+ * @param step - closed step whose reply is the evidence.
+ * @param planEventSeq - plan boundary the reply must follow.
+ * @param throughEventSeq - last event this settlement may observe.
+ * @param nodes - visible surface seqs in order.
+ * @returns the bounded reply text, or an empty string when none is visible.
+ */
 function visibleReplyText(
   events: readonly SessionEvent[],
   turn: number,
   step: number,
   planEventSeq: number,
   throughEventSeq: number,
+  nodes: readonly number[],
 ): string {
   const prefix = events.slice(0, throughEventSeq + 1)
-  for (const seq of [...foldSurface(prefix).nodes].reverse()) {
+  for (const seq of [...nodes].reverse()) {
     const event = prefix[seq]
     if (event?.type !== 'assistant/message' || event.seq <= planEventSeq
       || event.data.turn !== turn || event.data.step !== step) continue
@@ -281,6 +313,7 @@ function settlementEvidence(
   target: RoleplayStateActionPlan,
   current: JsonValue,
   identity: { readonly characterName: string; readonly userName?: string },
+  nodes: readonly number[],
 ): string {
   return [
     '<imported_state_rules>',
@@ -293,7 +326,7 @@ function settlementEvidence(
     playerInputText(agent.session.snapshotEvents(), planEvent),
     '</player_input>',
     '<roleplay_reply>',
-    visibleReplyText(agent.session.snapshotEvents(), turn, step, planEvent.seq, surfaceThroughEventSeq),
+    visibleReplyText(agent.session.snapshotEvents(), turn, step, planEvent.seq, surfaceThroughEventSeq, nodes),
     '</roleplay_reply>',
   ].join('\n')
 }
@@ -334,15 +367,22 @@ function settlementVerificationRequest(
   target: RoleplayStateActionPlan,
   verification: RoleplayStateVerificationSettings,
   signal: AbortSignal,
+  schemeBudget: number | undefined,
 ): GenerateOptions {
   const header = agent.session.requestHeader()
   if (header === undefined) throw new Error('Roleplay staged settlement has no provider request header')
   const { reasoningEffort: _sessionReasoningEffort, ...headerConfig } = header.config
+  const config = resolveRoleplayStateVerificationConfig(header.config, verification)
+  // Only an explicit "off" guarantees the whole budget reaches the answer.
+  const reasoningOff = config.reasoningEffort !== undefined && String(config.reasoningEffort) === 'off'
   return {
     ...headerConfig,
-    ...resolveRoleplayStateVerificationConfig(header.config, verification),
+    ...config,
     temperature: 0,
-    maxTokens: STATE_SETTLEMENT_MAX_TOKENS,
+    // An explicit per-scheme budget wins: how much room the verification needs
+    // scales with how large that scheme's state grows.
+    maxTokens: schemeBudget
+      ?? (reasoningOff ? STATE_SETTLEMENT_MAX_TOKENS : STATE_VERIFICATION_REASONING_MAX_TOKENS),
     system: [
       '你是角色扮演运行时的独立状态核验器。另一个 Worker 已生成候选结算，但它的输出不会提供给你，避免其遗漏或错误影响核验。',
       '以 current_state 为唯一基线，重新根据状态规则、玩家输入和最终正文计算本轮后的完整状态。',
@@ -605,6 +645,14 @@ export async function runRoleplayStagedStateSettlement(input: {
   readonly plan: BoundRoleplayTurnPlan
   readonly verification: RoleplayStateVerificationSettings
   readonly signal: AbortSignal
+  /**
+   * Recalculate although this step already has a terminal result.
+   *
+   * Coverage deduplication exists to stop the automatic pipeline repeating
+   * itself; an explicit player request is the opposite intent, so it also
+   * reads the reply through the overlay the player is actually looking at.
+   */
+  readonly force?: boolean
 }): Promise<RoleplayTurnWorkerOutcome> {
   const target = input.plan.plan.act.stateActions[0]
   if (target === undefined) return { outcome: 'skipped' }
@@ -612,13 +660,20 @@ export async function runRoleplayStagedStateSettlement(input: {
   if (state?.value === undefined) return { outcome: 'skipped' }
   const planEvent = matchingPlanEvent(input.agent.session.snapshotEvents(), input.turn, input.plan)
   const through = stepEnd(input.agent.session.snapshotEvents(), input.turn, input.plan.step)
-  if (terminalForCoverage(input.agent.session.snapshotEvents(), input.turn, through.seq)) return { outcome: 'skipped' }
+  if (input.force !== true
+    && terminalForCoverage(input.agent.session.snapshotEvents(), input.turn, through.seq)) {
+    return { outcome: 'skipped' }
+  }
+  const surfaceThrough = input.agent.session.seq - 1
+  const nodes = input.force === true
+    ? roleplaySurfaceNodes(input.agent.session).filter(seq => seq <= surfaceThrough)
+    : [...foldSurface(input.agent.session.snapshotEvents().slice(0, surfaceThrough + 1)).nodes]
   const evidence = settlementEvidence(
     input.agent,
     input.turn,
     input.plan.step,
     planEvent,
-    input.agent.session.seq - 1,
+    surfaceThrough,
     target,
     state.value,
     {
@@ -627,6 +682,7 @@ export async function runRoleplayStagedStateSettlement(input: {
         ? {}
         : { userName: input.plan.plan.prompt.transforms.participantName }),
     },
+    nodes,
   )
   const proposal = await dispatchStateSettlementWithRetry({
     ctx: input.ctx,
@@ -662,6 +718,7 @@ export async function runRoleplayStagedStateSettlement(input: {
       target,
       input.verification,
       input.signal,
+      readRoleplayStateScheme(input.agent.session.snapshotEvents())?.verificationMaxTokens,
     ),
     stage: 'verification',
     proposalResultSeq: proposal.resultEvent.seq,

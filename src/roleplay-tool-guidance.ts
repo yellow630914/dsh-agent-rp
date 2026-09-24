@@ -3,6 +3,16 @@
 /** Whether image tools must stay idle, may be chosen, or should be attempted each RP turn. */
 export type AgentRpImageMode = 'never' | 'requested' | 'auto' | 'always'
 
+/**
+ * Whether post-narrative state settlement never runs, waits for the player, or runs every turn.
+ *
+ * There is deliberately no "force the model to call the state tool" mode: the
+ * inline tool costs two surface events and a transcript row every turn and
+ * breaks the reusable prompt prefix, while the background Worker reaches the
+ * same state through plugin events that no transcript layer can see.
+ */
+export type AgentRpStateMode = 'never' | 'requested' | 'auto'
+
 /** One deployment-owned instruction for an installed MCP or other tool provider. */
 export interface ToolGuidanceEntryConfig {
   readonly id: string
@@ -16,6 +26,8 @@ export interface ResolvedToolGuidanceConfig {
   readonly includeFramework: boolean
   readonly includeAgentRp: boolean
   readonly imageMode: AgentRpImageMode
+  /** Post-narrative state settlement cadence; absent settings keep the previous automatic behavior. */
+  readonly stateMode: AgentRpStateMode
   readonly custom: readonly ToolGuidanceEntryConfig[]
 }
 
@@ -34,6 +46,13 @@ export interface RoleplayToolPolicyPlan {
       /** Runtime publication limit; choosing whether to generate remains an Agent decision. */
       readonly maxPublicationsPerTurn: 0 | 1
     }
+    readonly state: {
+      readonly mode: AgentRpStateMode
+      /** Whether this turn prepares a state contract at all. */
+      readonly contractPrepared: boolean
+      /** Whether the post-narrative Worker settles without an explicit player request. */
+      readonly settleAutomatically: boolean
+    }
   }
   readonly guidance: {
     readonly includeFramework: boolean
@@ -49,6 +68,7 @@ export const DEFAULT_TOOL_GUIDANCE: ResolvedToolGuidanceConfig = {
   includeFramework: true,
   includeAgentRp: true,
   imageMode: 'auto',
+  stateMode: 'auto',
   custom: [],
 }
 
@@ -74,6 +94,12 @@ export function normalizeToolGuidanceConfig(value: unknown): ResolvedToolGuidanc
   const imageMode = source.imageMode ?? DEFAULT_TOOL_GUIDANCE.imageMode
   if (imageMode !== 'never' && imageMode !== 'requested' && imageMode !== 'auto' && imageMode !== 'always') {
     throw new TypeError('toolGuidance.imageMode is invalid')
+  }
+  // Settings written by forks predate this field, so its absence keeps the
+  // automatic cadence instead of silently disabling state settlement.
+  const stateMode = source.stateMode ?? DEFAULT_TOOL_GUIDANCE.stateMode
+  if (stateMode !== 'never' && stateMode !== 'requested' && stateMode !== 'auto') {
+    throw new TypeError('toolGuidance.stateMode is invalid')
   }
   const customSource = source.custom ?? DEFAULT_TOOL_GUIDANCE.custom
   if (!Array.isArray(customSource) || customSource.length > 32) {
@@ -101,6 +127,7 @@ export function normalizeToolGuidanceConfig(value: unknown): ResolvedToolGuidanc
     includeFramework: bool('includeFramework'),
     includeAgentRp: bool('includeAgentRp'),
     imageMode,
+    stateMode,
     custom,
   }
 }
@@ -145,6 +172,13 @@ export function prepareRoleplayToolPolicy(
       image: {
         mode: artifactPresentation ? source.imageMode : 'never',
         maxPublicationsPerTurn: artifactPresentation ? 1 : 0,
+      },
+      state: {
+        mode: source.stateMode,
+        // A prepared contract is what makes the state readable and a manual
+        // settlement possible, so only "never" withholds it.
+        contractPrepared: source.stateMode !== 'never',
+        settleAutomatically: source.stateMode === 'auto',
       },
     },
     guidance: {

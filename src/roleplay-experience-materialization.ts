@@ -64,6 +64,7 @@ export function prepareRoleplayExperienceSession(
   for (const pack of regexPacks) requireKind(pack, 'regex', '正则包选择')
   if (selection.participant !== undefined) requireKind(selection.participant, 'persona', '玩家身份')
   if (selection.promptPolicy !== undefined) requireKind(selection.promptPolicy, 'prompt-policy', '提示策略')
+  if (selection.stateScheme !== undefined) requireKind(selection.stateScheme, 'state-scheme', '状态方案')
   if (selection.mode === 'character') {
     if (selection.actor === undefined) throw new Error('角色体验必须选择角色资源')
     requireKind(selection.actor, 'actor', '角色选择')
@@ -90,6 +91,7 @@ export function prepareRoleplayExperienceSession(
     ...(selection.mode === 'character' ? worlds : worlds.slice(1)),
     ...regexPacks,
     ...(selection.promptPolicy === undefined ? [] : [selection.promptPolicy]),
+    ...(selection.stateScheme === undefined ? [] : [selection.stateScheme]),
   ]
   for (const resource of ordered) {
     const materialized = catalog.materialize(resource, events, context)
@@ -103,6 +105,7 @@ export function prepareRoleplayExperienceSession(
     worlds,
     ...(selection.promptPolicy === undefined ? {} : { promptPolicy: selection.promptPolicy }),
     regexPacks,
+    ...(selection.stateScheme === undefined ? {} : { stateScheme: selection.stateScheme }),
   })
   return Object.freeze({ seed: navigableSeed(events), title })
 }

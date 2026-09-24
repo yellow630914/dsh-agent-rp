@@ -14,6 +14,7 @@ export type CharacterExperienceSelection = Pick<
   RoleplayExperienceSessionLaunchRequest,
   'actor' | 'participant' | 'worlds' | 'promptPolicy'
   | 'regexPacks'
+  | 'stateScheme'
   | 'agentPresetId'
 >
 
@@ -21,6 +22,7 @@ export type SceneExperienceSelection = Pick<
   RoleplayExperienceSessionLaunchRequest,
   'participant' | 'worlds' | 'promptPolicy'
   | 'regexPacks'
+  | 'stateScheme'
   | 'agentPresetId'
 >
 
@@ -32,6 +34,7 @@ export function characterExperienceSelection(input: {
   readonly presetId?: string
   readonly worldInfoIds: readonly string[]
   readonly regexPackIds?: readonly string[]
+  readonly stateSchemeId?: string
   readonly agentPresetId?: string
 }): CharacterExperienceSelection {
   if (!Number.isSafeInteger(input.greetingIndex) || input.greetingIndex < 0) {
@@ -57,6 +60,9 @@ export function characterExperienceSelection(input: {
       kind: 'regex' as const,
       id: regexPackLibraryRoleplayResourceId(id),
     })),
+    ...(input.stateSchemeId === undefined || input.stateSchemeId === ''
+      ? {}
+      : { stateScheme: { kind: 'state-scheme' as const, id: input.stateSchemeId } }),
     ...(input.agentPresetId === undefined ? {} : { agentPresetId: input.agentPresetId }),
   }
 }
@@ -68,6 +74,7 @@ export function sceneExperienceSelection(input: {
   readonly presetId?: string
   readonly supportingWorldInfoIds: readonly string[]
   readonly regexPackIds?: readonly string[]
+  readonly stateSchemeId?: string
   readonly agentPresetId?: string
 }): SceneExperienceSelection {
   return {
@@ -85,6 +92,9 @@ export function sceneExperienceSelection(input: {
       kind: 'regex' as const,
       id: regexPackLibraryRoleplayResourceId(id),
     })),
+    ...(input.stateSchemeId === undefined || input.stateSchemeId === ''
+      ? {}
+      : { stateScheme: { kind: 'state-scheme' as const, id: input.stateSchemeId } }),
     ...(input.agentPresetId === undefined ? {} : { agentPresetId: input.agentPresetId }),
   }
 }
@@ -99,6 +109,7 @@ export function experiencePreflightResources(
     ...(selection.worlds ?? []),
     ...(selection.regexPacks ?? []),
     ...(selection.promptPolicy === undefined ? [] : [selection.promptPolicy]),
+    ...(selection.stateScheme === undefined ? [] : [selection.stateScheme]),
   ]
 }
 
@@ -110,6 +121,7 @@ export function characterExperienceLaunchRequest(input: {
   readonly presetId?: string
   readonly worldInfoIds: readonly string[]
   readonly regexPackIds?: readonly string[]
+  readonly stateSchemeId?: string
 }): RoleplayExperienceSessionLaunchRequest {
   return {
     format: 0,
@@ -127,6 +139,7 @@ export function sceneExperienceLaunchRequest(input: {
   readonly presetId?: string
   readonly supportingWorldInfoIds: readonly string[]
   readonly regexPackIds?: readonly string[]
+  readonly stateSchemeId?: string
 }): RoleplayExperienceSessionLaunchRequest {
   return {
     format: 0,

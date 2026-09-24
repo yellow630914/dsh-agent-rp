@@ -60,6 +60,8 @@ export interface RoleplayExperienceSessionLaunchRequest {
   readonly worlds?: readonly RoleplayResourceSelection[]
   readonly promptPolicy?: RoleplayResourceSelection
   readonly regexPacks?: readonly RoleplayResourceSelection[]
+  /** Native state contract to freeze into the new Session. */
+  readonly stateScheme?: RoleplayResourceSelection
   /** DSH Agent composition providing tools and runtime capabilities. */
   readonly agentPresetId?: string
 }

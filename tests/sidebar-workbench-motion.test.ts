@@ -129,7 +129,8 @@ test('sidebar exposes one resource-center drilldown for peer resource types', ()
   assert.doesNotMatch(source, />内容层级</u)
   assert.match(resourceCenterSource, /data-agent-rp-surface="resource-center"/u)
   assert.match(resourceCenterSource, /aria-label="Agent RP 资源中心"/u)
-  assert.match(resourceCenterSource, /'characters', 'world-info', 'presets', 'regex-packs', 'personas', 'archived',/u)
+  assert.match(resourceCenterSource, /'characters', 'world-info', 'presets', 'regex-packs', 'state-schemes', 'personas', 'archived',/u)
+  assert.match(resourceCenterSource, /原生状态字段、结算规则与状态栏模板/u)
   assert.match(resourceCenterSource, /角色卡与收藏状态/u)
   assert.match(resourceCenterSource, /独立世界书来源/u)
   assert.match(resourceCenterSource, /onConfigureWorldInfo/u)
@@ -149,4 +150,30 @@ test('Tavern runtime keeps Hook order stable while an empty projection gains scr
   assert.notEqual(emptyGuard, -1)
   assert.notEqual(finalHook, -1)
   assert.ok(emptyGuard > finalHook, 'empty-script rendering must not skip a Hook used after scripts arrive')
+})
+
+/**
+ * The launch selection travels through positional arguments across four hops,
+ * and every hop declares its tail parameters optional. A wrapper that simply
+ * omits `stateSchemeId` still type-checks — a shorter function is assignable to
+ * a longer signature — and the scheme is dropped in silence.
+ *
+ * The invariant is tied to `regexPackIds`: a call site that carries the full
+ * peer-resource selection must carry the state scheme too. The world-info
+ * launch dialog deliberately carries neither, so it is not pinned here.
+ */
+test('every launch wrapper carrying peer resources forwards the state scheme', () => {
+  const calls = [
+    ...source.match(/await startCharacterSession\(\s*[^)]*?\)/gsu) ?? [],
+    ...source.match(/await startWorldInfoSession\(\s*[^)]*?\)/gsu) ?? [],
+    ...source.match(/=> startCharacterSession\(\s*[^)]*?\)/gsu) ?? [],
+    ...source.match(/=> startWorldInfoSession\(\s*[^)]*?\)/gsu) ?? [],
+  ]
+  const carrying = calls.filter(call => /regexPackIds/u.test(call))
+  assert.ok(carrying.length >= 4, `预期至少四个完整转发点，实际 ${String(carrying.length)}`)
+  for (const call of carrying) {
+    assert.match(call, /stateSchemeId/u)
+  }
+  // The composer hands it to the wrapper rather than stopping at the preset id.
+  assert.match(source, /agentCapabilityPresetId,\s+stateSchemeId,/u)
 })

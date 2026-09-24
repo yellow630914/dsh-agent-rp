@@ -275,11 +275,24 @@ export function appendRoleplayState(
   return { ...event.data, ownerModuleId, eventSeq: event.seq }
 }
 
-/** Validate and prepare one player state revision without choosing its Host persistence seam. */
+/**
+ * Validate and prepare one player state revision without choosing its Host persistence seam.
+ *
+ * `defaultOwnerModuleId` decides who owns a namespace this write *creates*. A
+ * player correcting a module-owned namespace before that module has settled it
+ * once would otherwise claim ownership, and the module could never write again
+ * — only the owner and the player may write, so the owner would be locked out.
+ * @param session - live Session holding the command event.
+ * @param request - the private player request.
+ * @param sourceEventSeq - the `rp-state` command this write answers.
+ * @param defaultOwnerModuleId - owner to record when the namespace is new.
+ * @returns the durable record to append.
+ */
 export function prepareUserRoleplayState(
   session: Session,
   request: RoleplayStateCommandRequest,
   sourceEventSeq: number,
+  defaultOwnerModuleId?: string,
 ): RoleplayStateRecord {
   const source = session.snapshotEvents()[sourceEventSeq]
   if (source?.type !== 'command/run' || source.data.name !== 'rp-state' || typeof source.data.args !== 'string') {
@@ -301,7 +314,10 @@ export function prepareUserRoleplayState(
     format: 0,
     id: request.id,
     revision: currentRevision + 1,
-    ownerModuleId: current?.ownerModuleId ?? ROLEPLAY_STATE_USER_WRITER_ID,
+    ownerModuleId: current?.ownerModuleId
+      ?? (defaultOwnerModuleId === undefined
+        ? ROLEPLAY_STATE_USER_WRITER_ID
+        : identifier(defaultOwnerModuleId, 'state owner module id', MODULE_ID_PATTERN)),
     writerModuleId: ROLEPLAY_STATE_USER_WRITER_ID,
     sourceEventSeq,
     value: stateValue(request.value),
@@ -313,8 +329,9 @@ export function appendUserRoleplayState(
   session: Session,
   request: RoleplayStateCommandRequest,
   sourceEventSeq: number,
+  defaultOwnerModuleId?: string,
 ): RoleplayStateSnapshot {
-  const record = prepareUserRoleplayState(session, request, sourceEventSeq)
+  const record = prepareUserRoleplayState(session, request, sourceEventSeq, defaultOwnerModuleId)
   const event = appendAgentRpSessionEvent(session, 'agent-rp/state', record)
   return { ...event.data, ownerModuleId: record.ownerModuleId!, eventSeq: event.seq }
 }

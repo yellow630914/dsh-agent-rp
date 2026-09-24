@@ -99,6 +99,7 @@ export function recoverSessionRoleplayTurns(input: {
         turn: closing.data.turn,
         plans,
         ...(baseRuntime.mvu === undefined ? {} : { base: baseRuntime.mvu }),
+        ...(baseRuntime.stateScheme === undefined ? {} : { scheme: baseRuntime.stateScheme }),
       })
       const resolved = resolveSessionRoleplayRuntime({
         session: actionSettlement.session,

@@ -1,6 +1,6 @@
 /** Task-oriented library for reusable Agent RP resources. */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   CharacterLibraryCollection,
   CharacterLibraryDetail,
@@ -19,6 +19,7 @@ import {
   type SaveWorldInfoEntries,
 } from './world-info-editor.tsx'
 import { classifySillyTavernJsonFile } from './import-hint.ts'
+import { StateSchemeEditor } from './state-scheme-editor.tsx'
 import {
   prepareSillyTavernMigration,
   type SillyTavernMigrationAsset,
@@ -26,7 +27,7 @@ import {
   type SillyTavernMigrationScan,
 } from './sillytavern-library-migration.ts'
 
-type ResourceSection = 'characters' | 'world-info' | 'presets' | 'regex-packs' | 'personas' | 'archived'
+type ResourceSection = 'characters' | 'world-info' | 'presets' | 'regex-packs' | 'state-schemes' | 'personas' | 'archived'
 
 interface ResourceCenterProps {
   readonly accent: string
@@ -88,6 +89,7 @@ function sectionName(section: ResourceSection): string {
   if (section === 'world-info') return '世界书'
   if (section === 'presets') return '预设'
   if (section === 'regex-packs') return '正则包'
+  if (section === 'state-schemes') return '状态方案'
   if (section === 'archived') return '归档会话'
   return '身份'
 }
@@ -413,6 +415,9 @@ export function RoleplayResourceCenter({
   const [regexPacks, setRegexPacks] = useState<readonly RegexPackLibrarySummary[]>()
   const [personas, setPersonas] = useState<readonly PersonaLibraryEntry[]>()
   const [loadErrors, setLoadErrors] = useState<Partial<Record<ResourceSection, string>>>({})
+  const setStateSchemeError = useCallback((reason: string): void => {
+    setLoadErrors(current => ({ ...current, 'state-schemes': reason }))
+  }, [])
   const [busy, setBusy] = useState<string>()
   const [notice, setNotice] = useState<string>()
   const [error, setError] = useState<string>()
@@ -684,19 +689,22 @@ export function RoleplayResourceCenter({
     'world-info': worldInfos?.length,
     presets: presets?.length,
     'regex-packs': regexPacks?.length,
+    // The editor owns its own listing, so the rail shows no count for it.
+    'state-schemes': undefined,
     personas: personas?.length,
     archived: archived?.entries.length,
   }
   const sections: readonly ResourceSection[] = [
-    'characters', 'world-info', 'presets', 'regex-packs', 'personas', 'archived',
+    'characters', 'world-info', 'presets', 'regex-packs', 'state-schemes', 'personas', 'archived',
   ]
-  const loading = counts[section] === undefined
-  const empty = section === 'characters' ? visibleCharacters.length === 0
+  const loading = section !== 'state-schemes' && counts[section] === undefined
+  const empty = section === 'state-schemes' ? false
+    : section === 'characters' ? visibleCharacters.length === 0
     : section === 'world-info' ? visibleWorldInfos.length === 0
       : section === 'presets' ? visiblePresets.length === 0
         : section === 'regex-packs' ? visibleRegexPacks.length === 0
           : section === 'archived' ? visibleArchived.length === 0 : visiblePersonas.length === 0
-  const canImport = section !== 'personas' && section !== 'archived'
+  const canImport = section !== 'personas' && section !== 'archived' && section !== 'state-schemes'
   const importLabel = section === 'characters' ? '导入角色卡' : section === 'world-info' ? '导入世界书'
     : section === 'regex-packs' ? '导入正则包' : '导入预设'
   const importBusy = busy === (section === 'characters' ? 'import-character'
@@ -769,7 +777,9 @@ export function RoleplayResourceCenter({
             <span style={{ display: 'block', fontSize: '11px', marginTop: '2px', opacity: .48 }}>
               {section === 'characters' ? '角色卡与收藏状态' : section === 'world-info' ? '独立世界书来源'
                 : section === 'presets' ? '可复用的对话预设'
-                  : section === 'regex-packs' ? '会话显式选择的全局正则规则' : '玩家身份与人物设定'}
+                  : section === 'regex-packs' ? '会话显式选择的全局正则规则'
+                    : section === 'state-schemes' ? '原生状态字段、结算规则与状态栏模板'
+                      : '玩家身份与人物设定'}
             </span>
           </div>
           {section === 'personas' && <button type="button" disabled={busy !== undefined} onClick={() => {
@@ -972,6 +982,7 @@ export function RoleplayResourceCenter({
                 {busy === `preset:${entry.id}` ? '移除中…' : confirmingPresetId === entry.id ? '确认移除' : '移除'}
               </button>
             </div>)}
+            {section === 'state-schemes' && <StateSchemeEditor onError={setStateSchemeError} />}
             {section === 'regex-packs' && visibleRegexPacks.map((entry, index) => <div key={entry.id} style={{ ...rowStyle, borderTop: index === 0 ? 'none' : rowStyle.borderTop }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <strong style={{ display: 'block', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</strong>

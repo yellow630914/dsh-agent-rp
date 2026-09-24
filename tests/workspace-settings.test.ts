@@ -70,6 +70,9 @@ test('retains Thetail tool guidance settings without importing provider-specific
     includeFramework: false,
     includeAgentRp: true,
     imageMode: 'always',
+    // Fork settings predate the state cadence, so its absence must resolve to
+    // the automatic default rather than silently disabling state settlement.
+    stateMode: 'auto',
     custom: [{
       id: 'community-image-mcp',
       enabled: true,

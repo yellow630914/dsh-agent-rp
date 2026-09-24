@@ -50,6 +50,7 @@ import {
 import { configuredRegexScripts } from './regex-configuration-core.ts'
 import type { ResolvedSessionRoleplayRuntime } from './session-roleplay-runtime.ts'
 import { ROLEPLAY_STATE_MODULE_ID } from './roleplay-state.ts'
+import { ROLEPLAY_STATE_SCHEME_MODULE_ID } from './roleplay-state-scheme.ts'
 import { renderRoleplayStateContext } from './roleplay-runtime-context.ts'
 import {
   tavernInjectedInChatPrompts,
@@ -574,6 +575,9 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
   let templateRenders = 0
   let templateFailures = 0
   const effectiveLorebooks = resolved.lorebooks.map(value => value.configured)
+  // Resolved before the state contract because the state cadence decides
+  // whether this turn prepares one at all.
+  const tools = prepareRoleplayToolPolicy(input.toolGuidance ?? DEFAULT_TOOL_GUIDANCE)
   const mvuUpdateInstructions = resolved.mvu === undefined
     ? undefined : renderMvuUpdateInstructions(effectiveLorebooks, resolved.mvu.statData, {
         characterName,
@@ -581,18 +585,33 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
       })
   const choiceInstructions = resolved.mvu === undefined
     ? undefined : renderChoiceInstructions(effectiveLorebooks)
+  // The MVU adapter keeps its imported contract; a native scheme supplies the
+  // same contract from Session-frozen rules, so an Agent session without any
+  // imported card still settles state after the visible reply.
   const stateActionTarget: RoleplayStateActionPlan | undefined = resolved.turnMode !== 'agent'
-    || resolved.mvu === undefined || mvuUpdateInstructions === undefined
+    || !tools.behavior.state.contractPrepared
     ? undefined
-    : {
-        engine: 'mvu-v0',
-        tool: ROLEPLAY_STATE_ACTION_TOOL,
-        moduleId: MVU_ROLEPLAY_MODULE_ID,
-        stateId: MVU_ROLEPLAY_STATE_ID,
-        expectedRevision: resolved.mvu.updateCount,
-        operations: ['replace', 'delta', 'insert', 'remove', 'move'],
-        instructions: mvuUpdateInstructions,
-      }
+    : resolved.mvu !== undefined && mvuUpdateInstructions !== undefined
+      ? {
+          engine: 'mvu-v0',
+          tool: ROLEPLAY_STATE_ACTION_TOOL,
+          moduleId: MVU_ROLEPLAY_MODULE_ID,
+          stateId: MVU_ROLEPLAY_STATE_ID,
+          expectedRevision: resolved.mvu.updateCount,
+          operations: ['replace', 'delta', 'insert', 'remove', 'move'],
+          instructions: mvuUpdateInstructions,
+        }
+      : resolved.stateScheme !== undefined
+        ? {
+            engine: 'native-v0',
+            tool: ROLEPLAY_STATE_ACTION_TOOL,
+            moduleId: ROLEPLAY_STATE_SCHEME_MODULE_ID,
+            stateId: resolved.stateScheme.snapshot.stateId,
+            expectedRevision: resolved.stateScheme.current.revision,
+            operations: ['replace', 'delta', 'insert', 'remove', 'move'],
+            instructions: resolved.stateScheme.snapshot.rules,
+          }
+        : undefined
 
   if (snapshot.prompt.strategy === 'modules' && resolved.preset !== undefined) {
     const assembled = assembleSillyTavernPreset(resolved.preset.preset, {
@@ -671,7 +690,7 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
   }
 
   if (stateActionTarget !== undefined) {
-    const guidance = renderRoleplayStateActionGuidance(stateActionTarget, mvuUpdateInstructions!)
+    const guidance = renderRoleplayStateActionGuidance(stateActionTarget, stateActionTarget.instructions ?? '')
     providerPrompt = {
       ...providerPrompt,
       afterHistory: [...providerPrompt.afterHistory, {
@@ -746,6 +765,13 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
       writerModuleId: MVU_ROLEPLAY_MODULE_ID,
       value: snapshotJsonValue(resolved.mvu.statData) as JsonValue,
     }
+    // Before the first settled revision the scheme's opening value is the only
+    // source for this namespace, so it must still reach the model this turn.
+    if (resolved.stateScheme !== undefined && binding.id === resolved.stateScheme.snapshot.stateId) return {
+      ...binding,
+      writerModuleId: ROLEPLAY_STATE_SCHEME_MODULE_ID,
+      value: snapshotJsonValue(resolved.stateScheme.current.value) as JsonValue,
+    }
     return binding
   })
   const stateContext = renderRoleplayStateContext(stateReads, transforms)
@@ -768,7 +794,6 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
     })),
     contextText: renderActiveMemoryContext(memoryHistory.active, snapshot.memory.write),
   }
-  const tools = prepareRoleplayToolPolicy(input.toolGuidance ?? DEFAULT_TOOL_GUIDANCE)
   const worldContributions = world.resources.reduce(
     (count, resource) => count + resource.beforeActor.length + resource.afterActor.length,
     world.inChat.length,
@@ -802,6 +827,13 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
     }]),
     ...(resolved.mvu === undefined ? [] : [{
       moduleId: MVU_ROLEPLAY_MODULE_ID,
+      outcome: 'applied' as const,
+      contributions: 1,
+    }]),
+    // Every module that declares a prepare phase must report here, or the whole
+    // turn preparation throws and the Agent falls back to a bare prompt.
+    ...(resolved.stateScheme === undefined ? [] : [{
+      moduleId: ROLEPLAY_STATE_SCHEME_MODULE_ID,
       outcome: 'applied' as const,
       contributions: 1,
     }]),

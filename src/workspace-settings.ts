@@ -110,6 +110,11 @@ export interface AgentRpSettings {
     /** Number of newest visible message rows whose frontends remain live. */
     readonly renderDepth: number
   }
+  /** Display-only state panel preferences; they never reach a Session or the model. */
+  readonly statePanel: {
+    /** Whether the dock above the composer starts collapsed. */
+    readonly collapsed: boolean
+  }
   /** Controls whether user-requested copied diagnostics include local error details. */
   readonly debug: {
     readonly enabled: boolean
@@ -210,6 +215,7 @@ export const DEFAULT_AGENT_RP_SETTINGS: AgentRpSettings = {
     stateVerification: { model: null, reasoningEffort: null },
   },
   lightFrontend: { renderDepth: 12 },
+  statePanel: { collapsed: false },
   debug: { enabled: false },
 }
 
@@ -405,6 +411,16 @@ export function normalizeAgentRpSettings(value: unknown): AgentRpSettings {
     200,
     '轻前端保留消息数',
   )
+  const statePanelRecord = record.statePanel
+  if (statePanelRecord !== undefined
+    && (typeof statePanelRecord !== 'object' || statePanelRecord === null || Array.isArray(statePanelRecord))) {
+    throw new Error('状态栏设置无效')
+  }
+  const statePanelCollapsed = bool(
+    (statePanelRecord as Record<string, unknown> | undefined)?.collapsed,
+    DEFAULT_AGENT_RP_SETTINGS.statePanel.collapsed,
+    '状态栏折叠状态',
+  )
   const debugRecord = record.debug
   if (debugRecord !== undefined
     && (typeof debugRecord !== 'object' || debugRecord === null || Array.isArray(debugRecord))) {
@@ -507,6 +523,7 @@ export function normalizeAgentRpSettings(value: unknown): AgentRpSettings {
       },
     },
     lightFrontend: { renderDepth: lightFrontendRenderDepth },
+    statePanel: { collapsed: statePanelCollapsed },
     debug: { enabled: debugEnabled },
   }
 }

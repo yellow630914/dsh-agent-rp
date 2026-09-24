@@ -50,6 +50,13 @@ import {
   ROLEPLAY_STATE_MODULE_ID,
   type RoleplayStateSnapshot,
 } from './roleplay-state.ts'
+import {
+  readRoleplayStateScheme,
+  readRoleplayStateSchemeValue,
+  ROLEPLAY_STATE_SCHEME_MODULE_ID,
+  type RoleplayStateSchemeSnapshot,
+  type RoleplayStateSchemeValue,
+} from './roleplay-state-scheme.ts'
 import { readRoleplayTurnMode, type RoleplayTurnMode } from './roleplay-turn-mode.ts'
 import { readNativePromptPolicy, type NativePromptPolicySnapshot } from './native-prompt-policy.ts'
 import { supportsAgentRpSessionEvents } from './session-event-compat.ts'
@@ -78,6 +85,11 @@ export interface ResolvedSessionRoleplayRuntime {
   readonly regexConfiguration: RegexConfigurationState
   readonly tavern?: TavernHelperState
   readonly mvu?: MvuStateSnapshot
+  /** Native state contract frozen at launch, plus the revision in force for this turn. */
+  readonly stateScheme?: {
+    readonly snapshot: RoleplayStateSchemeSnapshot
+    readonly current: RoleplayStateSchemeValue
+  }
   readonly lorebooks: readonly ConfiguredRoleplayLorebook[]
   readonly extensionOutcomes: {
     readonly prepare: readonly RoleplayPhaseModuleOutcome[]
@@ -134,6 +146,11 @@ export function resolveSessionRoleplayRuntime(input: {
     ? readRoleplayTurnMode(events)
     : 'conversation'
   const nativeStates = readRoleplayStates(events)
+  const stateSchemeSnapshot = readRoleplayStateScheme(events)
+  const stateScheme = stateSchemeSnapshot === undefined ? undefined : {
+    snapshot: stateSchemeSnapshot,
+    current: readRoleplayStateSchemeValue(events, stateSchemeSnapshot),
+  }
   const worldConfiguration = readWorldInfoConfiguration(events)
   const lorebooks = readActiveSessionLorebookSourcesFromEvents(events).map(source => ({
     source,
@@ -220,6 +237,17 @@ export function resolveSessionRoleplayRuntime(input: {
       owner: 'session' as const,
       revision: nativeState.revision,
     })),
+    // The scheme namespace only needs its own binding until the first settled
+    // revision exists; after that it is already one of the native states.
+    ...(stateScheme === undefined
+      || nativeStates.some(nativeState => nativeState.id === stateScheme.snapshot.stateId)
+      ? []
+      : [{
+          id: stateScheme.snapshot.stateId,
+          owner: 'session' as const,
+          adapter: 'agent-rp:state-scheme',
+          revision: stateScheme.current.revision,
+        }]),
     ...(mvu === undefined ? [] : [{
       id: MVU_ROLEPLAY_STATE_ID,
       owner: 'session' as const,
@@ -247,6 +275,12 @@ export function resolveSessionRoleplayRuntime(input: {
       'native',
       ['prepare', 'settle', 'present'],
       nativeStates.map(nativeState => nativeState.id),
+    )]),
+    ...(stateScheme === undefined ? [] : [runtimeModule(
+      ROLEPLAY_STATE_SCHEME_MODULE_ID,
+      'native',
+      ['prepare', 'act', 'settle', 'present'],
+      [stateScheme.snapshot.stateId],
     )]),
     ...(lorebooks.length === 0 ? [] : [runtimeModule(ROLEPLAY_WORLD_MODULE_ID, 'native', ['recall'])]),
     ...(preset === undefined && regexPacks.length === 0
@@ -321,6 +355,7 @@ export function resolveSessionRoleplayRuntime(input: {
     ...(nativePromptPolicy === undefined ? {} : { nativePromptPolicy }),
     ...(tavern === undefined ? {} : { tavern }),
     ...(mvu === undefined ? {} : { mvu }),
+    ...(stateScheme === undefined ? {} : { stateScheme }),
     lorebooks,
     extensionOutcomes: { prepare: extensions.prepare, recall: extensions.recall },
   }

@@ -4,7 +4,7 @@
 export const ROLEPLAY_RESOURCE_CATALOG_PATH = '/api/agent-rp/resources'
 
 /** Reusable resource categories that can be selected independently for an experience. */
-export const ROLEPLAY_RESOURCE_KINDS = ['actor', 'persona', 'world', 'prompt-policy', 'regex'] as const
+export const ROLEPLAY_RESOURCE_KINDS = ['actor', 'persona', 'world', 'prompt-policy', 'regex', 'state-scheme'] as const
 
 export type RoleplayResourceKind = typeof ROLEPLAY_RESOURCE_KINDS[number]
 
@@ -56,6 +56,12 @@ export interface RoleplayRegexResourceDetail {
   readonly promptCount: number
 }
 
+export interface RoleplayStateSchemeResourceDetail {
+  readonly kind: 'state-scheme'
+  readonly stateId: string
+  readonly fieldCount: number
+}
+
 /** Source-neutral, kind-specific information needed to configure one selection. */
 export type RoleplayResourceDetail =
   | RoleplayActorResourceDetail
@@ -63,6 +69,7 @@ export type RoleplayResourceDetail =
   | RoleplayWorldResourceDetail
   | RoleplayPromptPolicyResourceDetail
   | RoleplayRegexResourceDetail
+  | RoleplayStateSchemeResourceDetail
 
 function exactDetailKeys(value: object, allowed: readonly string[]): boolean {
   return Object.keys(value).every(key => allowed.includes(key))
@@ -138,6 +145,17 @@ export function parseRoleplayResourceDetail(
       kind: 'prompt-policy',
       moduleCount: detail.moduleCount,
       enabledModuleCount: detail.enabledModuleCount,
+    })
+  }
+  if (detail.kind === 'state-scheme') {
+    if (!exactDetailKeys(detail, ['kind', 'stateId', 'fieldCount'])
+      || !Number.isSafeInteger(detail.fieldCount) || detail.fieldCount < 0) {
+      throw new Error(`Roleplay state scheme ${JSON.stringify(reference.id)} returned invalid details`)
+    }
+    return Object.freeze({
+      kind: 'state-scheme',
+      stateId: detailId(detail.stateId, `Roleplay state scheme ${JSON.stringify(reference.id)} state id`),
+      fieldCount: detail.fieldCount,
     })
   }
   if (!exactDetailKeys(detail, ['kind', 'scriptCount', 'enabledCount', 'displayCount', 'promptCount'])

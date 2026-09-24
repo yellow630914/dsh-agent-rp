@@ -5,7 +5,7 @@ import { ImageAttachmentRef } from "@deepseek-ai/dsh-attachment";
 import { Agent } from "@deepseek-ai/dsh-agent";
 
 /** Reusable resource categories that can be selected independently for an experience. */
-declare const ROLEPLAY_RESOURCE_KINDS: readonly ["actor", "persona", "world", "prompt-policy", "regex"];
+declare const ROLEPLAY_RESOURCE_KINDS: readonly ["actor", "persona", "world", "prompt-policy", "regex", "state-scheme"];
 type RoleplayResourceKind = typeof ROLEPLAY_RESOURCE_KINDS[number];
 /** Source-neutral identity used to select one exact reusable resource. */
 interface RoleplayResourceReference {
@@ -47,8 +47,13 @@ interface RoleplayRegexResourceDetail {
   readonly displayCount: number;
   readonly promptCount: number;
 }
+interface RoleplayStateSchemeResourceDetail {
+  readonly kind: 'state-scheme';
+  readonly stateId: string;
+  readonly fieldCount: number;
+}
 /** Source-neutral, kind-specific information needed to configure one selection. */
-type RoleplayResourceDetail = RoleplayActorResourceDetail | RoleplayPersonaResourceDetail | RoleplayWorldResourceDetail | RoleplayPromptPolicyResourceDetail | RoleplayRegexResourceDetail;
+type RoleplayResourceDetail = RoleplayActorResourceDetail | RoleplayPersonaResourceDetail | RoleplayWorldResourceDetail | RoleplayPromptPolicyResourceDetail | RoleplayRegexResourceDetail | RoleplayStateSchemeResourceDetail;
 /** Stable reference and presentation metadata without source-format payloads. */
 interface RoleplayResourceDescriptor extends RoleplayResourceReference {
   readonly name: string;
@@ -736,6 +741,52 @@ declare module '@deepseek-ai/dsh-session' {
   }
 }
 /** Parse one private player request without accepting implicit authority fields. */
+/** Authoring formats accepted for one state panel template. */
+type RoleplayStateTemplateFormat = 'html' | 'markdown' | 'text';
+/** One authored panel template; the source is display-only and never reaches the model. */
+interface RoleplayStateTemplate {
+  readonly format: RoleplayStateTemplateFormat;
+  readonly source: string;
+}
+/** Exact model-visible state contract this Session is running under. */
+interface RoleplayStateSchemeSnapshot {
+  readonly format: 0;
+  /** Session-owned identity, minted at launch; unchanged by switches and branches. */
+  readonly id: string;
+  /** Reusable resource this contract was last taken from; rewritten on every switch. */
+  readonly source?: string;
+  readonly name: string;
+  /** Native state namespace this scheme owns for the whole Session. */
+  readonly stateId: string;
+  /** Opening value used until the first settled revision exists. */
+  readonly initial: JsonValue;
+  /** Author-written settlement rules consulted only by the post-narrative stage. */
+  readonly rules: string;
+  /**
+   * Session-owned panel template that overrides the source entry's.
+   *
+   * Absent means "follow the source": edits made in the resource center reach
+   * this Session, which is what a shared template is for. Present means the
+   * player edited the panel from the state dialog, and this Session keeps its
+   * own copy from then on.
+   */
+  readonly template?: RoleplayStateTemplate;
+  /**
+   * Completion budget for the independent verification stage.
+   *
+   * How much room the verification needs scales with how large this scheme's
+   * state grows, which is a property of the scheme rather than of the
+   * workspace. Absent means the runtime default.
+   */
+  readonly verificationMaxTokens?: number;
+}
+declare module '@deepseek-ai/dsh-session' {
+  interface SessionEventMap {
+    /** Skippable snapshot of the native state contract selected for this Session. */
+    'agent-rp/state-scheme-seed': RoleplayStateSchemeSnapshot;
+  }
+}
+/** Validate a detached native scheme without consulting mutable provider state. */
 /** Compatibility dialogue preserves author-defined output formats; Agent turns use runtime actions. */
 type RoleplayTurnMode = 'conversation' | 'agent';
 /** One authoritative turn-mode selection reconstructed from the Session log. */
@@ -852,10 +903,11 @@ interface RoleplayTurnPlanReceipt {
  * Published structural projections of the provider-neutral turn plan:
  * 0 predates prompt transforms, 1 adds transforms, 2 adds response repair programs,
  * 3 adds the independent turn strategy plus semantic state actions, 4 adds
- * the exact tool policy prepared for the model request and runtime gates, and
- * 5 moves imported state rules into the post-narrative settlement program.
+ * the exact tool policy prepared for the model request and runtime gates,
+ * 5 moves imported state rules into the post-narrative settlement program, and
+ * 6 adds native state schemes plus the settlement cadence that gates them.
  */
-type RoleplayTurnPlanSchema = 0 | 1 | 2 | 3 | 4 | 5;
+type RoleplayTurnPlanSchema = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 /** Revision change observed at the turn boundary for one runtime state namespace. */
 interface RoleplayStateSettlement {
   readonly id: string;
@@ -950,9 +1002,11 @@ interface BoundRoleplayTurnPlan {
 }
 /** Model-facing tool that records semantic state work without mutating state mid-turn. */
 declare const ROLEPLAY_STATE_ACTION_TOOL = "apply_roleplay_state";
+/** Semantic engine backing one prepared state contract; both share the same operation set. */
+type RoleplayStateActionEngine = 'mvu-v0' | 'native-v0';
 /** Prepared capability contract frozen before one model step. */
 interface RoleplayStateActionPlan {
-  readonly engine: 'mvu-v0';
+  readonly engine: RoleplayStateActionEngine;
   readonly tool: typeof ROLEPLAY_STATE_ACTION_TOOL;
   readonly moduleId: string;
   readonly stateId: string;
@@ -964,6 +1018,15 @@ interface RoleplayStateActionPlan {
 /** Provider-neutral Agent tool guidance retained across workspace settings and model turns. */
 /** Whether image tools must stay idle, may be chosen, or should be attempted each RP turn. */
 type AgentRpImageMode = 'never' | 'requested' | 'auto' | 'always';
+/**
+ * Whether post-narrative state settlement never runs, waits for the player, or runs every turn.
+ *
+ * There is deliberately no "force the model to call the state tool" mode: the
+ * inline tool costs two surface events and a transcript row every turn and
+ * breaks the reusable prompt prefix, while the background Worker reaches the
+ * same state through plugin events that no transcript layer can see.
+ */
+type AgentRpStateMode = 'never' | 'requested' | 'auto';
 /** One deployment-owned instruction for an installed MCP or other tool provider. */
 interface ToolGuidanceEntryConfig {
   readonly id: string;
@@ -976,6 +1039,8 @@ interface ResolvedToolGuidanceConfig {
   readonly includeFramework: boolean;
   readonly includeAgentRp: boolean;
   readonly imageMode: AgentRpImageMode;
+  /** Post-narrative state settlement cadence; absent settings keep the previous automatic behavior. */
+  readonly stateMode: AgentRpStateMode;
   readonly custom: readonly ToolGuidanceEntryConfig[];
 }
 /** Immutable tool policy frozen into one concrete Roleplay turn. */
@@ -990,6 +1055,11 @@ interface RoleplayToolPolicyPlan {
     readonly image: {
       readonly mode: AgentRpImageMode; /** Runtime publication limit; choosing whether to generate remains an Agent decision. */
       readonly maxPublicationsPerTurn: 0 | 1;
+    };
+    readonly state: {
+      readonly mode: AgentRpStateMode; /** Whether this turn prepares a state contract at all. */
+      readonly contractPrepared: boolean; /** Whether the post-narrative Worker settles without an explicit player request. */
+      readonly settleAutomatically: boolean;
     };
   };
   readonly guidance: {

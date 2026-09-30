@@ -53,6 +53,8 @@ test('lets an independent client plugin join and leave the Agent RP workbench li
     name: AGENT_RP_WORKBENCH_SECTION_SLOT,
     kind: 'list',
     scope: 'root',
+    // DSH 0.2.0 discriminates snapshot nodes, so a slot names itself as one.
+    type: 'slot',
     declaredBy: 'an entry in "test.agent-rp-workbench"',
     occupants: [{ id: 'community-worldbook', order: 10, priority: 0, active: true }],
     children: [],

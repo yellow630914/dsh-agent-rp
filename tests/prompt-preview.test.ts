@@ -95,7 +95,7 @@ test('the previewed order is the order that was sent', () => {
 
   // Module messages are minted per call, so their ids differ between two runs;
   // everything that reaches the provider must not.
-  const sent = ({ id: _id, ...rest }: { readonly id: unknown }): unknown => rest
+  const sent = ({ id: _id, ...rest }: { readonly id?: unknown }): unknown => rest
   assert.deepEqual(
     prepareAttributedProviderMessages(history, plan).map(item => sent(item.message)),
     prepareSillyTavernProviderMessages(history, plan).map(sent),

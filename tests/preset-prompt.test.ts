@@ -249,7 +249,7 @@ test('keeps changing state after stable world context across continuous turns an
   const thirdUnchanged = prepareSillyTavernProviderMessages(thirdHistory, plan('回合=2'))
   const thirdChanged = prepareSillyTavernProviderMessages(thirdHistory, plan('回合=3'))
   const signature = (value: RequestMessage): string => JSON.stringify({ role: value.role, content: value.content })
-  const textOf = (value: Message | undefined): string | undefined => {
+  const textOf = (value: RequestMessage | undefined): string | undefined => {
     const block = value?.content[0]
     return block?.type === 'text' ? block.text : undefined
   }
@@ -595,9 +595,11 @@ test('keeps a continuous chain of completed tool transactions at the request tai
     ['system', '深度零'],
     ['system', '历史后模块'],
     ['assistant', '正文'],
-    ['user', 'tool-result'],
+    // DSH 0.2.0 made a tool result its own tool-role message whose content is the
+    // raw result blocks, not a user message wrapping a 'tool-result' block.
+    ['tool', 'Error: 图片服务没有配置'],
     ['assistant', '继续正文'],
-    ['user', 'tool-result'],
+    ['tool', 'Error: 本回合已经尝试过图片生成'],
   ])
   assert.deepEqual(prepared.slice(-4), [firstAssistant, firstResult, secondAssistant, secondResult])
 })

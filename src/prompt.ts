@@ -1,7 +1,7 @@
 /** Stable character identity and dynamic memory context rendering. */
 
 import type { Session, SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
-import { roleplayModelHistory } from './roleplay-surface-overlay.ts'
+import { roleplayDialogueHistory } from './roleplay-surface-overlay.ts'
 import type { ResolvedConfig } from './config.ts'
 import { activateLorebook, type LorebookActivationOptions } from './import/lorebook.ts'
 import type { ImportedCharacterCard, ImportedLorebook } from './import/types.ts'
@@ -270,7 +270,7 @@ function dialogueTranscript(messages: readonly DerivedSessionMessage[]): EjsTemp
 }
 
 function preRegexDialogue(session: Session): DerivedSessionMessage[] {
-  return roleplayModelHistory(session).map(message => {
+  return roleplayDialogueHistory(session).map(message => {
     const marker = readPromptRegexSourceMarker(
       (message.source as unknown as Record<string, unknown>)[PROMPT_REGEX_SOURCE_MARKER],
     )

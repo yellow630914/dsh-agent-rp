@@ -10,14 +10,14 @@ import type { PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-
 import type { CommandRowProps, TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type {} from '@deepseek-ai/dsh-agent-preset/types'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import {
-  IconChevronLeftOutline14, IconEditOutline16,
-  IconLoadingOutline16, IconSparkle16, IconWarningOutline16,
+  IconChevronLeftOutlineMedium, IconEditOutlineMedium,
+  IconLoadingOutlineMedium, IconSparkleMedium, IconWarningOutlineMedium,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
@@ -57,7 +57,8 @@ interface SidebarDestinationOwnerProps {
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
-    'shell.overlay': { kind: 'list'; scope: 'root'; owner: Record<string, never> }
+    // `shell.overlay` is declared by the Host since DSH 0.2.0 (the Chat panel
+    // owns the quota-notice host there), so Agent RP no longer declares it.
     'sidebar.destinations': { kind: 'list'; scope: 'root'; owner: SidebarDestinationOwnerProps }
     'conversation.chat.turnActions': { kind: 'list'; scope: 'session'; owner: TurnTailOwnerProps }
   }
@@ -681,6 +682,65 @@ const color = 'var(--dsw-alias-state-business-primary, #6f78e8)'
 const statusPlaceholder = ROLEPLAY_STATUS_PLACEHOLDER
 const openRoleplaySessionToolsEvent = 'dsh-agent-rp-open-session-tools'
 
+/**
+ * Which Session the player is looking at.
+ *
+ * DSH 0.2.0 moved view selection out of the Session Controller — the comment on
+ * its client service now reads "view selection remains outside the Controller" —
+ * so `sessions.list` no longer carries a `current` id, and the service that does
+ * own navigation (`uiWorkspace`) is an app-level service that publishes no types
+ * to plugins.
+ *
+ * Agent RP only needs it for root-scoped surfaces (the sidebar destination, the
+ * avatar loader, the script-extension host, the Worker model catalog); every
+ * session-scoped surface already receives its own `sessionId`. So the visible
+ * Session reports itself from the session-scoped header, and those root surfaces
+ * read it here.
+ */
+const visibleSession = (() => {
+  let current: SessionId | undefined
+  const listeners = new Set<() => void>()
+  return {
+    get: (): SessionId | undefined => current,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    /** Called by the session-scoped header for the Session the player is in. */
+    report: (sessionId: SessionId | undefined): void => {
+      if (current === sessionId) return
+      current = sessionId
+      for (const listener of listeners) listener()
+    },
+  }
+})()
+
+/** Subscribe a component to the visible Session id. */
+function useVisibleSession(): SessionId | undefined {
+  return useSyncExternalStore(visibleSession.subscribe, visibleSession.get, visibleSession.get)
+}
+
+/**
+ * Navigate to a Session Agent RP just created.
+ *
+ * DSH 0.2.0 removed `sessions.open()` along with the Controller's view
+ * selection; navigation now belongs to the app-level `uiWorkspace` service,
+ * which publishes no types to plugins. Duck-typed for that reason, and silent
+ * when absent: the Session exists either way, so failing to jump to it is a
+ * missing convenience rather than a failed launch.
+ * @param ctx - client context.
+ * @param sessionId - the newly created Session.
+ */
+function openCreatedSession(ctx: ClientContext, sessionId: SessionId): void {
+  const navigation = ctx.get('uiWorkspace') as { openSession?: (id: SessionId) => void } | undefined
+  if (typeof navigation?.openSession !== 'function') return
+  try {
+    navigation.openSession(sessionId)
+  } catch (reason: unknown) {
+    ctx.logger.warn(`agent-rp: could not open created session ${String(sessionId)}: ${String(reason)}`)
+  }
+}
+
 function elapsedStartupMilliseconds(startedAt: number): number {
   return Math.max(0, Math.round(performance.now() - startedAt))
 }
@@ -1208,18 +1268,18 @@ function GenerationTail({
       <button type="button" data-agent-rp-generation-action aria-label="生成插图"
         aria-disabled={(disabled || sceneNote === '') || undefined} data-unavailable={(disabled || sceneNote === '') || undefined}
         onClick={disabled || sceneNote === '' ? undefined : () => { setDrawOpen(true) }}>
-        <IconSparkle16 />
+        <IconSparkleMedium />
       </button>
     </Tooltip>}
     <Tooltip label={editableUserText === undefined ? '这一轮含附件或没有可修改的用户消息' : disabled ? unavailableReason ?? '修改输入并另开分支' : '修改输入并另开分支'} side="bottom">
       <button type="button" data-agent-rp-generation-action aria-label={busy === 'rewrite' ? '正在修改输入' : '修改输入并另开分支'}
         aria-disabled={rewriteUnavailable || undefined} data-unavailable={rewriteUnavailable || undefined}
         onClick={rewriteUnavailable ? undefined : () => { setError(undefined); setRewriteOpen(true) }}>
-        {busy === 'rewrite' ? <IconLoadingOutline16 className="agent-rp-generation-loading" /> : <IconEditOutline16 />}
+        {busy === 'rewrite' ? <IconLoadingOutlineMedium className="agent-rp-generation-loading" /> : <IconEditOutlineMedium />}
       </button>
     </Tooltip>
     {error !== undefined && <Tooltip label={error} side="bottom">
-      <span data-agent-rp-generation-error role="alert" aria-label={`操作失败：${error}`} tabIndex={0}><IconWarningOutline16 /></span>
+      <span data-agent-rp-generation-error role="alert" aria-label={`操作失败：${error}`} tabIndex={0}><IconWarningOutlineMedium /></span>
     </Tooltip>}
     {currentReply && drawOpen && <ImageGenerationDialog projection={projection} initialMode="scene" initialNote={sceneNote}
       onClose={() => { setDrawOpen(false) }} onGenerate={request => { runImageGeneration(sessionId, request) }} />}
@@ -2840,7 +2900,7 @@ function SidebarRoleplayDestination({
   const [launchSessionId, setLaunchSessionId] = useState<SessionId | undefined>(undefined)
   const [accessSaving, setAccessSaving] = useState(false)
   const [accessError, setAccessError] = useState<string>()
-  const currentSessionId = useSessions(state => state.current)
+  const currentSessionId = useVisibleSession()
   const currentSession = useSessions(state => currentSessionId === undefined ? undefined : state.byId[currentSessionId])
   const settingsSnapshot = useSyncExternalStore(
     workspaceSettings.subscribe,
@@ -4311,6 +4371,13 @@ function RoleplayHeader({
   const summary = useSessions(state => state.byId[sessionId])
   const projected = useProjection('agentRp')
   const projection = roleplaySummary(summary, projected)
+  // This header only mounts for the Session the player is looking at, which is
+  // the one signal Agent RP's root-scoped surfaces have since DSH 0.2.0 moved
+  // view selection out of the Session Controller.
+  useEffect(() => {
+    visibleSession.report(sessionId)
+    return () => { visibleSession.report(undefined) }
+  }, [sessionId])
   const debugEnabled = useSyncExternalStore(
     workspaceSettings.subscribe,
     workspaceSettings.getSnapshot,
@@ -7626,7 +7693,7 @@ function CharacterLibraryDialog({
           <div style={{ alignItems: 'center', display: 'flex', gap: '10px' }}>
             <button type="button" className="agent-rp-character-library-back" aria-label="返回对话"
               title="返回对话" onClick={onClose}>
-              <IconChevronLeftOutline14 size={18} />
+              <IconChevronLeftOutlineMedium size={18} />
             </button>
             <div style={{ flex: '1 1 auto', minWidth: 0 }}>
               <h2 style={{ fontSize: '18px', margin: 0 }}>{collection === 'active' ? '选择角色' : '收纳箱'}</h2>
@@ -13218,8 +13285,7 @@ function importHintComponent(
 
 function avatarLoader(ctx: ClientContext) {
   return async (attachmentId: string): Promise<string | undefined> => {
-    const state = ctx.sessions.list.getSnapshot()
-    const sessionId = state.current
+    const sessionId = visibleSession.get()
     if (sessionId === undefined) return undefined
     const scope = ctx.sessions.scope(sessionId)
     const session = scope === undefined ? undefined : ctx.sessions.sessionOf(scope)
@@ -13269,7 +13335,7 @@ export function apply(ctx: ClientContext): void {
   const installedStExtensionSessionSource = {
     current: () => {
       const state = ctx.sessions.list.getSnapshot()
-      const sessionId = state.current
+      const sessionId = visibleSession.get()
       if (sessionId === undefined) return undefined
       const projection = state.byId[sessionId]?.projectionValues?.agentRp
       return {
@@ -13325,7 +13391,7 @@ export function apply(ctx: ClientContext): void {
     }
   }
   const loadWorkerModelCatalog = async (): Promise<AvailableModelCatalog> => {
-    const sessionId = ctx.sessions.list.getSnapshot().current
+    const sessionId = visibleSession.get()
     if (sessionId === undefined) throw new Error('请先选择一个会话，以读取已配置的模型')
     const connection = ctx.get('connection') as ClientModelGateway | undefined
     if (connection === undefined) throw new Error('当前客户端无法读取模型列表')
@@ -13486,7 +13552,7 @@ export function apply(ctx: ClientContext): void {
     if (ctx.sessions.list.getSnapshot().byId[sessionId] === undefined) {
       throw new Error('角色会话已创建，但客户端尚未收到它；请刷新页面后重试')
     }
-    ctx.sessions.open(sessionId)
+    openCreatedSession(ctx, sessionId)
     if (value.workspaceWarning !== undefined) sessionLaunchNotices.publish(value.workspaceWarning)
     return sessionId
   }
@@ -14184,15 +14250,18 @@ export function apply(ctx: ClientContext): void {
     order: 100,
   }, props => <GenerationTail {...props} rewriteTurn={rewriteTurn}
     runImageGeneration={runImageGeneration} />))
+  // DSH 0.2.0 made `conversation.chat.turnTail` an ordinary list slot, so an
+  // entry can no longer decline through a selector — the decision moves into the
+  // component, which renders nothing when Agent RP's own `turnActions` row is
+  // mounted or the turn has no closing reply.
   ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
     name: 'conversation.chat.turnTail',
-    priority: 100,
-    select: owner => {
-      if (ctx.slots.spec('conversation.chat.turnActions') !== undefined) return null
-      const closing = owner.turn.data.get('turn-tail')?.closing
-      return closing === null || closing === undefined ? null : { replySeq: closing.finalNode.seq }
-    },
-  }, props => <GenerationTail {...props} rewriteTurn={rewriteTurn}
+    id: 'agent-rp-generation-tail',
+    order: 100,
+  }, props => ctx.slots.spec('conversation.chat.turnActions') !== undefined
+    || props.turn.data.get('turn-tail')?.closing == null
+    ? null
+    : <GenerationTail {...props} rewriteTurn={rewriteTurn}
     runImageGeneration={runImageGeneration} />))
   ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
     name: 'conversation.composer.dock', id: 'agent-rp-status', order: -100,

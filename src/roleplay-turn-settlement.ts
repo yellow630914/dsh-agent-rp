@@ -1,7 +1,7 @@
 /** Durable, source-neutral result compiled when one Roleplay turn closes. */
 
 import { createHash } from 'node:crypto'
-import { SessionSeq, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { isSurfaceEvent, SessionSeq, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { readRoleplaySurfaceOverlay } from './roleplay-surface-overlay.ts'
 import { readAgentRpMemoryHistory } from './memory.ts'
 import { MVU_ROLEPLAY_MODULE_ID, MVU_ROLEPLAY_STATE_ID } from './mvu.ts'
@@ -413,14 +413,17 @@ function latestTurnReply(
     event.data.message.content.some(block => block.type === 'text' && block.text.trim() !== '')
   const surface = new Set<number>()
   for (const event of events) {
-    if (event.type === 'user/message' || event.type === 'assistant/message' || event.type === 'tool/result') {
-      if (event.surfaceOp === 'append') surface.add(event.seq)
-      else if (event.surfaceOp !== undefined) {
-        for (const seq of [...surface]) {
-          if (seq >= event.surfaceOp.startSeq && seq <= event.surfaceOp.endSeq) surface.delete(seq)
-        }
-        surface.add(event.seq)
+    // Asked through the Host's own guard rather than a hand-listed set of event
+    // types: DSH 0.2.0 added `system/message` and `developer/message` to the
+    // surface, and a replacement range shadows whatever sits in it regardless of
+    // type, so a stale list would silently keep shadowed nodes in the set.
+    if (!isSurfaceEvent(event)) continue
+    if (event.surfaceOp === 'append') surface.add(event.seq)
+    else {
+      for (const seq of [...surface]) {
+        if (seq >= event.surfaceOp.startSeq && seq <= event.surfaceOp.endSeq) surface.delete(seq)
       }
+      surface.add(event.seq)
     }
   }
   const actionReplies = events.flatMap(event => {

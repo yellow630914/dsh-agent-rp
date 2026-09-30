@@ -82,7 +82,7 @@ async function launchExperienceWithWorkspaces(
   const sourceSession = Session.create(sourceId, [], {
     version: SESSION_FORMAT_VERSION, isSeeded: false, id: sourceId, createdAt: 0, cwd: sourceCwd,
   })
-  const sourceAgent = { id: sourceId, session: sourceSession, status: 'idle', inbox: { hasPending: false } }
+  const sourceAgent = { id: sourceId, session: sourceSession, status: 'idle', inbox: { nextTurn: [], nextStep: [] } }
   let createdSession: Session | undefined
   let attachedSessionId: SessionId | undefined
   let renamedTitle: string | undefined

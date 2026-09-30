@@ -29,7 +29,7 @@ test('creates balanced native Session history in SillyTavern display order', () 
   })), [
     { role: 'assistant', text: '门还没锁。', source: 'model' },
     { role: 'user', text: '那我进来啦。', source: 'user' },
-    { role: 'user', text: '窗外响起整点钟声。', source: 'plugin' },
+    { role: 'user', text: '窗外响起整点钟声。', source: 'agent-rp' },
   ])
   assert.equal(seed.filter(event => event.type === 'turn/start').length, 3)
   assert.equal(seed.filter(event => event.type === 'turn/end').length, 3)

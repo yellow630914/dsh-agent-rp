@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -188,6 +188,11 @@ test('claims character-card images for every Agent joined to the preset, includi
   const disposeJoined = root.agents.register(joinedAgent)
   const disposeLaterJoined = root.agents.register(laterJoinedAgent)
   const disposeSibling = root.agents.register(siblingAgent)
+  // DSH 0.2.0 emits `agent/created` from the Agent factory, not from a bare
+  // `agents.register()`; per-agent registrations install on that event.
+  for (const agent of [joinedAgent, laterJoinedAgent, siblingAgent]) {
+    agentEvents(root, agent).emit('agent/created', { source: 'startup' })
+  }
   const content = [
     { type: 'text' as const, text: '导入这张角色卡' },
     { type: 'image' as const, mediaType: 'image/png', name: 'card.png' },

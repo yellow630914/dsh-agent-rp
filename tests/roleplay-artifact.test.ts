@@ -389,6 +389,9 @@ test('replaces the full roleplay prompt with a narrow artifact handoff after vis
   const agentScope = createScope(agentParentCtx, agent, { parent: presetKey })
   Object.assign(agent, { ctx: agentScope.ctx })
   const disposeAgent = root.agents.register(agent)
+  // DSH 0.2.0 emits `agent/created` from the Agent factory, not from a bare
+  // `agents.register()`; the per-agent turn coordinator installs on that event.
+  agentEvents(root, agent).emit('agent/created', { source: 'startup' })
   context.after(async () => {
     disposeAgent()
     await agentScope.dispose()

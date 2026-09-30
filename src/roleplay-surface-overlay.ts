@@ -180,6 +180,22 @@ export function roleplayModelHistory(session: Session): Message[] {
 }
 
 /**
+ * The conversation itself: player lines and character replies, in order.
+ *
+ * {@link roleplayModelHistory} is the model's whole view, and since DSH 0.2.0
+ * that includes the rendered system prompt as surface node 0 and any tool-update
+ * `developer` message. Callers that mean "the transcript" — a recap fed to a
+ * Worker, the pre-regex dialogue, an exported chat — want neither: a system
+ * prompt pasted into a story recap is a leak, not context.
+ * @param session - live session whose surface and log are read.
+ * @returns the dialogue messages, in model-visible order.
+ */
+export function roleplayDialogueHistory(session: Session): Message[] {
+  return roleplayModelHistory(session)
+    .filter(message => message.role === 'user' || message.role === 'assistant')
+}
+
+/**
  * Build the override record for one appended rewrite.
  * @param replacements - appended seqs, in the order they should be visible.
  * @param supersedes - surface seqs they remove from the visible surface.

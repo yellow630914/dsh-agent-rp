@@ -102,7 +102,7 @@ test('triggers one reply after a Tavern script appends a user message', async ()
   const agent = {
     session,
     status: 'idle',
-    inbox: { hasPending: false },
+    inbox: { nextTurn: [], nextStep: [] },
     followup(message: ReturnType<typeof createUserMessage>) {
       triggerText = message.content[0]?.type === 'text' ? message.content[0].text : undefined
       appendAssistant(session, 2, '角色继续回应')
@@ -130,7 +130,7 @@ test('retries one reasoning-only Tavern trigger before surfacing an empty reply 
   const agent = {
     session,
     status: 'idle',
-    inbox: { hasPending: false },
+    inbox: { nextTurn: [], nextStep: [] },
     followup(message: ReturnType<typeof createUserMessage>) {
       prompts.push(message.content[0]?.type === 'text' ? message.content[0].text : '')
       appendAssistant(session, prompts.length + 1, prompts.length === 1 ? '' : '补全后的角色开场')
@@ -157,7 +157,7 @@ test('bounds Tavern empty-reply recovery to one retry', async () => {
   const agent = {
     session,
     status: 'idle',
-    inbox: { hasPending: false },
+    inbox: { nextTurn: [], nextStep: [] },
     followup() {
       attempts += 1
       appendAssistant(session, attempts + 1, '')
@@ -177,7 +177,7 @@ test('refuses a bare Tavern trigger without a latest user message', async () => 
   appendAssistant(session, 1, '角色上一条回复')
   await assert.rejects(executeTavernTrigger({
     agent: {
-      session, status: 'idle', inbox: { hasPending: false }, followup: () => {}, whenIdle: async () => {}, cancel: () => {},
+      session, status: 'idle', inbox: { nextTurn: [], nextStep: [] }, followup: () => {}, whenIdle: async () => {}, cancel: () => {},
     } as never,
     rawInput: '', signal: new AbortController().signal,
   }), /需要先添加一条用户消息/u)

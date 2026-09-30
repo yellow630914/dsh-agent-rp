@@ -146,15 +146,18 @@ export function installRoleplayArtifactTail(ctx: Context): void {
     () => ctx.uiConversation.events.register(roleplayPresentationDefinition),
     'agent-rp: project per-turn presentation artifacts',
   )
+  // DSH 0.2.0 made `conversation.chat.turnTail` an ordinary list slot, so the
+  // decline decision moved from a selector into the component: this row belongs
+  // only to the turn whose selected reply owns artifacts.
   ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
     name: 'conversation.chat.turnTail',
-    priority: 80,
-    select: owner => {
-      const presentation = owner.turn.data.get(ROLEPLAY_PRESENTATION_KIND)
-      return presentation?.selectedReply?.surfaceSeq === owner.seq
-        && (presentation.present.artifacts?.length ?? 0) > 0
-        ? {}
-        : null
-    },
-  }, props => <RoleplayArtifactTail owner={props as ArtifactTailOwner} />))
+    id: 'agent-rp-artifact-tail',
+    order: 80,
+  }, (props) => {
+    const presentation = props.turn.data.get(ROLEPLAY_PRESENTATION_KIND)
+    return presentation?.selectedReply?.surfaceSeq === props.seq
+      && (presentation.present.artifacts?.length ?? 0) > 0
+      ? <RoleplayArtifactTail owner={props as ArtifactTailOwner} />
+      : null
+  }))
 }

@@ -9,7 +9,7 @@ import {
   type GenerateOptions,
 } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
-import { roleplayModelHistory } from './roleplay-surface-overlay.ts'
+import { roleplayDialogueHistory } from './roleplay-surface-overlay.ts'
 import { roleplayActModelDispatch, roleplayActModelFailure, type RoleplayActModelDispatch, type RoleplayActModelFailureKind } from './roleplay-act-model-log.ts'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
 import { compileStoryCharacterContext, StoryWorkspaceStore } from './story-workspace.ts'
@@ -174,7 +174,7 @@ function messageText(messages: readonly UserMessage[]): string {
 }
 
 function transcriptText(agent: Agent): string {
-  const text = roleplayModelHistory(agent.session).flatMap(message =>
+  const text = roleplayDialogueHistory(agent.session).flatMap(message =>
     message.content.flatMap(block => block.type === 'text' ? [block.text] : [])).join('\n')
   return text.length <= 24_000 ? text : text.slice(-24_000)
 }

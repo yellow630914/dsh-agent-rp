@@ -221,8 +221,10 @@ function toolPair(messages: readonly Message[], callId: string): {
 } {
   const assistantIndex = messages.findIndex(message => message.content.some(block =>
     block.type === 'tool-call' && String(block.id) === callId))
-  const resultIndex = messages.findIndex(message => message.content.some(block =>
-    block.type === 'tool-result' && String(block.toolCallId) === callId))
+  // DSH 0.2.0 made a tool result its own `tool`-role message carrying the
+  // answered call id, instead of a `tool-result` block inside a user message.
+  const resultIndex = messages.findIndex(message =>
+    message.role === 'tool' && String(message.toolCallId) === callId)
   return { assistantIndex, resultIndex }
 }
 

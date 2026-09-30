@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { createSystemMessage } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { CommandId } from '@deepseek-ai/dsh-commands'
 import { SessionSeq, Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -248,6 +249,15 @@ test('projects the Host-recorded request instead of reconstructing an inspection
       preset: imported,
     },
   }]) } as Agent
+  // DSH 0.2.0 took `system` off the request header: the rendered prompt is its
+  // own surface node, so the inspector folds it from there.
+  agent.session.append('turn/start', { turn: 1 })
+  agent.session.append('step/start', { turn: 1, step: 1 })
+  agent.session.append('system/message', {
+    turn: 1,
+    step: 1,
+    message: createSystemMessage('Host 最终组装内容'),
+  }, { surfaceOp: 'append' })
   agent.session.append('request/header', {
     reason: 'initial',
     header: {
@@ -255,7 +265,6 @@ test('projects the Host-recorded request instead of reconstructing an inspection
         provider: 'real-provider', model: 'real-model', reasoningEffort: 'high' as never,
         temperature: 0.7, maxTokens: 4096,
       },
-      system: 'Host 最终组装内容',
       tools: [{ name: 'remember', description: 'memory', parameters: { type: 'object', properties: {} } }],
     },
   })

@@ -146,7 +146,7 @@ test('leaves Worldbook messages unchanged when the Host has no channel capabilit
   if (decision.kind === 'enter') {
     assert.equal(decision.messages.length, 2)
     const source = decision.messages[0]?.source
-    assert.equal(source?.kind, 'plugin')
+    assert.equal(source?.kind, 'agent-rp')
     if (source?.kind === 'agent-rp') assert.equal(source.form, 'instructions')
     assert.equal(decision.messages[1], ordinary)
   }
@@ -177,6 +177,11 @@ test('adapts a later-loaded Worldbook injector without moving either side of the
   const scope = createScope(root, agent)
   Object.assign(agent, { ctx: scope.ctx })
   const unregister = root.agents.register(agent)
+  // DSH 0.2.0 emits `agent/created` from the Agent factory, not from a bare
+  // `agents.register()`; the coalescing adapter installs its per-agent pre-step
+  // hook on that event, so this fixture announces it the way `agents.create()`
+  // would. Production always goes through the factory.
+  await agentEvents(root, agent).serial('agent/created', { source: 'startup' })
   const ordinary = createUserMessage({
     content: [{ type: 'text', text: 'ordinary' }],
     source: { kind: 'user' },

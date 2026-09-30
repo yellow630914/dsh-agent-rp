@@ -281,6 +281,9 @@ test('keeps state arithmetic out of the actor step and does not migrate resumed 
   const nativeScope = createScope(agentParentCtx, nativeAgent, { parent: presetKey })
   Object.assign(nativeAgent, { ctx: nativeScope.ctx })
   const disposeNative = root.agents.register(nativeAgent)
+  // DSH 0.2.0 emits `agent/created` from the Agent factory, not from a bare
+  // `agents.register()`; the capability gates install on that event.
+  agentEvents(root, nativeAgent).emit('agent/created', { source: 'startup' })
 
   const before = await root.systemPrompt.assemble({ scope: nativeAgent })
   assert.equal(before.tools.some(tool => tool.name === ROLEPLAY_STATE_ACTION_TOOL), false)

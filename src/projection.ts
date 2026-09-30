@@ -203,6 +203,15 @@ interface AgentRpProjectionState {
   readonly standaloneWorldInfos: Readonly<Record<string, SessionLorebookSource>>
   readonly worldInfoConfiguration: WorldInfoConfigurationState
   readonly replayTime: number
+  /**
+   * The rendered system prompt currently in effect.
+   *
+   * DSH 0.2.0 took `system` off the request header and made the prompt a
+   * `system/message` surface node instead, so the compatibility inspector folds
+   * it from the log rather than reading it off each header. Later nonempty
+   * system nodes supersede earlier ones; an empty one records "no system prompt".
+   */
+  readonly systemPrompt: string
   readonly surface: readonly {
     readonly seq: number
     readonly text?: string
@@ -1453,6 +1462,20 @@ function foldAgentRpProjectionEvent(
       return withSurface
     }
   }
+  // DSH 0.2.0 carries the rendered system prompt as a surface node instead of a
+  // header field. Fold the latest one so the header below can still report the
+  // prompt that request was assembled with.
+  if ((event.type as string) === 'system/message') {
+    // Read structurally: the event type is absent from the map on Hosts that
+    // predate it, and only its text blocks matter here.
+    const blocks = (event as {
+      readonly data: { readonly message: { readonly content: readonly { readonly type: string; readonly text?: string }[] } }
+    }).data.message.content
+    return {
+      ...withSurface,
+      systemPrompt: blocks.flatMap(block => block.type === 'text' ? [block.text ?? ''] : []).join('\n'),
+    }
+  }
   if (event.type === 'request/header') {
     const config = event.data.header.config
     return {
@@ -1464,7 +1487,7 @@ function foldAgentRpProjectionEvent(
           presetName: withSurface.presetState.result.name,
           presetRevision: withSurface.presetState.revision,
         }),
-        system: event.data.header.system ?? '',
+        system: withSurface.systemPrompt,
         config: {
           provider: config.provider,
           model: config.model,
@@ -1592,6 +1615,7 @@ export function createAgentRpProjectionDefinition(
     standaloneWorldInfos: {},
     worldInfoConfiguration: { format: 0, revision: 0, overrides: [] },
     replayTime: 0,
+    systemPrompt: '',
     surface: [],
     shadowedSeqs: [],
     calls: {},

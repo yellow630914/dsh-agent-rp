@@ -82,36 +82,58 @@ all         907 tests (891 passed, 16 skipped)
 
 ---
 
-## 阶段 0.2 / 0.3（未做，计划）
+## 阶段 0.3：隐藏楼层避开 0 号节点（本次）
 
-**0.2 隐藏楼层 UI → 「从第 N 层开始新会话」**
+原本的计划是把 `setHidden` 换成 append + 覆盖层纯隐藏，那样根本不需要位置性 `replace`。
+**做到一半发现会功能回退，已放弃。**
+
+真正送给模型的消息是 `llm/stream` 钩子里的 `options.messages` —— DSH 从 raw surface
+自己组装的那份。覆盖层只有在显示正则发生替换时才顶替它：
+
+```ts
+// prompt-regex-stream.ts:246-250
+let messages = options.messages
+if (!inert && (hasPromptScripts || hasManagedSurface)) {
+  const trace = applyPromptRegexSurface(agent.session, plan.transforms)
+  if (trace !== undefined && trace.replacementCount > 0) messages = roleplayModelHistory(agent.session)
+}
+```
+
+覆盖层是 ignorable 事件，模型请求与上下文计量都不认它。`setHidden` 那段注释本来就写明了
+这件事——「A real `replace` is the only thing all three follow」。
+
+所以保留真 `replace`，只把起点从 raw index 0 挪到 `protectedSurfaceHead()` 之后。那些节点
+本来就不是楼层，前缀隐藏从来也不该吞掉它们；没有系统节点的 Host 上 head 为 0，行为一字不变。
+`compaction/prune` 的「契约上相邻」也因此保住。
+
+**护栏在相依升级前无法测试**：0.1.3 的 surface 只认三种事件型别，测试里造不出
+`system/message` 节点。既有的 `setHidden` 用例覆盖 head 为 0 的路径。
+
+### 顺带发现（记录，未修）
+
+同样的道理下，**回复版本的 supersession 也只在显示正则触发时才对模型生效**。
+正文审阅 Worker 是它现在唯一的使用者，默认关闭，所以先只记录。
+
+---
+
+## 阶段 0.2（未做）
+
+**隐藏楼层 UI → 「从第 N 层开始新会话」**
+
+这是一个**新功能**，不是减法，有真实的设计面要定：新会话的出处（要不要经过聊天导入库？
+要不要 attachment？）、UI 怎么选第 N 层、记忆怎么带过去。玩家的手动流程
+（导出聊天 → 总结成记忆 → 迁移聊天）已经能做到同一件事，所以不值得赶工——
+仓促做出来的新功能正是玩家刚要求删掉的那一类。
 
 零件都现成：`exportSillyTavernSessionChat` + `createSillyTavernChatSeed` +
-`ChatSessionLaunchRequest{kind:'chat'}` + `memory?: 'copy-active'`。缺的只有一个楼层范围参数。
-匯出那个循环已经按 `text()` 过滤，`system/message` 本来就不会被导出。
+`ChatSessionLaunchRequest{kind:'chat'}` + `memory?: 'copy-active'`。缺的只有一个楼层
+范围参数。导出那个循环已经按 `text()` 过滤，`system/message` 本来就不会被导出；
+`readGenerationGroups` 现在返回空数组，`swipes` 退化成单元素，导出照样能用。
 
-DSH 0.1.7 的 `buildForkSeed` 帮不上：它保留开头砍尾巴，方向相反。
-
-**0.3 `set-chat-hidden` / `is_hidden` 换实作**
-
-保留脚本介面，底层从位置性 `replace` 改成覆盖层的纯隐藏。目前被这一行挡着：
-
-```ts
-// roleplay-surface-overlay.ts parseOverride
-if (supersedes.length === 0 || replacements.length === 0) return undefined
-```
-
-放宽 `replacements` 为空即可，但要加判别栏位（`format: 1` 或 `mode: 'hide'`），因为
-`projection.ts` 的 `applySurfaceOverride` 有个守卫要区分「纯隐藏」和「仅提示词改写」：
-
-```ts
-// 显示正则只改提示词、不上可见表层，replacements 不在这里。
-// 这时丢掉原件会把整列抹掉而不是重述它。
-if (moved.length === 0) return surface
-```
-
-代价：`compaction/prune` 的计量 claim 会掉（被隐藏楼层的 token 少算）。位置性 replace
-与计量事件是「契约上相邻」的，改成 append 之后这个相邻性不存在了。
+注意：**种子不是前缀切片而是重新合成**。事件日志的 seq 必须从 0 开始、种子事件在前，
+所以「保留后半段」只能像 `createSillyTavernChatSeed` 那样重新铸造身份。
+`prepareAgentRpRewriteSession`（保留前缀、砍掉 turn N 之后）和 DSH 0.1.7 的
+`buildForkSeed` 都是反方向，帮不上。
 
 ---
 
@@ -146,3 +168,21 @@ set-chat-messages
 
 这份列表本身还不是盘点结论 —— 有些（世界书绑定）是 agent-rp 自己的核心功能，
 只是沿用了酒馆的名字；有些（`set-chat-hidden`）才是纯相容负担。迁移完成后逐项判定。
+
+---
+
+## 本地验证
+
+DSH 0.1.3-alpha.2 dev host 跑在 **3081**，用的是 `~/.dsh` 的**复本**
+（`scratchpad/dsh013-home`），玩家自己的 3080 host 未受影响。
+
+```
+3080  PID 48696   玩家自己的（未动）
+3081  PID 24884   这个 branch
+```
+
+scratchpad 被临时档清理器扫过一轮（所有 `package.json` 与 `.json` 被删、`node_modules`
+留着），所以 profile 的 `package.json` / `cordis.yml` / `pnpm-workspace.yaml` 和
+`.agent-presets/agent-rp/` 都重建过。`pnpm pack` 会被 `prepack` 的
+`check:tavern-vendor` 挡下来（**这是既有状态，不是本次改动造成的**——把工作树 stash
+掉之后一样是 stale），所以改用 `npm pack --ignore-scripts`。

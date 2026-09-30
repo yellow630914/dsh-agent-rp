@@ -717,14 +717,17 @@ const visibleSession = (() => {
      * @returns the disposer for the adapter subscription.
      */
     follow: (ctx: ClientContext): (() => void) => {
-      const adapter = (ctx.get('uiSession') as {
-        readonly adapter?: { subscribe(listener: () => void): () => void; getSnapshot(): { readonly key?: string } }
-      } | undefined)?.adapter
-      if (adapter === undefined) return () => {}
-      source = adapter
+      // `adapter.current` is the observable; the adapter itself is not one.
+      const binding = (ctx.get('uiSession') as {
+        readonly adapter?: {
+          readonly current?: { subscribe(listener: () => void): () => void; getSnapshot(): { readonly key?: string } }
+        }
+      } | undefined)?.adapter?.current
+      if (binding === undefined) return () => {}
+      source = binding
       const read = (): void => { publish(source?.getSnapshot().key as SessionId | undefined) }
       read()
-      return adapter.subscribe(read)
+      return binding.subscribe(read)
     },
   }
 })()

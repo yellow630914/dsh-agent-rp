@@ -99,7 +99,6 @@ import {
   substituteCardMacros,
 } from './prompt.ts'
 import { EjsTemplateEngine } from './ejs-template.ts'
-import { installBundledAgentRpPreset } from './preset.ts'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import { createAgentRpProjectionDefinition } from './projection.ts'
 import { installMvuStreamCompletion } from './mvu-stream.ts'
@@ -1870,7 +1869,9 @@ export async function apply(ctx: Context, config: AgentRpConfig): Promise<void> 
         () => agents?.list().some(agent => supportsAgentRpSessionEvents(agent.session)) ?? false,
       ))
     })
-    installBundledAgentRpPreset()
+    // The roleplay preset is declared in `cordis.patch.yml` since DSH 0.2.0 and
+    // submitted by the Host's own `@deepseek-ai/dsh-agent-preset` row, so the
+    // plugin no longer installs it into a user preset root at boot.
     return
   }
   const ejsTemplateEngine = await loadEjsTemplateEngine(ctx)

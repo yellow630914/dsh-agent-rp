@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
@@ -11,7 +11,6 @@ import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { CharacterCardAttachmentRef, FileAttachmentRef } from '../src/import/session-character.ts'
 import { readActiveSessionCharacter } from '../src/import/session-character.ts'
-import { isAgentRpCapabilityComposition } from '../src/agent-capability-preset.ts'
 import { resolveConfig } from '../src/config.ts'
 import {
   installAgentRp,
@@ -22,81 +21,26 @@ import {
 } from '../src/index.ts'
 import { parseSillyTavernPresetJson } from '../src/import/sillytavern-preset.ts'
 import { createPresetSessionSeed, readActiveSessionPreset } from '../src/import/session-preset.ts'
-import { installBundledAgentRpPreset } from '../src/preset.ts'
 
-const SOURCE = resolve('preset')
 
-test('profile bundle keeps its managed Agent preset discoverable', () => {
+test('profile patch declares the managed roleplay preset', () => {
   const patch = readFileSync('cordis.patch.yml', 'utf8')
-  assert.match(patch, /- id: agent-presets\s+config:\s+[^]*?default: standard\s+includeUserRoot: true/u)
+  // DSH 0.2.0 declares each preset as one @deepseek-ai/dsh-agent-preset row
+  // submitted to the registry, instead of a preset-manager plugin writing a
+  // directory into a user preset root.
+  assert.match(patch, /name: '@deepseek-ai\/dsh-agent-preset'/u)
+  assert.match(patch, /^\s+id: agent-rp$/mu)
+  assert.doesNotMatch(patch, /includeUserRoot|id: agent-presets/u)
 })
 
 test('roleplay preset exposes search without inheriting coding authority', () => {
-  const composition = readFileSync('preset/agent.cordis.yml', 'utf8')
-  assert.match(composition, /name: cordis:group\s+isolate:\s+agentRp\.actorRevisions: true/u)
-  assert.match(composition, /name: '@deepseek-ai\/dsh-tool-web'/u)
-  assert.doesNotMatch(composition, /dsh-tool-(?:bash|fs|skill|subagent)/u)
-  assert.match(readFileSync('preset/preset.yml', 'utf8'), /受控联网搜索/u)
+  const patch = readFileSync('cordis.patch.yml', 'utf8')
+  assert.match(patch, /name: cordis:group\s+group: true\s+isolate:\s+agentRp\.actorRevisions: true/u)
+  assert.match(patch, /name: '@deepseek-ai\/dsh-tool-web'/u)
+  assert.doesNotMatch(patch, /dsh-tool-(?:bash|fs|skill|subagent)/u)
+  assert.match(patch, /受控联网搜索/u)
 })
 
-test('discovers the managed Agent preset with Windows line endings', () => {
-  const composition = readFileSync('preset/agent.cordis.yml', 'utf8')
-  assert.equal(isAgentRpCapabilityComposition(composition.replaceAll('\n', '\r\n')), true)
-})
-
-function temporaryRoot(): string {
-  return mkdtempSync(join(tmpdir(), 'dsh-agent-rp-preset-'))
-}
-
-test('installs one idempotent managed preset', (context) => {
-  const root = temporaryRoot()
-  context.after(() => rmSync(root, { recursive: true, force: true }))
-
-  assert.equal(installBundledAgentRpPreset({ presetRoot: root, sourceDir: SOURCE }), 'created')
-  assert.equal(installBundledAgentRpPreset({ presetRoot: root, sourceDir: SOURCE }), 'unchanged')
-  assert.match(readFileSync(join(root, 'agent-rp', 'agent.cordis.yml'), 'utf8'), /mode: character/u)
-  assert.match(readFileSync(join(root, 'agent-rp', 'preset.yml'), 'utf8'), /角色会话/u)
-})
-
-test('migrates the managed preset owner without replacing local content', (context) => {
-  const root = temporaryRoot()
-  context.after(() => rmSync(root, { recursive: true, force: true }))
-
-  assert.equal(installBundledAgentRpPreset({ presetRoot: root, sourceDir: SOURCE }), 'created')
-  const manifestPath = join(root, 'agent-rp', '.dsh-agent-rp-owner.json')
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-  writeFileSync(manifestPath, `${JSON.stringify({
-    ...manifest,
-    owner: '@dsh-external/dsh-agent-rp',
-  }, null, 2)}\n`, 'utf8')
-
-  assert.equal(installBundledAgentRpPreset({ presetRoot: root, sourceDir: SOURCE }), 'updated')
-  assert.equal(JSON.parse(readFileSync(manifestPath, 'utf8')).owner, '@hewzhew/dsh-agent-rp')
-})
-
-test('refuses to replace a locally edited managed preset', (context) => {
-  const root = temporaryRoot()
-  context.after(() => rmSync(root, { recursive: true, force: true }))
-  installBundledAgentRpPreset({ presetRoot: root, sourceDir: SOURCE })
-  writeFileSync(join(root, 'agent-rp', 'preset.yml'), 'name: 我的角色\n', 'utf8')
-
-  assert.throws(
-    () => installBundledAgentRpPreset({ presetRoot: root, sourceDir: SOURCE }),
-    /edited locally/u,
-  )
-})
-
-test('refuses to claim an existing user preset with the reserved id', (context) => {
-  const root = temporaryRoot()
-  context.after(() => rmSync(root, { recursive: true, force: true }))
-  const target = join(root, 'agent-rp')
-  mkdirSync(target)
-  writeFileSync(join(target, 'agent.cordis.yml'), '[]\n', 'utf8')
-  assert.throws(
-    () => installBundledAgentRpPreset({ presetRoot: root, sourceDir: SOURCE }),
-    /not managed/u,
-  )
-})
 
 test('claims character-card images for every Agent joined to the preset, including Agents joined after publication', async (context) => {
   const root = new Context()

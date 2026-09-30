@@ -1,6 +1,6 @@
 {
   "name": "@hewzhew/dsh-agent-rp-host-runner",
-  "version": "0.1.3-alpha.2.1",
+  "version": "0.2.0-rc.1.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -10,6 +10,6 @@
     "dsh": "dsh"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "0.1.3-alpha.2"
+    "@deepseek-ai/dsh": "0.2.0-rc.1"
   }
 }

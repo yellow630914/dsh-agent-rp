@@ -15,4 +15,4 @@ allowBuilds:
   protobufjs: false
 
 patchedDependencies:
-  '@deepseek-ai/dsh-session@0.1.3-alpha.2': patches/@deepseek-ai__dsh-session@0.1.3-alpha.2.patch
+  '@deepseek-ai/dsh-session@0.2.0-rc.1': patches/@deepseek-ai__dsh-session@0.2.0-rc.1.patch

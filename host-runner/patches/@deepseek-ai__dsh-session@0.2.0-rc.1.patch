@@ -1,8 +1,8 @@
 diff --git a/lib/index.js b/lib/index.js
-index e440bcc..372c34b 100644
+index 16b79c7..f37010f 100644
 --- a/lib/index.js
 +++ b/lib/index.js
-@@ -1091,6 +1091,18 @@ var Session = class Session {
+@@ -1440,6 +1440,18 @@ var Session = class Session {
  	*/
  	append(type, data, ...opts) {
  		const surfaceOpts = opts[0];
@@ -21,7 +21,7 @@ index e440bcc..372c34b 100644
  		const surfaceMetadata = {
  			...surfaceOpts?.sourceEventSeqs === void 0 ? {} : { sourceEventSeqs: surfaceOpts.sourceEventSeqs },
  			...surfaceOpts?.surfaceOp === void 0 ? {} : { surfaceOp: surfaceOpts.surfaceOp }
-@@ -1106,7 +1118,8 @@ var Session = class Session {
+@@ -1455,7 +1467,8 @@ var Session = class Session {
  			seq: SessionSeq(this.log.length),
  			time: Date.now(),
  			data: dataSnapshot,
@@ -29,5 +29,5 @@ index e440bcc..372c34b 100644
 +			...surfaceMetadataSnapshot,
 +			...ignorable ? { ignorable: true } : {}
  		});
+ 		validateSessionEventData(event, `session event "${type}" at seq ${event.seq}`);
  		this.surfaceManager.validateNext(event);
- 		if (entry !== void 0) entry.appending = true;

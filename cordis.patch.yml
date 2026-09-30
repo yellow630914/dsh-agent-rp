@@ -1,12 +1,42 @@
-- id: agent-presets
-  config:
-    # Agent RP installs its managed composition in the standard user preset
-    # root. Some DSH/DSHA profile layers disable that root, which makes the
-    # installed preset impossible to select even though the plugin is healthy.
-    default: standard
-    includeUserRoot: true
-
+# Agent RP's profile patch layer.
+#
+# DSH 0.2.0 replaced the single preset-manager plugin (and its user preset root)
+# with one `@deepseek-ai/dsh-agent-preset` row per preset, declared in the
+# profile composition and submitted to `dsh-agent-preset-registry`. So the
+# roleplay preset lives here instead of being written into
+# `$DSH_HOME/.agent-presets` by the plugin at boot — no staging directory, no
+# ownership manifest, no integrity check.
+#
+# The registry's own `default` belongs to the Host profile; Agent RP no longer
+# overrides it. A player selects the roleplay preset per Session.
 - insert:
+    - id: preset-agent-rp
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: agent-rp
+        name: 角色会话
+        description: 与一个持久角色直接交谈，提供会话记忆与受控联网搜索。
+        order: 0
+        plugins:
+          - id: agent-rp-runtime
+            name: cordis:group
+            group: true
+            isolate:
+              agentRp.actorRevisions: true
+            config:
+              - id: agent-rp-character
+                name: '@hewzhew/dsh-agent-rp'
+                config:
+                  mode: character
+          # Roleplay may need current public information, but it must not inherit
+          # the coding preset's shell, filesystem, subagents, or other workspace
+          # authority.
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: false
+              searchTimeoutMs: 60000
+
     - id: dsh-agent-rp-host
       name: '@hewzhew/dsh-agent-rp'
       config:

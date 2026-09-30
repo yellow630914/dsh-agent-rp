@@ -28,7 +28,7 @@ export function createSillyTavernMigrationSeed(
   chatAttachment: FileAttachmentRef,
   libraryId?: string,
 ): readonly SessionEvent[] {
-  const events = [...createSillyTavernChatSeed(chat, chatAttachment)]
+  const chatEvents = createSillyTavernChatSeed(chat, chatAttachment)
   const cardEvent = createCharacterCardSessionSeed(
     card,
     cardAttachment,
@@ -40,11 +40,19 @@ export function createSillyTavernMigrationSeed(
     libraryId,
   )[0]
   if (cardEvent?.type !== 'agent-rp/character-card-seed') throw new Error('Character Card seed is missing')
-  const seq = SessionSeq(events.length)
-  events.push({
+  // Identity first, transcript after.
+  //
+  // This used to append the card behind the imported chat, which reads fine
+  // until something takes a prefix of the log: DSH's own "branch in a new
+  // conversation" copies the events up to the message it forks at, so a fork
+  // anywhere inside the transcript landed before the card and the child Session
+  // came up with no character, no world books and no persona. Seeding identity
+  // at the front makes every prefix carry it.
+  const seq = SessionSeq(0)
+  const events: SessionEvent[] = [{
     ...cardEvent,
     seq,
-    time: Math.max(Date.now(), events.at(-1)?.time ?? 0),
+    time: Math.min(Date.now(), chatEvents[0]?.time ?? Date.now()),
     data: {
       ...cardEvent.data,
       meta: {
@@ -52,7 +60,10 @@ export function createSillyTavernMigrationSeed(
         result: { ...cardEvent.data.meta.result, sourceEventSeq: seq },
       },
     },
-  })
+  }]
+  for (const event of chatEvents) {
+    events.push({ ...event, seq: SessionSeq(events.length) } as SessionEvent)
+  }
   const validated = Session.create(SessionId('agent-rp-sillytavern-migration-validation'), events)
   return Object.freeze(validated.snapshotEvents().slice(0, events.length))
 }

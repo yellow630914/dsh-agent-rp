@@ -24,7 +24,7 @@ import {
   type PromptRegexTraceRecord,
 } from './frontend-regex.ts'
 import { appendAgentRpSessionEvent, supportsAgentRpSessionEvents } from './session-event-compat.ts'
-import { roleplaySurfaceNodes, roleplayModelHistory, roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
+import { roleplaySurfaceNodes, roleplayModelHistory, roleplaySurfaceOverlaid, roleplaySurfaceOverride } from './roleplay-surface-overlay.ts'
 import type { ImportedRegexScript } from './import/types.ts'
 import {
   prepareAttributedProviderMessages,
@@ -243,14 +243,30 @@ function preparePromptRegexStreamOptions(
   const hasManagedSurface = dialogueNodes(agent.session)
     .some(node => sourceMarker(messageOf(node.current).source) !== undefined)
   const hasPromptScripts = plan.transforms.operations.length > 0
-  const inert = !hasPromptScripts && !hasManagedSurface
+  // A Session carrying an overlay is never inert: its history has to be re-read
+  // through Agent RP before the provider sees it, even when this turn's plan
+  // changes nothing else.
+  const overlaid = roleplaySurfaceOverlaid(agent.session)
+  const inert = !hasPromptScripts && !hasManagedSurface && !overlaid
     && plan.beforeHistory.length === 0 && plan.afterHistory.length === 0 && plan.inChat.length === 0
     && plan.includeHistory && plan.continuation === undefined
   let messages = options.messages
+  let rewritten = false
   if (!inert && (hasPromptScripts || hasManagedSurface)) {
     const trace = applyPromptRegexSurface(agent.session, plan.transforms)
-    if (trace !== undefined && trace.replacementCount > 0) messages = roleplayModelHistory(agent.session)
+    rewritten = trace !== undefined && trace.replacementCount > 0
   }
+  // Re-read the Session when this turn rewrote it — `options.messages` was
+  // captured before the rewrite — and whenever an overlay already exists.
+  //
+  // The second half is the one that was missing. A recorded supersession appends
+  // its replacement and hides the original, but `options.messages` is DSH's own
+  // fold of the raw surface, which honours neither: it carries the original in
+  // place AND the replacement at the tail. Re-reading only on the turn that added
+  // a replacement meant every later turn sent both, so a rewritten floor came
+  // back as the newest reply. A failed turn made it visible; any turn that
+  // rewrote nothing did it.
+  if (rewritten || overlaid) messages = roleplayModelHistory(agent.session)
   // An inert plan changes nothing, so the history is already the final array —
   // but it is still what the provider receives, and the preview must show it.
   const attributed: readonly AttributedMessage[] = inert

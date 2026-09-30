@@ -180,6 +180,21 @@ export function roleplayModelHistory(session: Session): Message[] {
 }
 
 /**
+ * Whether any recorded supersession changes this Session's model-visible order.
+ *
+ * Cheap enough to ask on every request: callers that assemble a model request
+ * must read through {@link roleplayModelHistory} while this is true, because the
+ * Host's own fold of the raw surface keeps both the superseded original and its
+ * appended replacement.
+ * @param session - live session whose log is read.
+ * @returns true when the overlay hides or moves anything.
+ */
+export function roleplaySurfaceOverlaid(session: Session): boolean {
+  const overlay = readRoleplaySurfaceOverlay(session.snapshotEvents())
+  return overlay.hidden.size > 0 || overlay.promoted.size > 0
+}
+
+/**
  * The conversation itself: player lines and character replies, in order.
  *
  * {@link roleplayModelHistory} is the model's whole view, and since DSH 0.2.0

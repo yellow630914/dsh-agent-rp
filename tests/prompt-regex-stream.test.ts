@@ -577,3 +577,55 @@ test('never touches a background Worker request, which is not an Agent Loop disp
   assert.equal(calledNext, true)
   assert.equal(sent, undefined)
 })
+
+test('sends the overlaid history on a turn that rewrites nothing', () => {
+  type StreamHandler = (options: GenerateOptions, next: () => unknown) => unknown
+  let handler: StreamHandler | undefined
+  let captured: GenerateOptions | undefined
+  const ctx = {
+    on(_event: string, callback: StreamHandler) { handler = callback },
+    llm: { stream(options: GenerateOptions) { captured = options; return undefined } },
+  } as unknown as Context
+  const session = Session.create(SessionId('overlay-outlives-its-turn'))
+  session.append('user/message', createUserMessage({
+    source: { kind: 'user' }, content: [{ type: 'text', text: '第一句' }],
+  }), { surfaceOp: 'append' })
+  const original = session.append('assistant/message', {
+    turn: 1,
+    step: 1,
+    message: createAssistantMessage({
+      source: { provider: 'mock', model: 'mock' }, content: [{ type: 'text', text: '原始回复' }],
+    }),
+    stream: [],
+  }, { surfaceOp: 'append' })
+  // A replacement recorded on an earlier turn: appended at the tail, standing in
+  // for `original` through the overlay.
+  const replacement = session.append('assistant/message', {
+    turn: 1,
+    step: 1,
+    message: createAssistantMessage({
+      source: { provider: 'mock', model: 'mock' }, content: [{ type: 'text', text: '改写后的回复' }],
+    }),
+    stream: [],
+  }, { surfaceOp: 'append' })
+  session.append('agent-rp/surface-override', {
+    format: 0, supersedes: [Number(original.seq)], replacements: [Number(replacement.seq)],
+  })
+
+  const agent = { session } as Agent
+  // An inert plan: this turn rewrites nothing, which is exactly the case that
+  // used to fall back to the Host's raw-surface fold.
+  installPromptRegexStream(ctx, () => agent, () => promptPlan({}))
+  const options = Object.freeze({
+    provider: 'mock',
+    model: 'mock',
+    sessionId: session.id,
+    messages: session.deriveMessages(),
+  }) as GenerateOptions
+
+  assert.ok(handler)
+  handler(options, () => undefined)
+  const sent = captured?.messages.map(item => item.content[0]?.type === 'text' ? item.content[0].text : '')
+  // The superseded original must not travel beside its replacement.
+  assert.deepEqual(sent, ['第一句', '改写后的回复'])
+})

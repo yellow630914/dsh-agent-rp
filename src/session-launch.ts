@@ -337,7 +337,7 @@ export function prepareAgentRpSession(
       worldInfos,
     )
     return {
-      seed: seedWithPreset(
+      seed: identityFirstSeed(seedWithPreset(
         seedWithWorldInfos(
           characterWorldSeed,
           worldInfos,
@@ -346,7 +346,7 @@ export function prepareAgentRpSession(
         ),
         presets,
         request.presetId,
-      ),
+      )),
       title: resolved.detail.displayName,
     }
   }
@@ -354,7 +354,7 @@ export function prepareAgentRpSession(
   if (request.kind === 'world-info') {
     const asset = worldInfos.asset(request.importId)
     return {
-      seed: seedWithPreset(
+      seed: identityFirstSeed(seedWithPreset(
         seedWithWorldInfos(
           createWorldInfoLibrarySessionSeed(asset, request.persona),
           worldInfos,
@@ -363,7 +363,7 @@ export function prepareAgentRpSession(
         ),
         presets,
         request.presetId,
-      ),
+      )),
       title: asset.upload.name,
     }
   }
@@ -372,7 +372,7 @@ export function prepareAgentRpSession(
   if (request.characterId === undefined) {
     const identity = resolveSillyTavernChatIdentity(chat.chat)
     return {
-      seed: seedWithPreset(createSillyTavernChatSeed(chat.chat, chat.attachment), presets, request.presetId),
+      seed: identityFirstSeed(seedWithPreset(createSillyTavernChatSeed(chat.chat, chat.attachment), presets, request.presetId)),
       title: identity.characterName?.trim() || chat.upload.name.replace(/\.jsonl$/iu, ''),
     }
   }
@@ -434,6 +434,57 @@ type CarriedEvent = Omit<SessionEvent, 'seq'> | {
  * @param events - complete source events.
  * @returns the out-of-turn events with fresh contiguous seqs.
  */
+/**
+ * Move every identity seed ahead of the transcript it was appended behind.
+ *
+ * A seed is assembled by appending: the imported chat or the card's greeting
+ * lands first, then the preset, world books and persona go on the end. That
+ * reads fine until something takes a *prefix* of the log — DSH's own "branch in
+ * a new conversation" copies events up to the message it forks at — and a fork
+ * anywhere inside the transcript then predates the identity, so the child
+ * Session comes up with no character, no world books and no preset.
+ *
+ * Turn membership is what separates the two: everything inside a `turn/start` …
+ * `turn/end` span is transcript, everything else is identity. Reordering is safe
+ * because a seed's identity events are independent records; the one seq-bearing
+ * reference (the card's own `sourceEventSeq`) is remapped here.
+ * @param events - a finished seed, in append order.
+ * @returns the same events with identity first, renumbered contiguously.
+ */
+function identityFirstSeed(events: readonly SessionEvent[]): readonly SessionEvent[] {
+  const identity: SessionEvent[] = []
+  const transcript: SessionEvent[] = []
+  let depth = 0
+  for (const event of events) {
+    if (event.type === 'turn/start') depth += 1
+    ;(depth > 0 ? transcript : identity).push(event)
+    if (event.type === 'turn/end') depth = Math.max(0, depth - 1)
+  }
+  if (transcript.length === 0 || identity.length === 0) return events
+  const moved = new Map<number, number>()
+  const ordered = [...identity, ...transcript].map((event, index) => {
+    moved.set(Number(event.seq), index)
+    return { ...event, seq: SessionSeq(index) } as SessionEvent
+  })
+  // Seed records cite the event that established them, which for a library seed
+  // is the record itself; both readers verify that, so the citation moves too.
+  const cites = new Set(['agent-rp/character-card-seed', 'agent-rp/world-info-library-seed',
+    'agent-rp/sillytavern-preset-seed'])
+  return ordered.map((event) => {
+    if (!cites.has(event.type)) return event
+    const data = event.data as { readonly meta?: { readonly result?: { readonly sourceEventSeq?: number } } }
+    const source = data.meta?.result?.sourceEventSeq
+    if (source === undefined) return event
+    return {
+      ...event,
+      data: {
+        ...data,
+        meta: { ...data.meta, result: { ...data.meta?.result, sourceEventSeq: moved.get(source) ?? source } },
+      },
+    } as SessionEvent
+  })
+}
+
 function outOfTurnSeed(events: readonly SessionEvent[]): readonly SessionEvent[] {
   const kept: SessionEvent[] = []
   let depth = 0

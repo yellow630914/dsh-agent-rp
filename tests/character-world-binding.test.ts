@@ -175,7 +175,11 @@ test('edits a character world composition across future launch, runtime, project
       greetingIndex: 0,
     },
   )
-  const legacySeed = oldPrepared.seed.filter(event => event.type !== 'agent-rp/world-info-library-seed')
+  // Identity seeds now precede the transcript, so dropping one leaves a hole
+  // rather than trimming the tail; a seed's seqs have to stay contiguous.
+  const legacySeed = oldPrepared.seed
+    .filter(event => event.type !== 'agent-rp/world-info-library-seed')
+    .map((event, index) => ({ ...event, seq: index }) as typeof event)
   const oldSession = Session.create(SessionId('character-world-binding-old-runtime'), legacySeed)
 
   const primary = worlds.importFile({ filename: '新主世界.json', data: worldInfoBytes('新主世界', '主世界采用新的潮汐纪年。') })

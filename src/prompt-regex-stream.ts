@@ -3,7 +3,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import {
-  createMessage,
+  createAssistantMessage,
   createUserMessage,
   isAgentLoopRequest,
   type ContentBlock,
@@ -139,7 +139,7 @@ function appendReplacement(
 ): void {
   const originalMessage = messageOf(node.original)
   const sourceEventSeqs = [...new Set([node.current.seq, node.original.seq])]
-  const surfaceOp = { op: 'replace' as const, start: node.current.seq, end: node.current.seq }
+  const surfaceOp = { op: 'replace' as const, startSeq: node.current.seq, endSeq: node.current.seq }
   if (node.role === 'user') {
     session.append('user/message', createUserMessage({
       content,
@@ -156,11 +156,14 @@ function appendReplacement(
   if (!supportsAgentRpSessionEvents(session)) return
   const replacement = session.append('assistant/message', {
     ...position,
-    message: createMessage({
-      role: 'assistant',
+    // The rewritten reply keeps the original's model provenance plus the regex
+    // marker. DSH 0.2.0's assistant factory supplies `kind: 'model'` itself and
+    // rejects an input that already carries one, so the decorated source goes in
+    // without it.
+    message: createAssistantMessage({
       content,
-      source: sourceWithMarker(originalMessage.source, node.original.seq, trace),
-    }) as Extract<SessionEvent, { type: 'assistant/message' }>['data']['message'],
+      source: sourceWithMarker(originalMessage.source, node.original.seq, trace) as never,
+    }),
     // Regex rewriting replaces the visible text, so the original timed stream no longer describes it.
     stream: [],
   }, { surfaceOp: 'append' })

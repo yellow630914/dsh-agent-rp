@@ -25,7 +25,7 @@ test('opens model memory only for explicit persistent user intent', () => {
   assert.equal(requestsPersistentMemory(message('下次请叫我小满。')), true)
   assert.equal(requestsPersistentMemory(message('我点点头，陪她去保健室。')), false)
   assert.equal(requestsPersistentMemory(createUserMessage({
-    source: { kind: 'plugin', plugin: 'test', form: 'notice', summary: '内部通知' },
+    source: { kind: 'agent-rp', plugin: 'test', form: 'notice', summary: '内部通知' },
     content: [{ type: 'text', text: '请记住这条内部通知。' }],
   })), false)
 })

@@ -629,8 +629,8 @@ export interface RoleplayActorRevisionAttempt {
 }
 
 function resultCallId(event: Extract<SessionEvent, { readonly type: 'tool/result' }>): string | undefined {
-  const block = event.data.message.content[0]
-  return block === undefined ? undefined : String(block.toolCallId)
+  // DSH 0.2.0 carries the answered call id on the tool-role message itself.
+  return String(event.data.message.toolCallId)
 }
 
 /** Rebuild every actor proposal and its approval/write settlement from the Session Log alone. */
@@ -683,7 +683,7 @@ export function readRoleplayActorRevisionAttempts(
     if (attempt.failed !== undefined || attempt.result !== undefined) {
       throw new Error(`actor revision call ${JSON.stringify(callId)} has repeated results`)
     }
-    attempt.failed = event.data.message.content[0]?.isError === true
+    attempt.failed = event.data.message.isError === true
     if (!attempt.failed) {
       const result = parseRevisionValue(event.data.meta)
       if (result.baseRevision !== attempt.input.revision

@@ -202,7 +202,7 @@ test('hiding floors re-appends nothing and never mints a second live message id'
   // input, staged settlement — reject a Session where two events claim one id.
   session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: '外部上下文' }],
-    source: { kind: 'plugin', plugin: 'fixture', form: 'notice', summary: '外部上下文' },
+    source: { kind: 'agent-rp', plugin: 'fixture', form: 'notice', summary: '外部上下文' },
   }), { surfaceOp: 'append' })
   const pluginId = String((session.snapshotEvents().at(-1)!.data as { readonly id: unknown }).id)
   const assistantsBefore = session.snapshotEvents().filter(event => event.type === 'assistant/message').length

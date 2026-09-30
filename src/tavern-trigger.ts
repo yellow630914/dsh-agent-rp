@@ -1,5 +1,6 @@
 /** Host command for generating a reply after a Tavern script appends a user message. */
 
+import { agentHasPendingInput } from './agent-inbox.ts'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -30,7 +31,7 @@ export async function executeTavernTrigger(invocation: {
 }): Promise<{ readonly kind: 'success'; readonly text: string }> {
   if (invocation.rawInput.trim() !== '') throw new Error('/trigger 不接受额外参数')
   const agent = invocation.agent
-  if (agent.status !== 'idle' || agent.inbox.hasPending) throw new Error('请等待当前回复完成后再操作')
+  if (agent.status !== 'idle' || agentHasPendingInput(agent)) throw new Error('请等待当前回复完成后再操作')
   if (latestVisibleRole(agent) !== 'user') throw new Error('/trigger 前需要先添加一条用户消息')
 
   const onAbort = (): void => { agent.cancel({ kind: 'user' }) }
@@ -43,7 +44,7 @@ export async function executeTavernTrigger(invocation: {
           ? 'Respond to the latest user-authored roleplay message. Output only the in-character response.'
           : 'The previous attempt ended without a visible answer. Produce the in-character response now. Output dialogue or narration, not reasoning or an explanation.' }],
         source: {
-          kind: 'plugin', plugin: 'dsh-agent-rp-tavern-trigger', form: 'notice',
+          kind: 'agent-rp', plugin: 'dsh-agent-rp-tavern-trigger', form: 'notice',
           summary: attempt === 0 ? '正在继续角色回复' : '正在补全角色回复',
         },
       }))

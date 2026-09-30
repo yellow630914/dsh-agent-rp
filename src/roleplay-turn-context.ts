@@ -40,14 +40,14 @@ export function bindRoleplayExternalContext(input: {
     throw new Error('Roleplay external context step precedes its prepared plan boundary')
   }
   const visiblePluginIds = input.visibleMessages.flatMap(message =>
-    message.source.kind === 'plugin' ? [String(message.id)] : [])
+    message.source.kind === 'agent-rp' ? [String(message.id)] : [])
   if (new Set(visiblePluginIds).size !== visiblePluginIds.length) {
     throw new Error('Roleplay external context contains duplicate visible message ids')
   }
   const candidates = new Map<string, SessionEvent<'user/message'>>()
   const duplicateIds = new Set<string>()
   for (const event of input.events.slice(0, beforeSeq)) {
-    if (event.type !== 'user/message' || event.data.source.kind !== 'plugin') continue
+    if (event.type !== 'user/message' || event.data.source.kind !== 'agent-rp') continue
     const id = String(event.data.id)
     if (candidates.has(id)) duplicateIds.add(id)
     else candidates.set(id, event)

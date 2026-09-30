@@ -28,8 +28,8 @@ interface SnapshotChannelSource {
 
 function isWorldbookMessage(
   message: Message,
-): message is Message & { readonly source: Extract<Message['source'], { readonly kind: 'plugin' }> } {
-  return message.source.kind === 'plugin' && message.source.plugin === 'dsh-worldbook'
+): message is Message & { readonly source: Extract<Message['source'], { readonly kind: 'agent-rp' }> } {
+  return message.source.kind === 'agent-rp' && message.source.plugin === 'dsh-worldbook'
 }
 
 function isLegacyWorldbookInstruction(message: UserMessage): boolean {
@@ -76,7 +76,7 @@ function createWorldbookSnapshot(message: UserMessage, channel: string): UserMes
   return createUserMessage({
     content: message.content,
     source: {
-      kind: 'plugin',
+      kind: 'agent-rp',
       plugin: 'dsh-worldbook',
       form: 'snapshot',
       channel,
@@ -89,7 +89,7 @@ function clearWorldbookSnapshot(channel: string | undefined): UserMessage {
   return createUserMessage({
     content: [],
     source: {
-      kind: 'plugin',
+      kind: 'agent-rp',
       plugin: 'dsh-worldbook',
       form: 'snapshot',
       ...(channel === undefined ? {} : { channel }),

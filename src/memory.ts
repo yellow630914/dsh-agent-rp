@@ -364,19 +364,23 @@ function parseCanonicalResult(
   result: SessionEvent<'tool/result'>,
   call: SessionEvent<'tool/call'>,
 ): JsonValue {
-  const block = result.data.message.content[0]
-  if (String(block.toolCallId) !== String(call.data.callId)
-    || String(result.data.message.source.callId) !== String(call.data.callId)) {
+  // DSH 0.2.0 made a tool result its own `tool`-role message: the answered call
+  // id and the outcome moved to the message, and the result blocks are no longer
+  // nested inside a `tool-result` wrapper.
+  const message = result.data.message
+  if (String(message.toolCallId) !== String(call.data.callId)
+    || String(message.source.callId) !== String(call.data.callId)) {
     throw new Error(`remember result for call ${call.data.callId} has inconsistent call identity`)
   }
   if (result.sourceEventSeqs?.length !== 1 || result.sourceEventSeqs[0] !== call.seq) {
     throw new Error(`remember result for call ${call.data.callId} does not cite its direct tool call`)
   }
-  if (block.content.length !== 1 || block.content[0]?.type !== 'text') {
+  const canonical = message.content[0]
+  if (message.content.length !== 1 || canonical?.type !== 'text') {
     throw new Error(`remember result for call ${call.data.callId} has invalid canonical content`)
   }
   try {
-    return JSON.parse(block.content[0].text) as JsonValue
+    return JSON.parse(canonical.text) as JsonValue
   } catch {
     throw new Error(`remember result for call ${call.data.callId} has invalid canonical JSON`)
   }
@@ -388,9 +392,8 @@ function successfulRememberResults(events: readonly SessionEvent[]): Map<string,
   const results = new Map<string, SessionEvent<'tool/result'>>()
   for (const event of events) {
     if (event.type !== 'tool/result') continue
-    const block = event.data.message.content[0]
-    if (block.isError === true || event.data.error !== undefined) continue
-    const callId = String(block.toolCallId)
+    if (event.data.message.isError === true || event.data.error !== undefined) continue
+    const callId = String(event.data.message.toolCallId)
     if (!rememberCallIds.has(callId)) continue
     if (results.has(callId)) throw new Error(`tool call ${callId} has multiple successful results`)
     results.set(callId, event)

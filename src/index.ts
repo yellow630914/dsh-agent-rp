@@ -1,5 +1,6 @@
 /** Agent RP profile bundle and preset-scoped character runtime. */
 
+import type {} from './roleplay-message-source.ts'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
@@ -845,9 +846,8 @@ export function installAgentRp(
         if (!input.plan.plan.tools.behavior.state.settleAutomatically) return { outcome: 'skipped' }
         const hasInlineStateAction = input.agent.session.snapshotEvents().some((event) => {
           if (event.type !== 'tool/result' || event.data.turn !== input.turn || event.data.error !== undefined) return false
-          const block = event.data.message.content[0]
           const intent = readRoleplayStateActionIntent(event.data.meta)
-          return block?.type === 'tool-result' && block.isError !== true
+          return event.data.message.isError !== true
             && intent?.turn === input.turn && intent.sessionId === String(input.agent.session.id)
         })
         return hasInlineStateAction
@@ -1291,7 +1291,7 @@ export function installAgentRp(
       })
     }
   })
-  ctx.on('agent/session-start', ({ agent, source }) => {
+  ctx.on('agent/created', ({ agent, source }) => {
     if (agentsByScope.get(agent) === agent && (source === 'startup' || source === 'clear')
       && supportsAgentRpSessionEvents(agent.session)) {
       ensureDefaultRoleplayTurnMode(agent.session, 'agent')

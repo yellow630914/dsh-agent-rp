@@ -193,7 +193,7 @@ function visibleText(event: Extract<SessionEvent, { type: 'assistant/message' }>
   return event.data.message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n').trim()
 }
 
-function replacementMessage(message: AssistantMessage, content: ContentBlock[] = message.content): AssistantMessage {
+function replacementMessage(message: AssistantMessage, content: readonly ContentBlock[] = message.content): AssistantMessage {
   const { kind: _kind, ...source } = message.source
   if (JSON.stringify(content) === JSON.stringify(message.content)) {
     return createAssistantMessage({ content, source })

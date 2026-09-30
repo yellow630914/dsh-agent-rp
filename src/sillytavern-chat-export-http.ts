@@ -1,5 +1,6 @@
 /** Same-origin download route for the active Roleplay transcript. */
 
+import { agentHasPendingInput } from './agent-inbox.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -52,7 +53,7 @@ export function installSillyTavernChatExportHttp(
         const agent = agents?.get(SessionId(sourceSessionId))
         const presets = hostCtx.get('agentPresets') as AgentPresetGateway | undefined
         if (presets === undefined || !agentHasAgentRpRuntime(presets, agent)) throw new Error('角色会话当前不可用')
-        if (agent.status !== 'idle' || agent.inbox.hasPending) throw new Error('请等待当前回复完成后再导出')
+        if (agent.status !== 'idle' || agentHasPendingInput(agent)) throw new Error('请等待当前回复完成后再导出')
         const events = agent.session.snapshotEvents()
         const activeCharacter = readActiveSessionCharacter(events)
         const card = activeCharacter === undefined ? undefined : cardFromImportMeta(activeCharacter.meta)

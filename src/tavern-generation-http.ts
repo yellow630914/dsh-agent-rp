@@ -5,10 +5,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import {
   BlockAssembler,
-  createMessage,
   createUserMessage,
   type GenerateOptions,
   type Message,
+  type RequestMessage,
 } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { renderContextSnapshot, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
@@ -22,7 +22,7 @@ import {
 import { roleplayModelHistory } from './roleplay-surface-overlay.ts'
 import { AGENT_RP_CAPABILITIES } from './extension-capability.ts'
 import { readActiveSessionPreset } from './import/session-preset.ts'
-import { injectSillyTavernInChatPrompts } from './preset-prompt.ts'
+import { injectSillyTavernInChatPrompts, requestOnlyModule } from './preset-prompt.ts'
 import { readTavernHelperState, tavernInjectedInChatPrompts } from './tavern-helper.ts'
 import {
   appendTavernAuxiliaryGenerationRequest,
@@ -326,11 +326,11 @@ export function tavernChatCompletionsEndpoint(value: string): URL {
   return result
 }
 
-function modelMessageText(message: Message): string {
+function modelMessageText(message: RequestMessage): string {
   return message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
 }
 
-function openAiPrompts(input: { readonly system?: string; readonly messages: readonly Message[] }): readonly TavernPrompt[] {
+function openAiPrompts(input: { readonly system?: string; readonly messages: readonly RequestMessage[] }): readonly TavernPrompt[] {
   return [
     ...(input.system === undefined ? [] : [{ role: 'system' as const, content: input.system }]),
     ...input.messages.flatMap(message => message.role === 'system' || message.role === 'user' || message.role === 'assistant'
@@ -390,7 +390,7 @@ function mergeCustomBody(target: Record<string, unknown>, source: Readonly<Recor
 }
 
 function prepareCustomGeneration(
-  input: { readonly system?: string; readonly messages: readonly Message[] },
+  input: { readonly system?: string; readonly messages: readonly RequestMessage[] },
   custom: ParsedCustomApiConfig,
   fallbackModel: string | undefined,
 ): PreparedCustomGeneration {
@@ -471,16 +471,12 @@ function parseRequest(value: unknown): { readonly sessionId: SessionId; readonly
 }
 
 function scriptMessage(item: TavernPrompt): Message {
-  return createMessage({
-    role: item.role,
-    source: { kind: 'plugin', plugin: 'dsh-agent-rp-tavern-helper' },
-    content: [{ type: 'text', text: item.content }],
-  })
+  return requestOnlyModule(item.role, 'dsh-agent-rp-tavern-helper', item.content)
 }
 
 function userInput(text: string): Message {
   return createUserMessage({
-    source: { kind: 'plugin', plugin: 'dsh-agent-rp-tavern-helper' },
+    source: { kind: 'agent-rp', plugin: 'dsh-agent-rp-tavern-helper' },
     content: [{ type: 'text', text }],
   })
 }
@@ -500,7 +496,7 @@ function orderedInput(
   system: string,
   context: string,
   history: readonly Message[],
-): { readonly system?: string; readonly messages: readonly Message[] } {
+): { readonly system?: string; readonly messages: readonly RequestMessage[] } {
   const systemParts: string[] = []
   const messages: Message[] = []
   const includeBase = (): void => {
@@ -545,7 +541,7 @@ async function generationInput(
   mode: 'preset' | 'raw',
   config: ParsedGenerationConfig,
   signal: AbortSignal,
-): Promise<{ readonly system?: string; readonly messages: readonly Message[] }> {
+): Promise<{ readonly system?: string; readonly messages: readonly RequestMessage[] }> {
   const assembly = await ctx.systemPrompt.assemble({ scope: agent, agent, signal })
   const input = orderedInput(
     mode,

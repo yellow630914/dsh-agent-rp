@@ -417,7 +417,7 @@ function latestTurnReply(
       if (event.surfaceOp === 'append') surface.add(event.seq)
       else if (event.surfaceOp !== undefined) {
         for (const seq of [...surface]) {
-          if (seq >= event.surfaceOp.start && seq <= event.surfaceOp.end) surface.delete(seq)
+          if (seq >= event.surfaceOp.startSeq && seq <= event.surfaceOp.endSeq) surface.delete(seq)
         }
         surface.add(event.seq)
       }
@@ -425,8 +425,7 @@ function latestTurnReply(
   }
   const actionReplies = events.flatMap(event => {
     if (event.type !== 'tool/result' || event.data.turn !== turn
-      || event.data.message.content[0]?.type !== 'tool-result'
-      || event.data.message.content[0].isError === true || event.data.error !== undefined) return []
+      || event.data.message.isError === true || event.data.error !== undefined) return []
     const intent = readRoleplayStateActionIntent(event.data.meta)
     if (intent === undefined || intent.turn !== turn) return []
     const assistant = events[intent.assistantEventSeq]
@@ -672,10 +671,11 @@ export function compileRoleplayActReceipt(
       step.toolCalls.push({ eventSeq: event.seq, callId, name: event.data.name })
       continue
     }
-    const block = event.data.message.content[0]
     const callId = String(event.data.message.source.callId)
     const callKey = roleplayActCallKey(event.data.step, callId)
-    if (block.type !== 'tool-result' || String(block.toolCallId) !== callId) {
+    // DSH 0.2.0 carries the answered call id on the tool-role message itself
+    // rather than inside a `tool-result` block.
+    if (String(event.data.message.toolCallId) !== callId) {
       throw new Error(`Roleplay tool result ${String(event.seq)} has inconsistent call identity`)
     }
     const call = calls.get(callKey)
@@ -691,7 +691,7 @@ export function compileRoleplayActReceipt(
     step.toolResults.push({
       eventSeq: event.seq,
       callId,
-      outcome: block.isError === true || event.data.error !== undefined ? 'failed' : 'succeeded',
+      outcome: event.data.message.isError === true || event.data.error !== undefined ? 'failed' : 'succeeded',
     })
   }
   for (const [callKey, call] of calls) {

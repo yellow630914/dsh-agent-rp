@@ -390,7 +390,7 @@ test('keeps state arithmetic out of the actor step and does not migrate resumed 
   const resumedScope = createScope(agentParentCtx, resumedAgent, { parent: presetKey })
   Object.assign(resumedAgent, { ctx: resumedScope.ctx })
   const disposeResumed = root.agents.register(resumedAgent)
-  agentEvents(root, resumedAgent).emit('agent/session-start', { source: 'resume' })
+  agentEvents(root, resumedAgent).emit('agent/created', { source: 'resume' })
   assert.equal(readRoleplayTurnMode(resumedSession.snapshotEvents()), 'conversation')
 
   const freshSession = Session.create(SessionId('state-action-fresh-default'))
@@ -398,7 +398,7 @@ test('keeps state arithmetic out of the actor step and does not migrate resumed 
   const freshScope = createScope(agentParentCtx, freshAgent, { parent: presetKey })
   Object.assign(freshAgent, { ctx: freshScope.ctx })
   const disposeFresh = root.agents.register(freshAgent)
-  agentEvents(root, freshAgent).emit('agent/session-start', { source: 'startup' })
+  agentEvents(root, freshAgent).emit('agent/created', { source: 'startup' })
   assert.equal(readRoleplayTurnMode(freshSession.snapshotEvents()), 'agent')
 
   context.after(async () => {
@@ -527,7 +527,7 @@ test('settles MVU after the visible reply through a replayable local-provider st
   session.append('step/start', { turn: 1, step: 2 })
   session.append('user/message', pending, { surfaceOp: 'append' })
   session.append('user/message', createUserMessage({
-    source: { kind: 'plugin', plugin: 'fixture-runtime-context' },
+    source: { kind: 'agent-rp', plugin: 'fixture-runtime-context' },
     content: [{
       type: 'text',
       text: 'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.',

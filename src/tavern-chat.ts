@@ -475,13 +475,13 @@ function setHidden(
   agent.session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: hiddenFloorMarker(nextHidden.length) }],
     source: {
-      kind: 'plugin',
+      kind: 'agent-rp',
       plugin: 'dsh-agent-rp-hidden-floors',
       form: 'notice',
       summary: `已隐藏前 ${nextHidden.length} 层对话`,
     },
   }), {
-    surfaceOp: { op: 'replace', start: SessionSeq(start), end: SessionSeq(end) },
+    surfaceOp: { op: 'replace', startSeq: SessionSeq(start), endSeq: SessionSeq(end) },
     sourceEventSeqs: shadowedSeqs.map(seq => SessionSeq(seq)),
   })
   for (const entry of restated) appendEntry(agent, entry, { surfaceOp: 'append' })

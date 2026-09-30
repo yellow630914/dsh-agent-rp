@@ -271,10 +271,10 @@ function resultIntent(
 ): RoleplayStateActionIntent | undefined {
   const intent = readRoleplayStateActionIntent(event.data.meta)
   if (intent === undefined) return undefined
-  const block = event.data.message.content[0]
   if (event.data.turn !== turn || intent.turn !== turn || intent.sessionId === ''
-    || block?.type !== 'tool-result' || block.isError === true || event.data.error !== undefined
-    || String(event.data.message.source.callId) !== intent.callId || String(block.toolCallId) !== intent.callId) {
+    || event.data.message.isError === true || event.data.error !== undefined
+    || String(event.data.message.source.callId) !== intent.callId
+    || String(event.data.message.toolCallId) !== intent.callId) {
     throw new Error('Roleplay state action result is not a successful causal tool result')
   }
   const call = events[intent.callEventSeq]

@@ -121,7 +121,7 @@ test('writes and exactly replays a prepared turn with a local newer DSH Host', a
   const staleExternal = createUserMessage({
     content: [{ type: 'text', text: '候选 Host 应覆盖的旧世界上下文。' }],
     source: {
-      kind: 'plugin', plugin: 'dsh-worldbook', form: 'snapshot', channel: 'candidate-host',
+      kind: 'agent-rp', plugin: 'dsh-worldbook', form: 'snapshot', channel: 'candidate-host',
       sections: [{ name: 'candidate-host', text: '候选 Host 应覆盖的旧世界上下文。' }],
     },
   })
@@ -131,7 +131,7 @@ test('writes and exactly replays a prepared turn with a local newer DSH Host', a
   const external = createUserMessage({
     content: [{ type: 'text', text: '候选 Host 外部世界上下文，不应进入收据。' }],
     source: {
-      kind: 'plugin', plugin: 'dsh-worldbook', form: 'snapshot', channel: 'candidate-host',
+      kind: 'agent-rp', plugin: 'dsh-worldbook', form: 'snapshot', channel: 'candidate-host',
       sections: [{ name: 'candidate-host', text: '候选 Host 外部世界上下文，不应进入收据。' }],
     },
   })

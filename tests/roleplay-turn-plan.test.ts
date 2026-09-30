@@ -26,7 +26,7 @@ import {
   roleplayVisibleDialogue,
   roleplayVisibleTranscript,
 } from '../src/prompt.ts'
-import { assembleSillyTavernPreset, prepareSillyTavernProviderMessages } from '../src/preset-prompt.ts'
+import { assembleSillyTavernPreset, prepareSillyTavernProviderMessages, requestOnlyModule } from '../src/preset-prompt.ts'
 import { renderRoleplayTurnStateContext } from '../src/roleplay-runtime-context.ts'
 import {
   prepareRoleplayTurn,
@@ -537,10 +537,7 @@ test('routes active world depth entries through the shared provider-message plan
     createMessage({
       role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '较早消息' }],
     }),
-    createMessage({
-      role: 'assistant', source: { kind: 'plugin', plugin: 'fixture' },
-      content: [{ type: 'text', text: '最近消息' }],
-    }),
+    requestOnlyModule('assistant', 'fixture', '最近消息'),
   ], plan.prompt)
   assert.deepEqual(messages.map(message => [message.role, message.content[0]?.type === 'text'
     ? message.content[0].text : '']), [

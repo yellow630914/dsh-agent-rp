@@ -170,7 +170,7 @@ function validateExternalContextReads(
   }
   for (const read of reads) {
     const event = eventsBySeq.get(read.eventSeq)
-    if (event?.type !== 'user/message' || event.data.source.kind !== 'plugin'
+    if (event?.type !== 'user/message' || event.data.source.kind !== 'agent-rp'
       || String(event.data.id) !== read.messageId
       || event.seq >= beforeSeq) {
       throw new Error('Roleplay turn record references unavailable external plugin context')

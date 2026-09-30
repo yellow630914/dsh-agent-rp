@@ -1,6 +1,6 @@
 /** Prompt Manager assembly for imported SillyTavern Chat Completion presets. */
 
-import { createMessage, type Message } from '@deepseek-ai/dsh-llm'
+import { createMessage, type Message, type RequestMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
 import type { ImportedCharacterCard } from './import/types.ts'
 import type {
@@ -275,14 +275,16 @@ function continuationPlan(
   return { ...continuation, nudgePrompt: macros.expand(continuation.nudgePrompt) }
 }
 
-function precedingToolTransactionStart(messages: readonly Message[], end: number): number | undefined {
+function precedingToolTransactionStart(messages: readonly RequestMessage[], end: number): number | undefined {
   const resultIds = new Set<string>()
   let cursor = end
   while (cursor > 0) {
     const message = messages[cursor - 1]!
-    const results = message.content.filter(block => block.type === 'tool-result')
-    if (message.role !== 'user' || results.length === 0 || results.length !== message.content.length) break
-    results.forEach(result => resultIds.add(String(result.toolCallId)))
+    // DSH 0.2.0 made a tool result its own `tool`-role message with the answered
+    // call id at the top level, instead of a `tool-result` block inside a
+    // user-role message.
+    if (message.role !== 'tool') break
+    resultIds.add(String(message.toolCallId))
     cursor -= 1
   }
   if (cursor === end || cursor === 0) return undefined
@@ -295,7 +297,7 @@ function precedingToolTransactionStart(messages: readonly Message[], end: number
   return cursor - 1
 }
 
-function trailingToolTransactionStart(messages: readonly Message[]): number {
+function trailingToolTransactionStart(messages: readonly RequestMessage[]): number {
   let start = messages.length
   while (true) {
     const preceding = precedingToolTransactionStart(messages, start)
@@ -311,12 +313,19 @@ function trailingToolTransactionStart(messages: readonly Message[]): number {
  * from the message itself. A module message carries exactly one. An in-chat
  * message carries every prompt that was joined into it, in join order.
  */
+/**
+ * One assembled request message beside the preset modules it came from.
+ *
+ * `RequestMessage` rather than `Message`: DSH 0.2.0 separated "a durable
+ * conversation message" from "a message used for one request", and the loop
+ * hands the plugin the latter.
+ */
 export interface AttributedMessage {
-  readonly message: Message
+  readonly message: RequestMessage
   readonly origins: readonly RoleplayPromptOrigin[]
 }
 
-function carried(messages: readonly Message[]): AttributedMessage[] {
+function carried(messages: readonly RequestMessage[]): AttributedMessage[] {
   return messages.map(message => ({ message, origins: [] }))
 }
 
@@ -342,11 +351,7 @@ export function injectAttributedInChatPrompts(
         const content = contributing.map(prompt => prompt.content.trim()).join('\n')
         if (content === '') continue
         injected.push({
-          message: createMessage({
-            role,
-            source: { kind: 'plugin', plugin: 'dsh-agent-rp-preset-in-chat' },
-            content: [{ type: 'text', text: content }],
-          }),
+          message: requestOnlyModule(role, 'dsh-agent-rp-preset-in-chat', content),
           origins: contributing.flatMap(prompt => prompt.origin === undefined ? [] : [prompt.origin]),
         })
       }
@@ -358,18 +363,44 @@ export function injectAttributedInChatPrompts(
 
 /** Insert expanded in-chat modules using SillyTavern's depth, priority, and role ordering. */
 export function injectSillyTavernInChatPrompts(
-  messages: readonly Message[],
+  messages: readonly RequestMessage[],
   prompts: readonly RoleplayInChatPrompt[],
-): Message[] {
+): RequestMessage[] {
   return injectAttributedInChatPrompts(carried(messages), prompts).map(item => item.message)
 }
 
-function orderedMessage(prompt: RoleplayOrderedPrompt): Message {
-  return createMessage({
-    role: prompt.role,
-    source: { kind: 'plugin', plugin: 'dsh-agent-rp-preset' },
-    content: [{ type: 'text', text: prompt.content }],
+/**
+ * Build one request-only preset module, keeping its SillyTavern role.
+ *
+ * DSH 0.2.0 constrains durable messages by role: `system` must carry the
+ * `system-prompt` source kind and `assistant` must carry a model source, so
+ * producer attribution now belongs on `user` and `developer` messages. A
+ * SillyTavern preset module cannot follow that: its role is part of the preset's
+ * meaning, and claiming a model produced an assistant-role module would be a
+ * false provenance.
+ *
+ * These modules are **request-only** — they are assembled into `options.messages`
+ * for one model request and never appended to the Session log, so they never
+ * reach the durable-format validator that enforces those pairings. That is what
+ * the cast asserts, and why it is confined to this one builder.
+ * @param role - the module's SillyTavern role, sent to the provider as-is.
+ * @param plugin - the Agent RP subsystem that assembled it.
+ * @param text - the module's rendered content.
+ * @returns an identified message shaped for one request.
+ */
+export function requestOnlyModule(role: RoleplayPromptRole, plugin: string, text: string): Message {
+  // Built through the user-role factory so the identity and freezing are the
+  // library's, then given back its SillyTavern role.
+  const identified = createMessage({
+    role: 'user',
+    source: { kind: 'agent-rp', plugin },
+    content: [{ type: 'text', text }],
   })
+  return Object.freeze({ ...identified, role }) as unknown as Message
+}
+
+function orderedMessage(prompt: RoleplayOrderedPrompt): Message {
+  return requestOnlyModule(prompt.role, 'dsh-agent-rp-preset', prompt.content)
 }
 
 /**
@@ -395,23 +426,23 @@ export function injectAttributedPromptPlan(
 }
 
 export function injectSillyTavernPromptPlan(
-  messages: readonly Message[],
+  messages: readonly RequestMessage[],
   plan: RoleplayProviderPromptPlan,
-): Message[] {
+): RequestMessage[] {
   return injectAttributedPromptPlan(carried(messages), plan).map(item => item.message)
 }
 
-function isContinueInstruction(message: Message): boolean {
+function isContinueInstruction(message: RequestMessage): boolean {
   const source = message.source as Message['source'] & { readonly operation?: unknown }
-  return source.kind === 'plugin' && source.plugin === 'dsh-agent-rp-generation'
+  return source.kind === 'agent-rp' && source.plugin === 'dsh-agent-rp-generation'
     && source.operation === 'continue'
 }
 
-function messageText(message: Message): string {
+function messageText(message: RequestMessage): string {
   return message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
 }
 
-function withContinuationPostfix(message: Message, postfix: SillyTavernPresetContinuation['postfix']): Message {
+function withContinuationPostfix(message: RequestMessage, postfix: SillyTavernPresetContinuation['postfix']): RequestMessage {
   if (postfix === '') return message
   const content = [...message.content]
   const textIndex = content.findLastIndex(block => block.type === 'text')
@@ -445,16 +476,18 @@ export function applyAttributedContinuation(
   if (nudge === '') return [...messages]
   return messages.map((item, index) => index === instructionIndex
     ? {
-        message: { ...item.message, role: 'system' as const, content: [{ type: 'text' as const, text: nudge }] },
+        // The nudge replaces the continue instruction outright, so it is a fresh
+        // request-only module rather than an edit of the original message.
+        message: requestOnlyModule('system', 'dsh-agent-rp-preset', nudge),
         origins: [{ kind: 'continuation' as const, label: '续写推动' }],
       }
     : item)
 }
 
 export function applySillyTavernContinuation(
-  messages: readonly Message[],
+  messages: readonly RequestMessage[],
   continuation: RoleplayContinuationPlan | undefined,
-): Message[] {
+): RequestMessage[] {
   return applyAttributedContinuation(carried(messages), continuation).map(item => item.message)
 }
 
@@ -466,7 +499,7 @@ export function applySillyTavernContinuation(
  * order the provider did not receive.
  */
 export function prepareAttributedProviderMessages(
-  messages: readonly Message[],
+  messages: readonly RequestMessage[],
   plan: RoleplayProviderPromptPlan,
 ): AttributedMessage[] {
   return applyAttributedContinuation(
@@ -477,9 +510,9 @@ export function prepareAttributedProviderMessages(
 
 /** Produce the exact provider-facing order after prompt placement and continuation handling. */
 export function prepareSillyTavernProviderMessages(
-  messages: readonly Message[],
+  messages: readonly RequestMessage[],
   plan: RoleplayProviderPromptPlan,
-): Message[] {
+): RequestMessage[] {
   return prepareAttributedProviderMessages(messages, plan).map(item => item.message)
 }
 

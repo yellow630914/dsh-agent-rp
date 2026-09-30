@@ -81,7 +81,7 @@ function reviewRequest(
       '只返回审阅后的完整回复，不要说明修改过程。原文无需修改时逐字返回原文。',
     ].join('\n'),
     messages: [createUserMessage({
-      source: { kind: 'plugin', plugin: 'dsh-agent-rp-narrative-review' },
+      source: { kind: 'agent-rp', plugin: 'dsh-agent-rp-narrative-review' },
       content: [{ type: 'text', text: `<roleplay_reply>\n${source}\n</roleplay_reply>` }],
     })],
     signal: input.signal,

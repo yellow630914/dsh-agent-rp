@@ -98,7 +98,7 @@ function supplementRequest(
     model: options.model,
     reasoningEffort: ReasoningEffortId('off'),
     messages: [createUserMessage({
-      source: { kind: 'plugin', plugin: 'dsh-agent-rp' },
+      source: { kind: 'agent-rp', plugin: 'dsh-agent-rp' },
       content: [{
         type: 'text',
         text: [

@@ -351,7 +351,7 @@ function settlementRequest(
       ...stateOperationContract(target),
     ].join('\n'),
     messages: [createUserMessage({
-      source: { kind: 'plugin', plugin: 'dsh-agent-rp' },
+      source: { kind: 'agent-rp', plugin: 'dsh-agent-rp' },
       content: [{
         type: 'text',
         text: evidence,
@@ -390,7 +390,7 @@ function settlementVerificationRequest(
       ...stateOperationContract(target),
     ].join('\n'),
     messages: [createUserMessage({
-      source: { kind: 'plugin', plugin: 'dsh-agent-rp' },
+      source: { kind: 'agent-rp', plugin: 'dsh-agent-rp' },
       content: [{
         type: 'text',
         text: evidence,

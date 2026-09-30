@@ -174,7 +174,7 @@ function appendMessageEvents(
         content: [{ type: 'text', text: message.text }],
         source: message.kind === 'user'
           ? { kind: 'user' }
-          : { kind: 'plugin', plugin: 'dsh-agent-rp', form: 'recall' },
+          : { kind: 'agent-rp', plugin: 'dsh-agent-rp', form: 'recall' },
       }),
       surfaceOp: 'append',
     })

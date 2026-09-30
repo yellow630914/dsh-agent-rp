@@ -3,10 +3,10 @@ import test from 'node:test'
 import {
   ToolCallId,
   createAssistantMessage,
-  createMessage,
   createToolResultMessage,
   createUserMessage,
   type Message,
+  type RequestMessage,
 } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { ImportedSillyTavernPreset } from '../src/import/sillytavern-preset.ts'
@@ -18,6 +18,8 @@ import {
   injectSillyTavernPromptPlan,
   prepareSillyTavernProviderMessages,
   splitRoleplaySystemPrompt,
+  requestOnlyModule,
+  type RoleplayPromptRole,
 } from '../src/preset-prompt.ts'
 import { EjsTemplateEngine } from '../src/ejs-template.ts'
 
@@ -204,11 +206,11 @@ test('keeps changing world context behind the reusable dialogue prefix', () => {
     includeHistory: true,
   })
 
-  const signature = (messages: readonly Message[]) => messages.map(item => ({
+  const signature = (messages: readonly RequestMessage[]) => messages.map(item => ({
     role: item.role,
     content: item.content,
   }))
-  const text = (message: Message | undefined): string => {
+  const text = (message: RequestMessage | undefined): string => {
     const block = message?.content[0]
     return block?.type === 'text' ? block.text : ''
   }
@@ -246,12 +248,12 @@ test('keeps changing state after stable world context across continuous turns an
   ]
   const thirdUnchanged = prepareSillyTavernProviderMessages(thirdHistory, plan('回合=2'))
   const thirdChanged = prepareSillyTavernProviderMessages(thirdHistory, plan('回合=3'))
-  const signature = (value: Message): string => JSON.stringify({ role: value.role, content: value.content })
+  const signature = (value: RequestMessage): string => JSON.stringify({ role: value.role, content: value.content })
   const textOf = (value: Message | undefined): string | undefined => {
     const block = value?.content[0]
     return block?.type === 'text' ? block.text : undefined
   }
-  const firstDifference = (left: readonly Message[], right: readonly Message[]): number => {
+  const firstDifference = (left: readonly RequestMessage[], right: readonly RequestMessage[]): number => {
     const through = Math.min(left.length, right.length)
     for (let index = 0; index < through; index += 1) {
       if (signature(left[index]!) !== signature(right[index]!)) return index
@@ -442,18 +444,14 @@ test('renders EJS in imported preset modules and drops only a failing module', a
   assert.equal(assembled.templateFailureCount, 1)
 })
 
-function message(role: Message['role'], text: string): Message {
-  return createMessage({
-    role,
-    source: role === 'user' ? { kind: 'user' } : { kind: 'plugin', plugin: 'fixture' },
-    content: [{ type: 'text', text }],
-  })
+function message(role: RoleplayPromptRole, text: string): RequestMessage {
+  return requestOnlyModule(role, 'fixture', text)
 }
 
 function continueInstruction(): Message {
   return createUserMessage({
     source: {
-      kind: 'plugin', plugin: 'dsh-agent-rp-generation', operation: 'continue', form: 'notice', summary: '正在续写',
+      kind: 'agent-rp', plugin: 'dsh-agent-rp-generation', operation: 'continue', form: 'notice', summary: '正在续写',
     } as never,
     content: [{ type: 'text', text: '通用续写指令' }],
   })

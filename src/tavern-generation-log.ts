@@ -1,6 +1,6 @@
 /** Durable audit records for auxiliary model calls made by isolated Tavern scripts. */
 
-import type { Message } from '@deepseek-ai/dsh-llm'
+import type { RequestMessage } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
@@ -10,7 +10,7 @@ export interface TavernHostGenerationDispatch {
   readonly kind: 'host-model'
   readonly provider: string
   readonly model: string
-  readonly messages: readonly Message[]
+  readonly messages: readonly RequestMessage[]
   readonly system?: string
   readonly temperature?: number
   readonly maxTokens?: number

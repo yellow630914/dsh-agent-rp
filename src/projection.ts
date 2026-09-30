@@ -585,8 +585,8 @@ function applyShadowedSeqs(
   }
   const operation = event.surfaceOp
   if (operation === undefined || operation === 'append') return shadowed
-  const start = surface.findIndex(value => value.seq === operation.start)
-  const end = surface.findIndex(value => value.seq === operation.end)
+  const start = surface.findIndex(value => value.seq === operation.startSeq)
+  const end = surface.findIndex(value => value.seq === operation.endSeq)
   if (start < 0 || end < start) return shadowed
   const dropped = surface.slice(start, end + 1).map(value => value.seq)
   return dropped.length === 0 ? shadowed : [...shadowed, ...dropped]
@@ -615,8 +615,8 @@ function applySurface(
   const operation = event.surfaceOp
   if (operation === undefined) return surface
   if (operation === 'append') return [...surface, node]
-  const start = surface.findIndex(value => value.seq === operation.start)
-  const end = surface.findIndex(value => value.seq === operation.end)
+  const start = surface.findIndex(value => value.seq === operation.startSeq)
+  const end = surface.findIndex(value => value.seq === operation.endSeq)
   if (start < 0 || end < start) return surface
   return [
     ...surface.slice(0, start),
@@ -782,12 +782,13 @@ function worldInfoProjectionUncached(
 }
 
 function toolCallId(event: Extract<SessionEvent, { type: 'tool/result' }>): string | undefined {
-  const first = event.data.message.content[0]
-  return first === undefined ? undefined : String(first.toolCallId)
+  // DSH 0.2.0 carries both on the tool-role message instead of inside a
+  // `tool-result` block, so a result without content still identifies its call.
+  return String(event.data.message.toolCallId)
 }
 
 function toolFailed(event: Extract<SessionEvent, { type: 'tool/result' }>): boolean {
-  return event.data.message.content[0]?.isError === true
+  return event.data.message.isError === true
 }
 
 function parseCharacterMeta(value: JsonValue | undefined): CharacterImportMeta | undefined {

@@ -352,7 +352,7 @@ test('routes a continuation-only plan through the final provider message seam', 
       }),
       createUserMessage({
         source: {
-          kind: 'plugin', plugin: 'dsh-agent-rp-generation', operation: 'continue',
+          kind: 'agent-rp', plugin: 'dsh-agent-rp-generation', operation: 'continue',
           form: 'notice', summary: '正在续写',
         } as never,
         content: [{ type: 'text', text: '通用续写指令' }],

@@ -15,7 +15,7 @@
  * Session log, so a preview never changes what a replay reconstructs.
  */
 
-import type { ContentBlock, Message } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, Message, RequestMessage } from '@deepseek-ai/dsh-llm'
 import type { AttributedMessage } from './preset-prompt.ts'
 import type { RoleplayPromptOrigin, RoleplayPromptOriginKind } from './prompt-origin.ts'
 import {
@@ -76,16 +76,15 @@ export function approximatePromptTokens(text: string): number {
  * provider is charged for, so both are unwrapped: a preview that silently showed
  * them as empty would understate exactly the rows a long agent turn is made of.
  */
-function messageText(message: Message): string {
+function messageText(message: RequestMessage): string {
   const textOf = (blocks: readonly ContentBlock[]): string[] => blocks.flatMap(block =>
     block.type === 'text' ? [block.text]
       : block.type === 'tool-call' ? [`${block.name}(${block.arguments})`]
-        : block.type === 'tool-result' ? textOf(block.content)
-          : [])
+        : [])
   return textOf(message.content).join('\n')
 }
 
-function reasoningText(message: Message): string {
+function reasoningText(message: RequestMessage): string {
   return message.content.flatMap(block => block.type === 'reasoning' ? [block.text] : []).join('')
 }
 
@@ -96,21 +95,19 @@ function snippetOf(text: string): string {
     : `${collapsed.slice(0, PROMPT_PREVIEW_SNIPPET_CHARS)}…`
 }
 
-function toolCallNames(message: Message): readonly string[] {
+function toolCallNames(message: RequestMessage): readonly string[] {
   return message.content.flatMap(block => block.type === 'tool-call' ? [block.name] : [])
 }
 
 /** Name one chat row from the message itself; it is its own source. */
-function historyOrigin(message: Message): { readonly label: string; readonly detail?: string } {
+function historyOrigin(message: RequestMessage): { readonly label: string; readonly detail?: string } {
   const source = message.source as Message['source'] & Record<string, unknown>
   const rewritten = typeof source[PROMPT_REGEX_SOURCE_MARKER] === 'object'
   const calls = toolCallNames(message)
-  // A tool result is carried as a user-role message, so the role alone would
-  // file it under the player's own lines.
-  const toolResult = message.content.some(block => block.type === 'tool-result')
-  const label = toolResult ? '工具结果'
+  const label = message.role === 'tool' ? '工具结果'
     : message.role === 'user' ? '玩家消息'
-      : message.role === 'assistant' ? '角色消息' : '系统消息'
+      : message.role === 'assistant' ? '角色消息'
+        : message.role === 'developer' ? '工具变更' : '系统消息'
   const notes = [
     ...(rewritten ? ['已由正则改写'] : []),
     ...(calls.length === 0 ? [] : [`工具调用 ${calls.join('、')}`]),

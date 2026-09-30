@@ -191,12 +191,12 @@ export function readRoleplayArtifactStageRecord(
 }
 
 function resultCallId(event: Extract<SessionEvent, { readonly type: 'tool/result' }>): string | undefined {
-  const first = event.data.message.content[0]
-  return first === undefined ? undefined : String(first.toolCallId)
+  // DSH 0.2.0 carries the answered call id on the tool-role message itself.
+  return String(event.data.message.toolCallId)
 }
 
 function resultFailed(event: Extract<SessionEvent, { readonly type: 'tool/result' }>): boolean {
-  return event.data.message.content[0]?.isError === true
+  return event.data.message.isError === true
 }
 
 function currentStageCall(
@@ -268,11 +268,10 @@ function boundedCaption(value: string | undefined): string | undefined {
 }
 
 function imagesFromContent(content: readonly ContentBlock[]): readonly RoleplayToolImageArtifact[] {
-  return content.flatMap(block => {
-    if (block.type === 'image') return [{ type: 'image' as const, attachment: block.attachment }]
-    if (block.type === 'tool-result') return imagesFromContent(block.content)
-    return []
-  })
+  // DSH 0.2.0 made a tool result its own message, so its blocks are no longer
+  // nested inside a `tool-result` wrapper and this no longer has to recurse.
+  return content.flatMap(block =>
+    block.type === 'image' ? [{ type: 'image' as const, attachment: block.attachment }] : [])
 }
 
 function uniqueArtifacts(artifacts: readonly RoleplayToolImageArtifact[]): readonly RoleplayToolImageArtifact[] {

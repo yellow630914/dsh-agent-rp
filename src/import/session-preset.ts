@@ -148,8 +148,8 @@ export function readActiveSessionPreset(events: readonly SessionEvent[]): Active
       }
       continue
     }
-    if (event.type !== 'tool/result' || event.data.message.content[0]?.isError === true) continue
-    const callId = String(event.data.message.content[0]?.toolCallId)
+    if (event.type !== 'tool/result' || event.data.message.isError === true) continue
+    const callId = String(event.data.message.toolCallId)
     const call = events.find(candidate => candidate.type === 'tool/call' && String(candidate.data.callId) === callId)
     if (call?.type !== 'tool/call' || call.data.name !== 'import_sillytavern_preset') continue
     const meta = parseMeta(event.data.meta)

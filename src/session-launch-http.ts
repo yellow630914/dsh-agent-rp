@@ -1,5 +1,6 @@
 /** Same-origin creation of complete seeded Agent RP Sessions on public DSH. */
 
+import { agentHasPendingInput } from './agent-inbox.ts'
 import { randomUUID } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 import { normalize as normalizePath, win32 as win32Path } from 'node:path'
@@ -152,7 +153,7 @@ export async function launchAgentRpSession(
   if (carriesSourceIdentity) {
     const verb = request.kind === 'rewrite' ? '改写' : '分支'
     if (!agentHasAgentRpRuntime(agentPresets, source)) throw new Error(`只能${verb} Agent RP 角色会话`)
-    if (source.status !== 'idle' || source.inbox.hasPending) throw new Error(`请等待当前回复完成后再${verb}`)
+    if (source.status !== 'idle' || agentHasPendingInput(source)) throw new Error(`请等待当前回复完成后再${verb}`)
   }
   let prepared = request.kind === 'rewrite'
     ? prepareAgentRpRewriteSession(source.session, request.turn, titles?.get(source.session)?.title)
@@ -161,7 +162,7 @@ export async function launchAgentRpSession(
       : prepareAgentRpSession(characters, chats, presetLibrary, worldInfos, request, resources)
   if (request.kind === 'character' && request.memory === 'copy-active') {
     if (!agentHasAgentRpRuntime(agentPresets, source)) throw new Error('只能从角色会话继承记忆')
-    if (source.status !== 'idle' || source.inbox.hasPending) throw new Error('请等待当前回复完成后再继承记忆')
+    if (source.status !== 'idle' || agentHasPendingInput(source)) throw new Error('请等待当前回复完成后再继承记忆')
     const sourceCharacter = readActiveSessionCharacter(source.session.snapshotEvents())
     if (sourceCharacter?.result.libraryId !== request.characterId) throw new Error('只能把记忆带给同一个角色')
     const memory = readAgentRpMemoryHistory(source.session.snapshotEvents()).active

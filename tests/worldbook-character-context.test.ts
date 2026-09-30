@@ -58,7 +58,7 @@ test('unregisters only the matching live session contribution', () => {
 
 const worldbookMessage = (text: string) => createUserMessage({
   content: [{ type: 'text', text }],
-  source: { kind: 'plugin', plugin: 'dsh-worldbook', form: 'instructions' },
+  source: { kind: 'agent-rp', plugin: 'dsh-worldbook', form: 'instructions' },
 })
 
 test('publishes each external Worldbook position as an independent snapshot channel', () => {
@@ -66,14 +66,14 @@ test('publishes each external Worldbook position as an independent snapshot chan
   const second = worldbookMessage('second')
   const ordinary = createUserMessage({
     content: [{ type: 'text', text: 'ordinary' }],
-    source: { kind: 'plugin', plugin: 'other', form: 'instructions' },
+    source: { kind: 'agent-rp', plugin: 'other', form: 'instructions' },
   })
   const result = coalesceWorldbookSnapshot([first, ordinary, second])
 
   assert.equal(result.length, 3)
   assert.deepEqual(result[0]?.content, [{ type: 'text', text: 'first' }])
   assert.deepEqual(result[0]?.source, {
-    kind: 'plugin',
+    kind: 'agent-rp',
     plugin: 'dsh-worldbook',
     form: 'snapshot',
     channel: 'agent-rp:inbox-gap:0:0',
@@ -82,7 +82,7 @@ test('publishes each external Worldbook position as an independent snapshot chan
   assert.equal(result[1], ordinary)
   assert.deepEqual(result[2]?.content, [{ type: 'text', text: 'second' }])
   assert.deepEqual(result[2]?.source, {
-    kind: 'plugin',
+    kind: 'agent-rp',
     plugin: 'dsh-worldbook',
     form: 'snapshot',
     channel: 'agent-rp:inbox-gap:1:0',
@@ -106,14 +106,14 @@ test('clears absent channels only on a direct user turn', () => {
   assert.equal(result[0], ordinary)
   assert.deepEqual(result.slice(1).map(message => message.source), [
     {
-      kind: 'plugin', plugin: 'dsh-worldbook', form: 'snapshot',
+      kind: 'agent-rp', plugin: 'dsh-worldbook', form: 'snapshot',
       channel: 'agent-rp:inbox-gap:0:0', sections: [],
     },
     {
-      kind: 'plugin', plugin: 'dsh-worldbook', form: 'snapshot',
+      kind: 'agent-rp', plugin: 'dsh-worldbook', form: 'snapshot',
       channel: 'agent-rp:inbox-gap:1:0', sections: [],
     },
-    { kind: 'plugin', plugin: 'dsh-worldbook', form: 'snapshot', sections: [] },
+    { kind: 'agent-rp', plugin: 'dsh-worldbook', form: 'snapshot', sections: [] },
   ])
   assert.deepEqual(result.slice(1).map(message => message.content), [[], [], []])
 })
@@ -147,7 +147,7 @@ test('leaves Worldbook messages unchanged when the Host has no channel capabilit
     assert.equal(decision.messages.length, 2)
     const source = decision.messages[0]?.source
     assert.equal(source?.kind, 'plugin')
-    if (source?.kind === 'plugin') assert.equal(source.form, 'instructions')
+    if (source?.kind === 'agent-rp') assert.equal(source.form, 'instructions')
     assert.equal(decision.messages[1], ordinary)
   }
 
@@ -214,11 +214,11 @@ test('adapts a later-loaded Worldbook injector without moving either side of the
     assert.equal(cleared.messages[0], nextUser)
     assert.deepEqual(cleared.messages.slice(1).map(message => message.source), [
       {
-        kind: 'plugin', plugin: 'dsh-worldbook', form: 'snapshot',
+        kind: 'agent-rp', plugin: 'dsh-worldbook', form: 'snapshot',
         channel: 'agent-rp:inbox-gap:0:0', sections: [],
       },
       {
-        kind: 'plugin', plugin: 'dsh-worldbook', form: 'snapshot',
+        kind: 'agent-rp', plugin: 'dsh-worldbook', form: 'snapshot',
         channel: 'agent-rp:inbox-gap:1:0', sections: [],
       },
     ])

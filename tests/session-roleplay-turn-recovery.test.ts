@@ -106,7 +106,7 @@ test('persists one content-free plan receipt before dispatch and rejects retry d
   session.append('turn/start', { turn: 1 })
   const persistent = createUserMessage({
     source: {
-      kind: 'plugin', plugin: 'dsh-worldbook', form: 'snapshot', channel: 'persistent',
+      kind: 'agent-rp', plugin: 'dsh-worldbook', form: 'snapshot', channel: 'persistent',
       sections: [{ name: 'persistent', text: '持续生效但不应复制的世界正文。' }],
     },
     content: [{ type: 'text', text: '持续生效但不应复制的世界正文。' }],
@@ -114,7 +114,7 @@ test('persists one content-free plan receipt before dispatch and rejects retry d
   const persistentEvent = session.append('user/message', persistent, { surfaceOp: 'append' })
   const stale = createUserMessage({
     source: {
-      kind: 'plugin', plugin: 'dsh-worldbook', form: 'snapshot', channel: 'fixture',
+      kind: 'agent-rp', plugin: 'dsh-worldbook', form: 'snapshot', channel: 'fixture',
       sections: [{ name: 'fixture', text: '同频道旧世界正文。' }],
     },
     content: [{ type: 'text', text: '同频道旧世界正文。' }],
@@ -138,7 +138,7 @@ test('persists one content-free plan receipt before dispatch and rejects retry d
   session.append('user/message', message, { surfaceOp: 'append' })
   const external = createUserMessage({
     source: {
-      kind: 'plugin', plugin: 'dsh-worldbook', form: 'snapshot', channel: 'fixture',
+      kind: 'agent-rp', plugin: 'dsh-worldbook', form: 'snapshot', channel: 'fixture',
       sections: [{ name: 'fixture', text: '不应复制进回合收据的世界正文。' }],
     },
     content: [{ type: 'text', text: '不应复制进回合收据的世界正文。' }],
@@ -164,7 +164,7 @@ test('persists one content-free plan receipt before dispatch and rejects retry d
   assert.equal(records[0]?.data.reference.receipt.memoryWriteAvailable, true)
   assert.deepEqual(records[0]?.data.reference.receipt.recall, dispatchedPlan.recall)
   const expectedContextReads = session.deriveMessages()
-    .filter(value => value.source.kind === 'plugin')
+    .filter(value => value.source.kind === 'agent-rp')
     .map((value) => {
       const event = session.snapshotEvents().find(candidate =>
         candidate.type === 'user/message' && String(candidate.data.id) === String(value.id))

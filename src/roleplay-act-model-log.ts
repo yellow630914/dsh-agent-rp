@@ -1,6 +1,6 @@
 /** Durable requests and results for auxiliary model calls owned by the Roleplay act phase. */
 
-import type { GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, RequestMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { RoleplayResponseRepairPlan, RoleplayTurnPlan } from './roleplay-turn-plan.ts'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
@@ -9,7 +9,7 @@ import { appendAgentRpSessionEvent } from './session-event-compat.ts'
 export interface RoleplayActModelDispatch {
   readonly provider: string
   readonly model: string
-  readonly messages: readonly Message[]
+  readonly messages: readonly RequestMessage[]
   readonly system?: string
   readonly reasoningEffort?: string
   readonly temperature?: number

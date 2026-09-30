@@ -113,7 +113,7 @@ function validateImport(events: readonly SessionEvent[], resultEvent: SessionEve
   const call = resultEvent.sourceEventSeqs?.length === 1 ? events[resultEvent.sourceEventSeqs[0]!] : undefined
   if (call?.type !== 'tool/call' || call.data.name !== 'import_world_info'
     || call.seq >= resultEvent.seq
-    || String(call.data.callId) !== String(resultEvent.data.message.content[0].toolCallId)) {
+    || String(call.data.callId) !== String(resultEvent.data.message.toolCallId)) {
     throw new Error('import_world_info result does not cite its direct tool call')
   }
   let callArguments: unknown
@@ -218,8 +218,8 @@ export function readActiveSessionWorldInfos(events: readonly SessionEvent[]): Ac
       })
       continue
     }
-    if (event.type !== 'tool/result' || event.data.message.content[0].isError === true) continue
-    const callId = String(event.data.message.content[0].toolCallId)
+    if (event.type !== 'tool/result' || event.data.message.isError === true) continue
+    const callId = String(event.data.message.toolCallId)
     const call = events.find(candidate => candidate.type === 'tool/call' && String(candidate.data.callId) === callId)
     if (call?.type !== 'tool/call' || call.data.name !== 'import_world_info') continue
     const imported = validateImport(events, event)

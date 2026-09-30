@@ -388,7 +388,7 @@ function generateOptions(
     maxTokens: Math.min(base.maxTokens ?? maxTokens, maxTokens),
     system,
     messages: [createUserMessage({
-      source: { kind: 'plugin', plugin: 'dsh-agent-rp-story-engine' },
+      source: { kind: 'agent-rp', plugin: 'dsh-agent-rp-story-engine' },
       content: [{ type: 'text', text: body }],
     })],
     signal: input.signal,

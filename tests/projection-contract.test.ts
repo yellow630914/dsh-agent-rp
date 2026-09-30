@@ -160,7 +160,7 @@ test('a prompt-only rewrite of a player message never takes that row off the scr
       [PROMPT_REGEX_SOURCE_MARKER]: { format: 0, originalSeq: Number(original.seq) },
     } as never,
   }), {
-    surfaceOp: { op: 'replace', start: SessionSeq(Number(original.seq)), end: SessionSeq(Number(original.seq)) },
+    surfaceOp: { op: 'replace', startSeq: SessionSeq(Number(original.seq)), endSeq: SessionSeq(Number(original.seq)) },
     sourceEventSeqs: [SessionSeq(Number(original.seq))],
   })
 

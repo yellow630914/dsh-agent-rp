@@ -686,31 +686,45 @@ const openRoleplaySessionToolsEvent = 'dsh-agent-rp-open-session-tools'
  * Which Session the player is looking at.
  *
  * DSH 0.2.0 moved view selection out of the Session Controller — the comment on
- * its client service now reads "view selection remains outside the Controller" —
- * so `sessions.list` no longer carries a `current` id, and the service that does
- * own navigation (`uiWorkspace`) is an app-level service that publishes no types
- * to plugins.
+ * its client service reads "view selection remains outside the Controller" — so
+ * `sessions.list` no longer carries a `current` id. The UI adapter that renders
+ * `session` and `session-maybe` scopes does still track it: `uiSession.adapter`
+ * publishes the default binding every scoped entry inherits, and that binding's
+ * `key` is the selected Session (absent when none is).
  *
- * Agent RP only needs it for root-scoped surfaces (the sidebar destination, the
- * avatar loader, the script-extension host, the Worker model catalog); every
- * session-scoped surface already receives its own `sessionId`. So the visible
- * Session reports itself from the session-scoped header, and those root surfaces
- * read it here.
+ * Agent RP needs it for its root-scoped surfaces — the sidebar workbench, the
+ * avatar loader, the script-extension host, the Worker model catalog — which get
+ * no `sessionId` of their own. Every session-scoped surface already receives one.
  */
 const visibleSession = (() => {
   let current: SessionId | undefined
+  let source: { subscribe(listener: () => void): () => void; getSnapshot(): { readonly key?: string } } | undefined
   const listeners = new Set<() => void>()
+  const publish = (next: SessionId | undefined): void => {
+    if (current === next) return
+    current = next
+    for (const listener of listeners) listener()
+  }
   return {
     get: (): SessionId | undefined => current,
     subscribe: (listener: () => void): (() => void) => {
       listeners.add(listener)
       return () => { listeners.delete(listener) }
     },
-    /** Called by the session-scoped header for the Session the player is in. */
-    report: (sessionId: SessionId | undefined): void => {
-      if (current === sessionId) return
-      current = sessionId
-      for (const listener of listeners) listener()
+    /**
+     * Follow the UI adapter's current scope binding.
+     * @param ctx - client context carrying `uiSession`.
+     * @returns the disposer for the adapter subscription.
+     */
+    follow: (ctx: ClientContext): (() => void) => {
+      const adapter = (ctx.get('uiSession') as {
+        readonly adapter?: { subscribe(listener: () => void): () => void; getSnapshot(): { readonly key?: string } }
+      } | undefined)?.adapter
+      if (adapter === undefined) return () => {}
+      source = adapter
+      const read = (): void => { publish(source?.getSnapshot().key as SessionId | undefined) }
+      read()
+      return adapter.subscribe(read)
     },
   }
 })()
@@ -4371,13 +4385,6 @@ function RoleplayHeader({
   const summary = useSessions(state => state.byId[sessionId])
   const projected = useProjection('agentRp')
   const projection = roleplaySummary(summary, projected)
-  // This header only mounts for the Session the player is looking at, which is
-  // the one signal Agent RP's root-scoped surfaces have since DSH 0.2.0 moved
-  // view selection out of the Session Controller.
-  useEffect(() => {
-    visibleSession.report(sessionId)
-    return () => { visibleSession.report(undefined) }
-  }, [sessionId])
   const debugEnabled = useSyncExternalStore(
     workspaceSettings.subscribe,
     workspaceSettings.getSnapshot,
@@ -14185,6 +14192,11 @@ export function apply(ctx: ClientContext): void {
     loadWorldInfoEntries, saveWorldInfoEntries,
     startWorldInfoSession: startWorldInfoFromBlankSession,
   }
+  // Root-scoped surfaces get no `sessionId`, so follow the UI adapter's current
+  // scope binding for them.
+  ctx.inject(['uiSession'], sessionCtx => {
+    sessionCtx.effect(() => visibleSession.follow(sessionCtx), 'agent-rp: follow the visible Session')
+  })
   ctx.slots.inject('sidebar.destinations', () => ctx.slots.register({
     name: 'sidebar.destinations', id: 'agent-rp-workbench', order: 20,
     children: { [AGENT_RP_WORKBENCH_SECTION_SLOT]: { kind: 'list', scope: 'root' } },

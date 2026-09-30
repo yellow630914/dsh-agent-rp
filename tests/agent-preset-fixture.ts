@@ -25,7 +25,7 @@ export function agentRpPresetGateway(options: {
   }
   return {
     list: async () => [{ id: 'agent-rp', trust: 'user' }],
-    read: async id => { exactId(id); return agentRpComposition },
+    readDocument: async (id: string) => { exactId(id); return { content: agentRpComposition } },
     resolve: async id => ({ id: exactId(id), trust: 'user' }),
     mount: async (ctx, id) => { exactId(id); options.onMount?.(ctx) },
     serviceFor: (agent, name) => agent === options.active && name === 'agentRp.actorRevisions' ? {} : undefined,

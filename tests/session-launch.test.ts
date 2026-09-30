@@ -116,7 +116,7 @@ async function launchExperienceWithWorkspaces(
       }
       if (name === 'agentPresets') return {
         resolve: async () => ({ id: 'agent-rp', trust: 'user' }),
-        read: async () => `
+        readDocument: async () => ({ content: `
 - id: agent-rp-runtime
   name: cordis:group
   isolate:
@@ -126,7 +126,7 @@ async function launchExperienceWithWorkspaces(
       name: '@hewzhew/dsh-agent-rp'
       config:
         mode: character
-`,
+` }),
         mount: async () => {},
         serviceFor: () => ({}),
       }

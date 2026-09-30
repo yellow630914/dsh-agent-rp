@@ -23,9 +23,18 @@ export interface AgentPresetDescriptor {
 }
 
 /** Structural subset of DSH's AgentPresets service used by the RP Host. */
+/**
+ * The Host preset service, as Agent RP uses it.
+ *
+ * Duck-typed because the service is resolved through `ctx.get('agentPresets')`,
+ * which is also why a shape change here is invisible to the compiler: DSH 0.2.0
+ * replaced `read(id): Promise<string>` with `readDocument(id)` returning the
+ * composition beside its display fields, and nothing failed to build — the
+ * preset picker simply came back empty.
+ */
 export interface AgentPresetGateway {
   list(): Promise<readonly AgentPresetDescriptor[]>
-  read(id: string): Promise<string>
+  readDocument(id: string): Promise<{ readonly content: string }>
   resolve(id?: string): Promise<AgentPresetDescriptor>
   mount(agentCtx: Context, id?: string): Promise<unknown>
   serviceFor(agent: { readonly ctx: Context }, name: string): unknown
@@ -64,7 +73,7 @@ export async function resolveAgentRpCapabilityPreset(
   }
   const preset = await presets.resolve(id)
   if (preset.broken !== undefined) throw new Error(`Agent 能力预设无法加载：${preset.broken}`)
-  if (!isAgentRpCapabilityComposition(await presets.read(preset.id))) {
+  if (!isAgentRpCapabilityComposition((await presets.readDocument(preset.id)).content)) {
     throw new Error('所选 Agent 能力预设没有保留 Agent RP 角色运行时')
   }
   return preset
@@ -78,7 +87,7 @@ export async function listAgentRpCapabilityPresets(
     if (preset.broken !== undefined || !isAgentRpCapabilityPresetId(preset.id)) continue
     let composition: string
     try {
-      composition = await presets.read(preset.id)
+      composition = (await presets.readDocument(preset.id)).content
     } catch {
       continue
     }

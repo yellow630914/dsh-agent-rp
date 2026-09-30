@@ -47,6 +47,17 @@ export interface PromptPreviewTotals {
   readonly approximateTokens: number
 }
 
+/** Why a roleplay request kept its tool schemas. */
+export type PromptPreviewToolReason =
+  | 'always'
+  | 'turn-in-progress'
+  | 'memory'
+  | 'image'
+  | 'attachment'
+  | 'search'
+  | 'actor'
+  | 'unrecognized-tool'
+
 /** One captured request, without any message body. */
 export interface PromptPreviewSummary {
   readonly format: 0
@@ -56,7 +67,18 @@ export interface PromptPreviewSummary {
   readonly model?: string
   /** The provider's own system field, which is separate from the message array. */
   readonly system: { readonly chars: number; readonly approximateTokens: number; readonly snippet: string }
+  /** Tool schemas actually sent. */
   readonly toolNames: readonly string[]
+  /** Tools DSH offered but this request left off because the turn did not need them. */
+  readonly omittedToolNames?: readonly string[]
+  /** Why the request kept its tool schemas, when it did. */
+  readonly toolReasons?: readonly PromptPreviewToolReason[]
+  /**
+   * Earlier turns' reasoning that rode along on assistant messages. It is not
+   * in `totals`: whether it enters the context is the provider's rule, not the
+   * array's — DeepSeek concatenates it only when the request carries tools.
+   */
+  readonly reasoning: { readonly messages: number; readonly chars: number; readonly approximateTokens: number }
   readonly messages: readonly PromptPreviewMessage[]
   readonly totals: PromptPreviewTotals
 }

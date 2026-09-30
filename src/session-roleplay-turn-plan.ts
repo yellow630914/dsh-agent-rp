@@ -7,7 +7,9 @@ import type { EjsTemplateEngine } from './ejs-template.ts'
 import { prepareRoleplayTurn, type RoleplayTurnPlan } from './roleplay-turn-plan.ts'
 import { bindRoleplayExternalContext } from './roleplay-turn-context.ts'
 import {
+  CURRENT_ROLEPLAY_TURN_PLAN_SCHEMA,
   createRoleplayTurnPlanReference,
+  isRoleplayTurnPlanSchema,
   matchRoleplayTurnPlanSchema,
   roleplayTurnPlanSectionSha256,
   type RoleplayTurnPlanReference,
@@ -191,12 +193,9 @@ export function replaySessionRoleplayTurnPlan(input: {
     reference.receipt.preparedPlanSchema,
   )
   if (schema === undefined) {
-    const diagnosticSchema = reference.receipt.preparedPlanSchema === 0
-      || reference.receipt.preparedPlanSchema === 1 || reference.receipt.preparedPlanSchema === 2
-      || reference.receipt.preparedPlanSchema === 3 || reference.receipt.preparedPlanSchema === 4
-      || reference.receipt.preparedPlanSchema === 5 || reference.receipt.preparedPlanSchema === 6
+    const diagnosticSchema = isRoleplayTurnPlanSchema(reference.receipt.preparedPlanSchema)
       ? reference.receipt.preparedPlanSchema
-      : 6
+      : CURRENT_ROLEPLAY_TURN_PLAN_SCHEMA
     const actualSections = roleplayTurnPlanSectionSha256(replayed, diagnosticSchema)
     const sections = (Object.keys(actualSections) as (keyof RoleplayTurnPlan)[])
       .filter(key => actualSections[key] !== expectedSections[key])

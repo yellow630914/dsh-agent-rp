@@ -128,6 +128,7 @@ test('persists one content-free plan receipt before dispatch and rejects retry d
     includeAgentRp: true,
     imageMode: 'always' as const,
     stateMode: 'auto' as const,
+    requestTools: 'on-demand' as const,
     custom: [{ id: 'fixture-image', enabled: true, text: 'Use the configured fixture image producer.' }],
   }
   const plan = prepareRoleplayTurn({
@@ -158,7 +159,7 @@ test('persists one content-free plan receipt before dispatch and rejects retry d
   const reopened = Session.create(session.id, session.snapshotEvents())
   const records = readSessionRoleplayTurnPlans(reopened.snapshotEvents())
   assert.equal(records.length, 1)
-  assert.equal(records[0]?.data.reference.receipt.preparedPlanSchema, 6)
+  assert.equal(records[0]?.data.reference.receipt.preparedPlanSchema, 7)
   assert.deepEqual(records[0]?.data.toolGuidance, toolGuidance)
   assert.equal(records[0]?.data.reference.receipt.memoryWriteAvailable, true)
   assert.deepEqual(records[0]?.data.reference.receipt.recall, dispatchedPlan.recall)
@@ -191,6 +192,26 @@ test('persists one content-free plan receipt before dispatch and rejects retry d
   assert.deepEqual(replaySessionRoleplayTurnPlan({
     session: rc236.session,
     record: rc236.record,
+    deployment,
+  }), dispatchedPlan)
+  // A turn recorded before the request-tools choice existed: its stored
+  // settings lack the field and its digest was taken over schema 6.
+  const schema6Projection = projectRoleplayTurnPlan(dispatchedPlan, 6) as RoleplayTurnPlan
+  assert.equal(Object.hasOwn(schema6Projection.tools.behavior, 'request'), false)
+  assert.equal(Object.hasOwn(schema6Projection.tools.source, 'requestTools'), false)
+  const schema6Reference = createRoleplayTurnPlanReference(1, dispatchedPlan, 6)
+  const { requestTools: _requestTools, ...schema6Guidance } = toolGuidance
+  const schema6Events = session.snapshotEvents().map((event): SessionEvent => event.seq !== first.seq
+    ? structuredClone(event)
+    : {
+        ...structuredClone(event),
+        data: { ...(event as typeof first).data, toolGuidance: schema6Guidance, reference: schema6Reference },
+      } as unknown as typeof first)
+  const schema6Session = Session.create(session.id, schema6Events)
+  assert.equal(schema6Reference.receipt?.preparedPlanSchema, 6)
+  assert.deepEqual(replaySessionRoleplayTurnPlan({
+    session: schema6Session,
+    record: schema6Session.snapshotEvents()[first.seq] as typeof first,
     deployment,
   }), dispatchedPlan)
   const wrongSchemaEvents = session.snapshotEvents().map((event): SessionEvent => event.seq !== first.seq

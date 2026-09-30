@@ -1249,6 +1249,9 @@ export function installAgentRp(
       current => turnCoordinator.currentActLane(current) === 'narrative'
         ? turnCoordinator.current(current)?.prompt
         : undefined,
+      current => turnCoordinator.currentActLane(current) === 'narrative'
+        ? turnCoordinator.current(current)?.tools
+        : undefined,
     )
     setRememberAvailable(agent, false)
     setStateActionAvailable(agent, false)

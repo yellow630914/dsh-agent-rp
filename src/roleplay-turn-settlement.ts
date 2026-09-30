@@ -85,13 +85,22 @@ export interface RoleplayTurnPlanReceipt {
  * 0 predates prompt transforms, 1 adds transforms, 2 adds response repair programs,
  * 3 adds the independent turn strategy plus semantic state actions, 4 adds
  * the exact tool policy prepared for the model request and runtime gates,
- * 5 moves imported state rules into the post-narrative settlement program, and
- * 6 adds native state schemes plus the settlement cadence that gates them.
+ * 5 moves imported state rules into the post-narrative settlement program,
+ * 6 adds native state schemes plus the settlement cadence that gates them, and
+ * 7 adds whether narrative requests may leave their tool schemas off.
  */
-export type RoleplayTurnPlanSchema = 0 | 1 | 2 | 3 | 4 | 5 | 6
+export type RoleplayTurnPlanSchema = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
+
+/** Every published schema, newest first. */
+const ROLEPLAY_TURN_PLAN_SCHEMAS: readonly RoleplayTurnPlanSchema[] = [7, 6, 5, 4, 3, 2, 1, 0]
 
 /** Current structural projection written into every new plan receipt. */
-export const CURRENT_ROLEPLAY_TURN_PLAN_SCHEMA: RoleplayTurnPlanSchema = 6
+export const CURRENT_ROLEPLAY_TURN_PLAN_SCHEMA: RoleplayTurnPlanSchema = 7
+
+/** Whether a durable receipt declared one of the published schemas. */
+export function isRoleplayTurnPlanSchema(value: unknown): value is RoleplayTurnPlanSchema {
+  return ROLEPLAY_TURN_PLAN_SCHEMAS.includes(value as RoleplayTurnPlanSchema)
+}
 
 function legacyPromptPreparation(plan: RoleplayTurnPlan): {
   readonly prompt: Omit<RoleplayTurnPlan['prompt'], 'transforms'>
@@ -196,10 +205,24 @@ function planWithoutNativeStateSchemes(plan: RoleplayTurnPlan): RoleplayTurnPlan
   }
 }
 
+/**
+ * Reconstruct the schema-6 plan, whose narrative requests always carried their
+ * tool schemas and so recorded no choice about it.
+ * @param plan - the current plan.
+ * @returns the plan as schema 6 published it.
+ */
+function planWithoutRequestToolsMode(plan: RoleplayTurnPlan): RoleplayTurnPlan {
+  const { request: _request, ...behavior } = plan.tools.behavior
+  const { requestTools: _requestTools, ...source } = plan.tools.source
+  return { ...plan, tools: { ...plan.tools, source, behavior } as RoleplayTurnPlan['tools'] }
+}
+
 /** Project a current plan into one historically published structural schema. */
 export function projectRoleplayTurnPlan(plan: RoleplayTurnPlan, schema: RoleplayTurnPlanSchema): unknown {
-  if (schema === 6) return plan
-  const beforeNativeSchemes = planWithoutNativeStateSchemes(plan)
+  if (schema === 7) return plan
+  const beforeRequestTools = planWithoutRequestToolsMode(plan)
+  if (schema === 6) return beforeRequestTools
+  const beforeNativeSchemes = planWithoutNativeStateSchemes(beforeRequestTools)
   if (schema === 5) return beforeNativeSchemes
   const beforeStagedSettlement = planWithoutStagedStateInstructions(beforeNativeSchemes)
   if (schema === 4) return beforeStagedSettlement
@@ -237,10 +260,8 @@ export function matchRoleplayTurnPlanSchema(
   declaredSchema: unknown,
 ): RoleplayTurnPlanSchema | undefined {
   const schemas: readonly RoleplayTurnPlanSchema[] = declaredSchema === undefined
-    ? [6, 5, 4, 3, 2, 1, 0]
-    : declaredSchema === 0 || declaredSchema === 1 || declaredSchema === 2
-      || declaredSchema === 3 || declaredSchema === 4 || declaredSchema === 5 || declaredSchema === 6
-      ? [declaredSchema] : []
+    ? ROLEPLAY_TURN_PLAN_SCHEMAS
+    : isRoleplayTurnPlanSchema(declaredSchema) ? [declaredSchema] : []
   return schemas.find(schema => roleplayTurnPlanSha256(plan, schema) === expectedDigest)
 }
 

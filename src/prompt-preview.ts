@@ -24,6 +24,7 @@ import {
   type PromptPreviewMessage,
   type PromptPreviewPart,
   type PromptPreviewSummary,
+  type PromptPreviewToolReason,
 } from './prompt-preview-protocol.ts'
 import { PROMPT_REGEX_SOURCE_MARKER } from './frontend-regex.ts'
 
@@ -33,6 +34,8 @@ const MAX_RETAINED_SESSIONS = 8
 interface RetainedMessage {
   readonly role: PromptPreviewMessage['role']
   readonly text: string
+  /** Reasoning riding on an assistant message; kept apart because the provider decides if it counts. */
+  readonly reasoning: string
   readonly origins: readonly RoleplayPromptOrigin[]
   /** Naming for a chat row, resolved at capture while the message is in hand. */
   readonly history?: { readonly label: string; readonly detail?: string }
@@ -45,6 +48,8 @@ interface RetainedRequest {
   readonly model?: string
   readonly system: string
   readonly toolNames: readonly string[]
+  readonly omittedToolNames: readonly string[]
+  readonly toolReasons: readonly PromptPreviewToolReason[]
   readonly messages: readonly RetainedMessage[]
 }
 
@@ -78,6 +83,10 @@ function messageText(message: Message): string {
         : block.type === 'tool-result' ? textOf(block.content)
           : [])
   return textOf(message.content).join('\n')
+}
+
+function reasoningText(message: Message): string {
+  return message.content.flatMap(block => block.type === 'reasoning' ? [block.text] : []).join('')
 }
 
 function snippetOf(text: string): string {
@@ -198,6 +207,8 @@ export function capturePromptPreview(input: {
   readonly messages: readonly AttributedMessage[]
   readonly system?: string
   readonly toolNames?: readonly string[]
+  readonly omittedToolNames?: readonly string[]
+  readonly toolReasons?: readonly PromptPreviewToolReason[]
   readonly provider?: string
   readonly model?: string
 }): void {
@@ -208,9 +219,12 @@ export function capturePromptPreview(input: {
     ...(input.model === undefined ? {} : { model: input.model }),
     system: input.system ?? '',
     toolNames: [...input.toolNames ?? []],
+    omittedToolNames: [...input.omittedToolNames ?? []],
+    toolReasons: [...input.toolReasons ?? []],
     messages: input.messages.map(({ message, origins }) => ({
       role: message.role as PromptPreviewMessage['role'],
       text: messageText(message),
+      reasoning: message.role === 'assistant' ? reasoningText(message) : '',
       origins,
       ...(origins.length === 0 ? { history: historyOrigin(message) } : {}),
     })),
@@ -231,6 +245,7 @@ export function promptPreviewSummary(sessionId: string): PromptPreviewSummary | 
   const record = retained.get(sessionId)
   if (record === undefined) return undefined
   const messages = record.messages.map(describeMessage)
+  const reasoning = record.messages.filter(message => message.reasoning !== '')
   return {
     format: 0,
     capturedAt: record.capturedAt,
@@ -243,6 +258,13 @@ export function promptPreviewSummary(sessionId: string): PromptPreviewSummary | 
       snippet: snippetOf(record.system),
     },
     toolNames: record.toolNames,
+    ...(record.omittedToolNames.length === 0 ? {} : { omittedToolNames: record.omittedToolNames }),
+    ...(record.toolReasons.length === 0 ? {} : { toolReasons: record.toolReasons }),
+    reasoning: {
+      messages: reasoning.length,
+      chars: reasoning.reduce((sum, message) => sum + message.reasoning.length, 0),
+      approximateTokens: reasoning.reduce((sum, message) => sum + approximatePromptTokens(message.reasoning), 0),
+    },
     messages,
     totals: {
       messages: messages.length,

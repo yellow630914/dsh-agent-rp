@@ -3748,6 +3748,7 @@ type ToolStrategyDraft = {
   includeAgentRp: boolean
   imageMode: AgentRpSettings['toolGuidance']['imageMode']
   stateMode: AgentRpSettings['toolGuidance']['stateMode']
+  requestTools: AgentRpSettings['toolGuidance']['requestTools']
   custom: Array<{ id: string; enabled: boolean; text: string }>
 }
 
@@ -3932,6 +3933,16 @@ function ToolStrategySettingsPanel({ settings, writable, onSave }: {
     { value: 'requested', title: '仅手动触发', detail: '保留状态，但只有你在状态栏点重新结算时才计算' },
     { value: 'auto', title: '每回合结算', detail: '正文结束后由后台 Worker 结算，不占用上下文' },
   ] as const
+  const requestToolModes = [
+    {
+      value: 'on-demand', title: '按需携带',
+      detail: '只在要求记住、搜索、插图、附带文件或修改角色设定时携带；平时以往的思考过程不进入上下文',
+    },
+    {
+      value: 'always', title: '每回合携带',
+      detail: '工具随时可用；DeepSeek 会把以往每一轮的思考过程拼入上下文',
+    },
+  ] as const
   const save = (): void => {
     if (validationError !== undefined) return
     onSave({
@@ -3999,6 +4010,31 @@ function ToolStrategySettingsPanel({ settings, writable, onSave }: {
           </button>
         })}
       </div>
+    </div>
+    <div style={{ marginTop: '18px' }}>
+      <strong style={{ display: 'block', fontSize: '12px' }}>请求携带工具</strong>
+      <span style={{ display: 'block', fontSize: '11px', lineHeight: 1.5, marginTop: '3px', opacity: .52 }}>
+        决定角色回复的请求何时附上工具定义；状态结算由后台 Worker 进行，不受这里影响
+      </span>
+      <div style={{ display: 'grid', gap: '8px', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', marginTop: '10px' }}>
+        {requestToolModes.map(option => {
+          const active = draft.requestTools === option.value
+          return <button key={option.value} type="button" disabled={!writable} onClick={() => {
+            setDraft(current => ({ ...current, requestTools: option.value }))
+          }} style={{
+            background: active ? 'color-mix(in srgb, var(--dsw-alias-accent, #6ea8fe) 12%, transparent)' : 'transparent',
+            border: `1px solid ${active ? 'color-mix(in srgb, var(--dsw-alias-accent, #6ea8fe) 48%, transparent)' : 'var(--dsw-alias-border-l2, #3d3d43)'}`,
+            borderRadius: '10px', color: 'inherit', cursor: writable ? 'pointer' : 'default',
+            minHeight: '70px', padding: '10px 11px', textAlign: 'left', width: '100%',
+          }}>
+            <strong style={{ display: 'block', fontSize: '12px', fontWeight: 620 }}>{option.title}</strong>
+            <span style={{ display: 'block', fontSize: '11px', lineHeight: 1.45, marginTop: '4px', opacity: .55 }}>{option.detail}</span>
+          </button>
+        })}
+      </div>
+      {draft.requestTools === 'on-demand' && (mode === 'auto' || mode === 'always') && <p style={{ fontSize: '11px', lineHeight: 1.55, margin: '9px 0 0', opacity: .56 }}>
+        插图设为“按场景判断”或“每回合尝试”时，模型每回合都可能生图，所以请求仍会每回合携带工具；想让按需携带生效，请把插图改为“仅在明确要求时”或“关闭插图”
+      </p>}
     </div>
     <details style={{ border: '1px solid var(--dsw-alias-border-l2, #3d3d43)', borderRadius: '10px', marginTop: '13px' }}>
       <summary style={{ cursor: 'pointer', fontSize: '12px', fontWeight: 580, padding: '11px 12px' }}>

@@ -52,6 +52,7 @@ test('guides every image producer through one provider-neutral publication path'
     includeAgentRp: true,
     imageMode: 'always',
     stateMode: 'auto',
+    requestTools: 'on-demand',
     custom: [{ id: 'fixture-provider', enabled: true, text: 'CALL_FIXTURE_IMAGE_TOOL' }],
   })
   assert.match(custom, /CALL_FIXTURE_IMAGE_TOOL/u)
@@ -64,6 +65,7 @@ test('guides every image producer through one provider-neutral publication path'
     includeAgentRp: true,
     imageMode: 'never',
     stateMode: 'auto',
+    requestTools: 'on-demand',
     custom: [],
   })
   assert.match(never, /本回合不生成或发布/u)
@@ -74,6 +76,7 @@ test('guides every image producer through one provider-neutral publication path'
     includeAgentRp: true,
     imageMode: 'auto',
     stateMode: 'auto',
+    requestTools: 'on-demand',
     custom: [],
   }), '')
 })

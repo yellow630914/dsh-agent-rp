@@ -5,6 +5,7 @@ import type {
   PromptPreviewMessage,
   PromptPreviewPart,
   PromptPreviewSummary,
+  PromptPreviewToolReason,
 } from '../prompt-preview-protocol.ts'
 import type { RoleplayPromptOriginKind } from '../prompt-origin.ts'
 import { loadPromptPreview, loadPromptPreviewBody } from './prompt-preview-client.ts'
@@ -39,6 +40,17 @@ const ROLE_LABELS: Readonly<Record<PromptPreviewMessage['role'], string>> = {
   system: 'system',
   user: 'user',
   assistant: 'assistant',
+}
+
+const TOOL_REASON_LABELS: Readonly<Record<PromptPreviewToolReason, string>> = {
+  always: '设置为每回合携带',
+  'turn-in-progress': '本回合已调用过工具',
+  memory: '玩家要求记住',
+  image: '插图策略允许',
+  attachment: '玩家附带了文件',
+  search: '玩家要求搜索',
+  actor: '玩家要求查看或修改角色设定',
+  'unrecognized-tool': '有无法判断用途的第三方工具',
 }
 
 function formatTokens(value: number): string {
@@ -201,6 +213,36 @@ function KindTotals({ summary }: { readonly summary: PromptPreviewSummary }) {
 }
 
 /**
+ * Whether earlier turns' reasoning entered the context.
+ *
+ * It rides on every assistant message either way; DeepSeek concatenates it
+ * only when the request carries tool schemas, so the tools decide what this
+ * request really cost — and that cost is outside the total above.
+ */
+function ToolNotice({ summary }: { readonly summary: PromptPreviewSummary }) {
+  const omitted = summary.omittedToolNames ?? []
+  const sent = summary.toolNames
+  if (sent.length === 0 && omitted.length === 0) return null
+  const reasoning = summary.reasoning
+  const reasons = (summary.toolReasons ?? []).map(reason => TOOL_REASON_LABELS[reason]).join('、')
+  const carried = sent.length > 0
+  return <p style={{
+    background: carried ? 'color-mix(in srgb, #e0af68 10%, transparent)' : 'color-mix(in srgb, #9ece6a 8%, transparent)',
+    border: `1px solid color-mix(in srgb, ${carried ? '#e0af68' : '#9ece6a'} 30%, transparent)`,
+    borderRadius: '8px', fontSize: '11px', lineHeight: 1.6, margin: '10px 0 0', padding: '7px 10px',
+  }}>
+    {carried
+      ? <>本次请求携带 {String(sent.length)} 个工具{reasons === '' ? '' : `（${reasons}）`}。
+          {reasoning.messages === 0 ? null
+            : <>以往 {String(reasoning.messages)} 轮的思考过程约 {formatTokens(reasoning.approximateTokens)} tokens
+              会随请求送出，DeepSeek 会把它们拼入上下文；这部分不在上方总数里。</>}</>
+      : <>本次请求未携带工具（{String(omitted.length)} 个按需省略）。
+          {reasoning.messages === 0 ? null
+            : <>以往 {String(reasoning.messages)} 轮的思考过程仍随请求送出，但 DeepSeek 会忽略它们，不进入上下文。</>}</>}
+  </p>
+}
+
+/**
  * Show the exact request this Session last dispatched.
  *
  * The capture is taken at the provider seam, so this is the array that was sent
@@ -275,6 +317,7 @@ export function PromptPreviewDialog({ sessionId, onClose }: {
                     {new Date(summary.capturedAt).toLocaleString()}
                   </span>
                 </div>
+                <ToolNotice summary={summary} />
                 <div style={{ marginTop: '10px' }}><KindTotals summary={summary} /></div>
                 <div style={{
                   border: '1px solid var(--dsw-alias-border-l2, #3b3b41)', borderRadius: '9px',

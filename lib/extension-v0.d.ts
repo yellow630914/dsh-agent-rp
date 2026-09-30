@@ -904,10 +904,11 @@ interface RoleplayTurnPlanReceipt {
  * 0 predates prompt transforms, 1 adds transforms, 2 adds response repair programs,
  * 3 adds the independent turn strategy plus semantic state actions, 4 adds
  * the exact tool policy prepared for the model request and runtime gates,
- * 5 moves imported state rules into the post-narrative settlement program, and
- * 6 adds native state schemes plus the settlement cadence that gates them.
+ * 5 moves imported state rules into the post-narrative settlement program,
+ * 6 adds native state schemes plus the settlement cadence that gates them, and
+ * 7 adds whether narrative requests may leave their tool schemas off.
  */
-type RoleplayTurnPlanSchema = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+type RoleplayTurnPlanSchema = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 /** Revision change observed at the turn boundary for one runtime state namespace. */
 interface RoleplayStateSettlement {
   readonly id: string;
@@ -1027,6 +1028,18 @@ type AgentRpImageMode = 'never' | 'requested' | 'auto' | 'always';
  * same state through plugin events that no transcript layer can see.
  */
 type AgentRpStateMode = 'never' | 'requested' | 'auto';
+/**
+ * Whether a narrative request carries its tool schemas every turn or only when
+ * the turn plausibly needs one.
+ *
+ * This is not a cost preference. DeepSeek's thinking mode concatenates every
+ * earlier turn's reasoning into the context only when the request carries
+ * `tools`, and rejects the request if that reasoning is withheld; without
+ * `tools` the earlier reasoning is ignored. So a roleplay whose turns rarely
+ * call a tool still re-reads all of its own old drafts, unless the schemas are
+ * left off the turns that do not need them.
+ */
+type AgentRpRequestToolsMode = 'on-demand' | 'always';
 /** One deployment-owned instruction for an installed MCP or other tool provider. */
 interface ToolGuidanceEntryConfig {
   readonly id: string;
@@ -1041,6 +1054,8 @@ interface ResolvedToolGuidanceConfig {
   readonly imageMode: AgentRpImageMode;
   /** Post-narrative state settlement cadence; absent settings keep the previous automatic behavior. */
   readonly stateMode: AgentRpStateMode;
+  /** When narrative requests carry tool schemas; absent settings resolve to on-demand. */
+  readonly requestTools: AgentRpRequestToolsMode;
   readonly custom: readonly ToolGuidanceEntryConfig[];
 }
 /** Immutable tool policy frozen into one concrete Roleplay turn. */
@@ -1060,6 +1075,9 @@ interface RoleplayToolPolicyPlan {
       readonly mode: AgentRpStateMode; /** Whether this turn prepares a state contract at all. */
       readonly contractPrepared: boolean; /** Whether the post-narrative Worker settles without an explicit player request. */
       readonly settleAutomatically: boolean;
+    };
+    readonly request: {
+      /** Whether this turn's narrative requests may leave their tool schemas off. */readonly tools: AgentRpRequestToolsMode;
     };
   };
   readonly guidance: {

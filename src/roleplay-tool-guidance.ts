@@ -13,6 +13,19 @@ export type AgentRpImageMode = 'never' | 'requested' | 'auto' | 'always'
  */
 export type AgentRpStateMode = 'never' | 'requested' | 'auto'
 
+/**
+ * Whether a narrative request carries its tool schemas every turn or only when
+ * the turn plausibly needs one.
+ *
+ * This is not a cost preference. DeepSeek's thinking mode concatenates every
+ * earlier turn's reasoning into the context only when the request carries
+ * `tools`, and rejects the request if that reasoning is withheld; without
+ * `tools` the earlier reasoning is ignored. So a roleplay whose turns rarely
+ * call a tool still re-reads all of its own old drafts, unless the schemas are
+ * left off the turns that do not need them.
+ */
+export type AgentRpRequestToolsMode = 'on-demand' | 'always'
+
 /** One deployment-owned instruction for an installed MCP or other tool provider. */
 export interface ToolGuidanceEntryConfig {
   readonly id: string
@@ -28,6 +41,8 @@ export interface ResolvedToolGuidanceConfig {
   readonly imageMode: AgentRpImageMode
   /** Post-narrative state settlement cadence; absent settings keep the previous automatic behavior. */
   readonly stateMode: AgentRpStateMode
+  /** When narrative requests carry tool schemas; absent settings resolve to on-demand. */
+  readonly requestTools: AgentRpRequestToolsMode
   readonly custom: readonly ToolGuidanceEntryConfig[]
 }
 
@@ -53,6 +68,10 @@ export interface RoleplayToolPolicyPlan {
       /** Whether the post-narrative Worker settles without an explicit player request. */
       readonly settleAutomatically: boolean
     }
+    readonly request: {
+      /** Whether this turn's narrative requests may leave their tool schemas off. */
+      readonly tools: AgentRpRequestToolsMode
+    }
   }
   readonly guidance: {
     readonly includeFramework: boolean
@@ -69,6 +88,7 @@ export const DEFAULT_TOOL_GUIDANCE: ResolvedToolGuidanceConfig = {
   includeAgentRp: true,
   imageMode: 'auto',
   stateMode: 'auto',
+  requestTools: 'on-demand',
   custom: [],
 }
 
@@ -101,6 +121,10 @@ export function normalizeToolGuidanceConfig(value: unknown): ResolvedToolGuidanc
   if (stateMode !== 'never' && stateMode !== 'requested' && stateMode !== 'auto') {
     throw new TypeError('toolGuidance.stateMode is invalid')
   }
+  const requestTools = source.requestTools ?? DEFAULT_TOOL_GUIDANCE.requestTools
+  if (requestTools !== 'on-demand' && requestTools !== 'always') {
+    throw new TypeError('toolGuidance.requestTools is invalid')
+  }
   const customSource = source.custom ?? DEFAULT_TOOL_GUIDANCE.custom
   if (!Array.isArray(customSource) || customSource.length > 32) {
     throw new TypeError('toolGuidance.custom is invalid')
@@ -128,6 +152,7 @@ export function normalizeToolGuidanceConfig(value: unknown): ResolvedToolGuidanc
     includeAgentRp: bool('includeAgentRp'),
     imageMode,
     stateMode,
+    requestTools,
     custom,
   }
 }
@@ -180,6 +205,7 @@ export function prepareRoleplayToolPolicy(
         contractPrepared: source.stateMode !== 'never',
         settleAutomatically: source.stateMode === 'auto',
       },
+      request: { tools: source.requestTools },
     },
     guidance: {
       includeFramework: source.enabled && source.includeFramework,

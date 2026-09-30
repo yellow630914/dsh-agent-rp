@@ -31,6 +31,8 @@ import {
   type AttributedMessage,
 } from './preset-prompt.ts'
 import { capturePromptPreview } from './prompt-preview.ts'
+import { decideRoleplayRequestTools } from './roleplay-request-tools.ts'
+import type { RoleplayToolPolicyPlan } from './roleplay-tool-guidance.ts'
 import type {
   RoleplayPromptRegexTransform,
   RoleplayPromptTransformPlan,
@@ -228,6 +230,7 @@ function preparePromptRegexStreamOptions(
   options: GenerateOptions,
   agentForSession: (sessionId: string) => Agent | undefined,
   promptPlanForAgent: (agent: Agent) => RoleplayTurnPromptPlan | undefined,
+  toolPolicyForAgent: (agent: Agent) => RoleplayToolPolicyPlan | undefined,
 ): GenerateOptions | undefined {
   if (!isAgentLoopDispatch(options) || options.sessionId === undefined) return undefined
   const agent = agentForSession(String(options.sessionId))
@@ -250,16 +253,29 @@ function preparePromptRegexStreamOptions(
   const attributed: readonly AttributedMessage[] = inert
     ? messages.map(message => ({ message, origins: [] }))
     : prepareAttributedProviderMessages(messages, plan)
+  const outgoing = attributed.map(item => item.message)
+  const toolNames = (options.tools ?? []).map(tool => tool.name)
+  const policy = toolPolicyForAgent(agent)
+  // Without a frozen policy there is nothing to judge the turn against, so the
+  // request keeps exactly the tools DSH offered.
+  const tools = policy === undefined
+    ? undefined
+    : decideRoleplayRequestTools({ toolNames, messages: outgoing, policy })
+  const omitTools = tools !== undefined && !tools.send && toolNames.length > 0
   capturePromptPreview({
     sessionId: String(options.sessionId),
     messages: attributed,
     ...(options.system === undefined ? {} : { system: options.system }),
-    toolNames: (options.tools ?? []).map(tool => tool.name),
+    toolNames: omitTools ? [] : toolNames,
+    ...(omitTools ? { omittedToolNames: toolNames } : {}),
+    ...(tools === undefined || tools.reasons.length === 0 ? {} : { toolReasons: tools.reasons }),
     provider: options.provider,
     model: options.model,
   })
-  if (inert) return undefined
-  return { ...options, messages: attributed.map(item => item.message) }
+  if (inert && !omitTools) return undefined
+  if (!omitTools) return { ...options, messages: outgoing }
+  const { tools: _omitted, ...withoutTools } = options
+  return { ...withoutTools, messages: outgoing }
 }
 
 function installPromptRegexStreamHandler(
@@ -349,10 +365,11 @@ export function installPromptRegexStream(
   ctx: Context,
   agentForSession: (sessionId: string) => Agent | undefined,
   promptPlanForAgent: (agent: Agent) => RoleplayTurnPromptPlan | undefined = () => undefined,
+  toolPolicyForAgent: (agent: Agent) => RoleplayToolPolicyPlan | undefined = () => undefined,
 ): () => void {
   return installPromptRegexStreamHandler(
     ctx,
-    options => preparePromptRegexStreamOptions(options, agentForSession, promptPlanForAgent),
+    options => preparePromptRegexStreamOptions(options, agentForSession, promptPlanForAgent, toolPolicyForAgent),
   )
 }
 
@@ -360,10 +377,12 @@ export function installPromptRegexStream(
 export function installAgentPromptRegexStream(
   agent: Agent,
   promptPlanForAgent: (agent: Agent) => RoleplayTurnPromptPlan | undefined = () => undefined,
+  toolPolicyForAgent: (agent: Agent) => RoleplayToolPolicyPlan | undefined = () => undefined,
 ): void {
   agent.ctx.effect(() => installPromptRegexStream(
     llmStreamOwnerContext(agent.ctx),
     sessionId => sessionId === String(agent.session.id) ? agent : undefined,
     promptPlanForAgent,
+    toolPolicyForAgent,
   ), `agent-rp: provider message preparation for ${agent.session.id}`)
 }

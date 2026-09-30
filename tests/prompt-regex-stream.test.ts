@@ -22,6 +22,8 @@ import {
   installPromptRegexStream,
 } from '../src/prompt-regex-stream.ts'
 import { agentRpProjectionDefinition } from '../src/projection.ts'
+import { promptPreviewSummary } from '../src/prompt-preview.ts'
+import { DEFAULT_TOOL_GUIDANCE, prepareRoleplayToolPolicy } from '../src/roleplay-tool-guidance.ts'
 import type {
   RoleplayPromptRegexTransform,
   RoleplayPromptTransformPlan,
@@ -481,4 +483,95 @@ test('does not invent an adapter transform when no prepared plan exists', () => 
 
   assert.equal(calledNext, true)
   assert.deepEqual(textHistory(session), ['secret'])
+})
+
+function toolSeam(): {
+  readonly handle: (options: GenerateOptions) => { readonly sent?: GenerateOptions; readonly calledNext: boolean }
+  readonly session: Session
+} {
+  type StreamHandler = (options: GenerateOptions, next: () => unknown) => unknown
+  let handler: StreamHandler | undefined
+  let sent: GenerateOptions | undefined
+  const ctx = {
+    on(_event: string, callback: StreamHandler) { handler = callback },
+    llm: { stream(options: GenerateOptions) { sent = options } },
+  } as unknown as Context
+  const session = Session.create(SessionId(`request-tools-${String(Math.random()).slice(2)}`))
+  const agent = { session } as Agent
+  const policy = prepareRoleplayToolPolicy({ ...DEFAULT_TOOL_GUIDANCE, imageMode: 'requested' })
+  installPromptRegexStream(ctx, () => agent, () => promptPlan(), () => policy)
+  return {
+    session,
+    handle(options) {
+      sent = undefined
+      let calledNext = false
+      assert.ok(handler)
+      handler(options, () => { calledNext = true })
+      return { ...(sent === undefined ? {} : { sent }), calledNext }
+    },
+  }
+}
+
+const offeredTools = ['web_search', 'inspect_actor', 'revise_actor', 'import_character_card']
+  .map(name => ({ name, description: name, parameters: { type: 'object', properties: {} } }))
+
+function roleplayRequest(session: Session, playerText: string): GenerateOptions {
+  return Object.freeze({
+    provider: 'mock',
+    model: 'mock',
+    sessionId: session.id,
+    tools: offeredTools,
+    messages: [
+      createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: '你知道他去哪了吗？' }] }),
+      createAssistantMessage({
+        source: { provider: 'mock', model: 'mock' },
+        content: [{ type: 'reasoning', text: '玩家在试探我，留个伏笔。' }, { type: 'text', text: '……自己去问他。' }],
+      }),
+      createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: playerText }] }),
+    ],
+  }) as unknown as GenerateOptions
+}
+
+test('leaves tool schemas off an ordinary roleplay request and says so in the preview', () => {
+  const { session, handle } = toolSeam()
+  const { sent, calledNext } = handle(roleplayRequest(session, '我们走吧'))
+
+  assert.equal(calledNext, false)
+  assert.equal(sent !== undefined && Object.hasOwn(sent, 'tools'), false)
+  // The history itself is untouched: the earlier reasoning still rides along,
+  // and without tools DeepSeek ignores it.
+  assert.equal(sent?.messages[1]?.content[0]?.type, 'reasoning')
+  const summary = promptPreviewSummary(String(session.id))!
+  assert.deepEqual(summary.toolNames, [])
+  assert.deepEqual(summary.omittedToolNames, offeredTools.map(tool => tool.name))
+  assert.equal(summary.toolReasons, undefined)
+  assert.equal(summary.reasoning.messages, 1)
+  assert.ok(summary.reasoning.approximateTokens > 0)
+})
+
+test('keeps tool schemas when the player asks for something a tool does', () => {
+  const { session, handle } = toolSeam()
+  const { sent, calledNext } = handle(roleplayRequest(session, '帮我上网查一下这座城市'))
+
+  // Nothing else to change, so the original request — tools included — goes on as is.
+  assert.equal(calledNext, true)
+  assert.equal(sent, undefined)
+  const summary = promptPreviewSummary(String(session.id))!
+  assert.deepEqual(summary.toolNames, offeredTools.map(tool => tool.name))
+  assert.equal(summary.omittedToolNames, undefined)
+  assert.deepEqual(summary.toolReasons, ['search'])
+})
+
+test('never touches a background Worker request, which is not an Agent Loop dispatch', () => {
+  const { session, handle } = toolSeam()
+  // State settlement and verification build their own options with a purpose
+  // and without freezing them; the seam must pass them through verbatim.
+  const worker = {
+    ...roleplayRequest(session, '我们走吧'),
+    purpose: 'agent-rp/state-settlement',
+  } as unknown as GenerateOptions
+  const { sent, calledNext } = handle(worker)
+
+  assert.equal(calledNext, true)
+  assert.equal(sent, undefined)
 })

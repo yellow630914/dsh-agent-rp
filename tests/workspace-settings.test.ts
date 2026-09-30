@@ -73,6 +73,8 @@ test('retains Thetail tool guidance settings without importing provider-specific
     // Fork settings predate the state cadence, so its absence must resolve to
     // the automatic default rather than silently disabling state settlement.
     stateMode: 'auto',
+    // The same holds for the request-tools choice: absent means on-demand.
+    requestTools: 'on-demand',
     custom: [{
       id: 'community-image-mcp',
       enabled: true,

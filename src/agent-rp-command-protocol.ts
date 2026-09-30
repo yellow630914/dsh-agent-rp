@@ -16,7 +16,6 @@ export const AGENT_RP_COMMAND_NAMES = Object.freeze([
   'rp-turn-mode',
   'rp-preset-configure',
   'rp-preset-library',
-  'rp-generation',
   'rp-draw',
   'rp-world-info',
   'rp-world-info-import',

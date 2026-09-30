@@ -128,7 +128,6 @@ import { installSillyTavernChatHttp } from './sillytavern-chat-http.ts'
 import { SillyTavernChatLibrary } from './sillytavern-chat-library.ts'
 import { installSillyTavernChatExportHttp } from './sillytavern-chat-export-http.ts'
 import { installSessionLaunchHttp } from './session-launch-http.ts'
-import { executeGenerationCommand } from './generation.ts'
 import type { AgentRpHttpServer } from './host-http.ts'
 import { executeRegexConfiguration } from './regex-configuration.ts'
 import { executeWorldInfoConfiguration } from './world-info-configuration.ts'
@@ -1001,13 +1000,6 @@ export function installAgentRp(
     description: 'manage reusable roleplay presets',
     input: { hint: '<private preset-library payload>' },
     handler: invocation => executePresetLibraryCommand(presetLibrary, invocation),
-  })
-  commands.register({
-    name: 'rp-generation',
-    description: 'manage persistent roleplay reply versions',
-    input: { hint: '<private reply-version payload>' },
-    recordInput: false,
-    handler: executeGenerationCommand,
   })
   commands.register({
     name: 'rp-draw',

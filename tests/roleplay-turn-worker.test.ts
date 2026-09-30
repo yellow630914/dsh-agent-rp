@@ -5,7 +5,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { roleplayModelHistory } from '../src/roleplay-surface-overlay.ts'
-import { executeGenerationCommand, readGenerationGroups } from '../src/generation.ts'
+import { readGenerationGroups } from '../src/generation.ts'
 import { createRoleplayNarrativeReviewWorker } from '../src/roleplay-narrative-review-worker.ts'
 import { RoleplayTurnWorkerRegistry, type RoleplayTurnWorkerInput } from '../src/roleplay-turn-worker.ts'
 import type { BoundRoleplayTurnPlan } from '../src/roleplay-turn-settlement.ts'
@@ -56,7 +56,7 @@ test('reviews one reply through an isolated request and preserves the original a
     reason: 'initial',
     header: { config: { provider: 'fixture', model: 'fixture', maxTokens: 8_192 } },
   })
-  const original = session.append('assistant/message', {
+  session.append('assistant/message', {
     turn: 1,
     step: 1,
     message: createAssistantMessage({
@@ -106,12 +106,4 @@ test('reviews one reply through an isolated request and preserves the original a
     && resultEvent.data.result.kind === 'success'
     ? resultEvent.data.result.reviewedReplySeq
     : undefined, group?.selectedVersionSeq)
-
-  await executeGenerationCommand({
-    agent: workerInput.agent,
-    rawInput: JSON.stringify({ operation: 'select', replySeq: original.seq, versionIndex: 0 }),
-    signal: new AbortController().signal,
-  })
-  assert.deepEqual(roleplayModelHistory(session).flatMap(message => message.content
-    .flatMap(block => block.type === 'text' ? [block.text] : [])), ['她向前走。她向前走，然后推开门。'])
 })

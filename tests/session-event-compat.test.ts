@@ -4,26 +4,12 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { CommandId } from '@deepseek-ai/dsh-commands'
-import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { resolveConfig } from '../src/config.ts'
-import { encodeGenerationState, executeGenerationCommand } from '../src/generation.ts'
-import { parseCharacterCardJson } from '../src/import/character-card.ts'
-import { createCharacterCardSessionSeed } from '../src/import/character-card-seed.ts'
-import { readCurrentSessionMvuState } from '../src/mvu.ts'
 import { prepareRoleplayTurn } from '../src/roleplay-turn-plan.ts'
 import { bindRoleplayExternalContext } from '../src/roleplay-turn-context.ts'
-import {
-  applyTavernHelperMutation,
-  encodeTavernHelperState,
-  encodeTavernHelperStateAttachment,
-  initializeTavernHelperState,
-  readTavernHelperState,
-  type TavernHelperState,
-} from '../src/tavern-helper.ts'
 import {
   AGENT_RP_SESSION_EVENT_TYPES,
   appendAgentRpSessionEvent,
@@ -45,71 +31,6 @@ const state = {
   ownerModuleId: 'roleplay:fixture',
   writerModuleId: 'roleplay:fixture',
   value: { safe: true },
-}
-
-function appendAssistant(session: Session, turn: number, text: string) {
-  return session.append('assistant/message', {
-    turn,
-    step: 1,
-    message: createAssistantMessage({
-      content: [{ type: 'text', text }], source: { provider: 'fixture', model: 'fixture' },
-    }),
-    stream: [],
-  }, { surfaceOp: 'append' })
-}
-
-function publishedTavernState(
-  session: Session,
-  replySeq: number,
-  marker: string,
-): TavernHelperState {
-  const initial = initializeTavernHelperState({
-    regexScripts: [], tavernHelperScriptNames: [], tavernHelperVariables: {}, tavernHelperScripts: [],
-  }, 'published-generation-card')
-  return applyTavernHelperMutation(initial, {
-    format: 0,
-    scope: 'chat',
-    variables: { marker },
-    cause: { format: 0, sessionId: String(session.id), replySeq },
-  })
-}
-
-function appendPublishedTavernAttachment(
-  session: Session,
-  commandId: CommandId,
-  replySeq: number,
-  state: TavernHelperState,
-  active: boolean,
-) {
-  const cause = { format: 0 as const, sessionId: String(session.id), replySeq }
-  session.append('command/run', {
-    commandId, name: 'rp-tavern-variables', args: '{}', source: { kind: 'user' },
-  })
-  return session.append('command/done', {
-    commandId,
-    kind: 'success',
-    text: encodeTavernHelperStateAttachment({ format: 0, cause, active, state }),
-  })
-}
-
-function publishedMvuSession(id: string) {
-  const card = parseCharacterCardJson(JSON.stringify({
-    spec: 'chara_card_v2', spec_version: '2.0',
-    data: {
-      name: '变量角色', description: '', personality: '', scenario: '', first_mes: '', mes_example: '',
-      creator_notes: '', system_prompt: '', post_history_instructions: '', alternate_greetings: [], tags: [],
-      creator: 'fixture', character_version: '1.0', extensions: {},
-      character_book: { recursive_scanning: false, extensions: {}, entries: [{
-        id: 1, comment: '[initvar]', keys: [], content: '角色:\n  等级: 1', enabled: false,
-        insertion_order: 1, constant: false, extensions: {},
-      }] },
-    },
-  }))
-  const seed = createCharacterCardSessionSeed(card, {
-    kind: 'file', attachmentId: AttachmentId(`sha256:${id}`), bytes: 1,
-    name: 'mvu.json', mediaType: 'application/json',
-  }, 0, '')
-  return { card, session: Session.create(SessionId(id), seed) }
 }
 
 test('refuses an unsafe fallback without changing a published-host Session', () => {
@@ -154,158 +75,6 @@ test('persists a player state revision through command/done on the published Hos
   }])
   const reopened = Session.create(SessionId('published-host-command-state-replay'), session.snapshotEvents())
   assert.deepEqual(readRoleplayStates(reopened.snapshotEvents()), readRoleplayStates(session.snapshotEvents()))
-})
-
-test('refuses MVU reply-checkpoint commands on a Host without the plugin-event seam', async () => {
-  const { card, session } = publishedMvuSession('published-host-mvu-versions')
-  session.append('user/message', createUserMessage({
-    content: [{ type: 'text', text: '提升等级。' }], source: { kind: 'user' },
-  }), { surfaceOp: 'append' })
-  const original = appendAssistant(
-    session,
-    1,
-    '第一段<UpdateVariable><JSONPatch>[{"op":"delta","path":"/角色/等级","value":1}]</JSONPatch></UpdateVariable>',
-  )
-  const agent = {
-    session,
-    status: 'idle',
-    inbox: { hasPending: false },
-    followup(message: ReturnType<typeof createUserMessage>) {
-      session.append('user/message', message, { surfaceOp: 'append' })
-      appendAssistant(
-        session,
-        2,
-        '第二段<UpdateVariable><JSONPatch>[{"op":"delta","path":"/角色/等级","value":2}]</JSONPatch></UpdateVariable>',
-      )
-    },
-    whenIdle: async () => {},
-    cancel: () => {},
-  } as unknown as Agent
-
-  // Continue supersedes the reply it extends, which DSH 0.1.3 only lets Agent RP
-  // record in an ignorable plugin event. Without the seam the command is refused
-  // before it writes anything, so the Session keeps its single checkpoint.
-  const continueId = CommandId('published-host-mvu-continue')
-  session.append('command/run', { commandId: continueId, name: 'rp-generation', source: { kind: 'user' } })
-  const before = session.snapshotEvents().length
-  await assert.rejects(
-    executeGenerationCommand({
-      agent,
-      rawInput: JSON.stringify({ operation: 'continue', replySeq: original.seq }),
-      signal: new AbortController().signal,
-    }),
-    /缺少安全插件事件能力/u,
-  )
-  assert.equal(session.snapshotEvents().some(event => event.type === 'agent-rp/mvu-state'), false)
-  assert.deepEqual(readCurrentSessionMvuState(card, session), {
-    statData: { 角色: { 等级: 2 } }, updateCount: 1,
-  })
-
-  const reopened = Session.create(session.id, session.snapshotEvents())
-  assert.deepEqual(readCurrentSessionMvuState(card, reopened), readCurrentSessionMvuState(card, session))
-  assert.ok(session.snapshotEvents().length >= before)
-})
-
-test('refuses to switch Tavern reply branches on a Host without the plugin-event seam', async () => {
-  const session = Session.create(SessionId('published-host-tavern-versions'))
-  session.append('user/message', createUserMessage({
-    content: [{ type: 'text', text: '选择一条路线。' }], source: { kind: 'user' },
-  }), { surfaceOp: 'append' })
-  const original = appendAssistant(session, 1, '第一条路线')
-  const originalState = publishedTavernState(session, original.seq, 'original')
-  const originalAttachment = appendPublishedTavernAttachment(
-    session, CommandId('published-tavern-original'), original.seq, originalState, false,
-  )
-  const alternative = appendAssistant(session, 2, '第二条路线')
-  const alternativeState = publishedTavernState(session, alternative.seq, 'alternative')
-  const alternativeAttachment = appendPublishedTavernAttachment(
-    session, CommandId('published-tavern-alternative'), alternative.seq, alternativeState, false,
-  )
-  const surface = session.append('assistant/message', {
-    turn: alternative.data.turn,
-    step: alternative.data.step,
-    message: alternative.data.message,
-    stream: [],
-  }, { surfaceOp: 'append' })
-  session.append('agent-rp/surface-override',
-    roleplaySurfaceOverride([surface.seq], [original.seq, alternative.seq]))
-  const groupId = '00000000-0000-4000-8000-000000000201'
-  const seedId = CommandId('published-tavern-generation-seed')
-  session.append('command/run', { commandId: seedId, name: 'rp-generation', source: { kind: 'user' } })
-  session.append('command/done', {
-    commandId: seedId,
-    kind: 'success',
-    text: encodeGenerationState({
-      format: 0,
-      groupId,
-      operation: 'regenerate',
-      originSeq: original.seq,
-      anchorSeq: original.seq,
-      assistantSeqs: [original.seq, alternative.seq],
-      versions: [
-        { seq: original.seq, text: '第一条路线', tavernStateSeq: originalAttachment.seq },
-        { seq: alternative.seq, text: '第二条路线', tavernStateSeq: alternativeAttachment.seq },
-      ],
-      selectedVersionSeq: alternative.seq,
-      surfaceSeq: surface.seq,
-      tavern: alternativeState,
-    }),
-  })
-  assert.deepEqual(readTavernHelperState(session.snapshotEvents())?.scopes.chat, { marker: 'alternative' })
-
-  // Selecting another branch must supersede the current surface reply, and DSH
-  // 0.1.3 only lets Agent RP record that in an ignorable plugin event. A Host
-  // without the seam is refused before the Session changes rather than left
-  // showing the model every branch at once.
-  const agent = { session } as Agent
-  const before = session.snapshotEvents().length
-  await assert.rejects(
-    executeGenerationCommand({
-      agent,
-      rawInput: JSON.stringify({ operation: 'select', replySeq: original.seq, versionIndex: 0 }),
-      signal: new AbortController().signal,
-    }),
-    /缺少安全插件事件能力/u,
-  )
-  assert.equal(session.snapshotEvents().length, before)
-  assert.deepEqual(readTavernHelperState(session.snapshotEvents())?.scopes.chat, { marker: 'alternative' })
-})
-
-test('rejects unsafe Tavern regeneration before changing a published-host Session', async () => {
-  const session = Session.create(SessionId('published-host-tavern-regenerate'))
-  const baseline = initializeTavernHelperState({
-    regexScripts: [], tavernHelperScriptNames: [], tavernHelperVariables: { marker: 'baseline' },
-    tavernHelperScripts: [],
-  }, 'published-regeneration-card')
-  const stateId = CommandId('published-tavern-baseline')
-  session.append('command/run', { commandId: stateId, name: 'rp-tavern-state', source: { kind: 'user' } })
-  session.append('command/done', {
-    commandId: stateId, kind: 'success', text: encodeTavernHelperState(baseline),
-  })
-  session.append('user/message', createUserMessage({
-    content: [{ type: 'text', text: '重新回答。' }], source: { kind: 'user' },
-  }), { surfaceOp: 'append' })
-  const original = appendAssistant(session, 1, '保留到安全切换开始。')
-  const beforeEvents = structuredClone(session.snapshotEvents())
-  const beforeSurface = [...session.surface.nodes]
-  let followedUp = false
-  const agent = {
-    session,
-    status: 'idle',
-    inbox: { hasPending: false },
-    followup() { followedUp = true },
-    whenIdle: async () => {},
-    cancel: () => {},
-  } as unknown as Agent
-
-  await assert.rejects(executeGenerationCommand({
-    agent,
-    rawInput: JSON.stringify({ operation: 'regenerate', replySeq: original.seq }),
-    signal: new AbortController().signal,
-  }), /DSH Host 缺少安全插件事件能力/u)
-  assert.equal(followedUp, false)
-  assert.deepEqual(session.snapshotEvents(), beforeEvents)
-  assert.deepEqual(session.surface.nodes, beforeSurface)
 })
 
 test('writes and exactly replays a prepared turn with a local newer DSH Host', async (t) => {

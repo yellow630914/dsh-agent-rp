@@ -16,9 +16,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import {
-  IconChevronLeftOutline14, IconChevronRightOutline14, IconEditOutline16, IconEllipsisOutline16,
-  IconLoadingOutline16, IconPlayOutline16, IconRefreshOutline16, IconSparkle16, IconWarningOutline16,
-  Menu, Tooltip,
+  IconChevronLeftOutline14, IconEditOutline16,
+  IconLoadingOutline16, IconSparkle16, IconWarningOutline16,
+  Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   AGENT_RP_ST_EXTENSION_SERVICE,
@@ -668,12 +668,6 @@ type ComposerDockProps = PropsRuntime<'conversation.composer.dock'>
 
 type GenerationTailProps = TurnTailOwnerProps & {
   readonly sessionId: SessionId
-  readonly runGeneration: (
-    sessionId: SessionId,
-    request: { readonly operation: 'regenerate' | 'continue'; readonly replySeq: number }
-      | { readonly operation: 'select'; readonly replySeq: number; readonly versionIndex: number }
-      | { readonly operation: 'rewrite-input'; readonly replySeq: number; readonly text: string },
-  ) => Promise<void>
   readonly rewriteTurn: (sessionId: SessionId, turn: number, draft: string) => Promise<void>
   readonly runImageGeneration: RunImageGeneration
   readonly useChat: PropsRuntime<'conversation.composer.dock'>['useChat']
@@ -1173,7 +1167,7 @@ function RewriteTurnDialog({ initialText, mode, busy, error, onClose, onRewrite 
 }
 
 function GenerationTail({
-  runGeneration, rewriteTurn, runImageGeneration, seq: replySeq,
+  rewriteTurn, runImageGeneration, seq: replySeq,
   sessionId, turn, useChat, useProjection, useSession,
 }: GenerationTailProps) {
   const projection = useProjection('agentRp') as AgentRpProjection | undefined
@@ -1192,84 +1186,22 @@ function GenerationTail({
     if (node?.kind !== 'user' || node.content.length === 0 || node.content.some(block => block.type !== 'text')) return undefined
     return node.content.map(block => block.type === 'text' ? block.text : '').join('\n')
   })
-  const [busy, setBusy] = useState<'regenerate' | 'continue' | 'select-previous' | 'select-next' | 'rewrite' | 'rewrite-input'>()
+  const [busy, setBusy] = useState<'rewrite'>()
   const [error, setError] = useState<string>()
   const [drawOpen, setDrawOpen] = useState(false)
-  const [moreOpen, setMoreOpen] = useState(false)
-  const [rewriteMode, setRewriteMode] = useState<'branch' | 'regenerate'>()
-  // DSH 0.1.3 bars an Assistant message from replacing surface nodes, so a
-  // regenerated reply is appended and owns its own transcript row — this tail
-  // binds to that row, not to the one the version group is anchored on.
-  // Resolve back to the anchor before matching, or the switcher disappears and
-  // a second regeneration starts a fresh group instead of adding a version.
-  const anchoredSeq = projection?.surfaceAnchors?.[String(replySeq)] ?? replySeq
-  const group = projection?.generations.find(candidate => candidate.anchorSeq === anchoredSeq)
+  const [rewriteOpen, setRewriteOpen] = useState(false)
   if (projection === undefined) return null
-  const sessionEventsAvailable = projection.hostCapabilities?.sessionEvents === true
+  // An appended reply owns its own transcript row, so this tail can bind to a
+  // row that is not the one its version group is anchored on. The automatic
+  // narrative-review Worker still appends such rows, so keep resolving back to
+  // the anchor before asking whether this is the current reply.
+  const anchoredSeq = projection.surfaceAnchors?.[String(replySeq)] ?? replySeq
   const currentReply = projection.currentReplySeq === anchoredSeq
   const sceneNote = replySceneNote(replyText)
-  const selectedIndex = group?.versions.findIndex(version => version.seq === group.selectedVersionSeq) ?? 0
-  const invoke = (
-    request: Parameters<GenerationTailProps['runGeneration']>[1],
-    pending: Exclude<typeof busy, undefined> = request.operation === 'select' ? 'select-next' : request.operation,
-  ): void => {
-    setBusy(pending)
-    setError(undefined)
-    void runGeneration(sessionId, request).then(
-      () => { setBusy(undefined) },
-      (reason: unknown) => {
-        setBusy(undefined)
-        setError(reason instanceof Error ? reason.message : '回复操作失败')
-      },
-    )
-  }
   const disabled = running || busy !== undefined
   const unavailableReason = running ? '回复生成期间暂不可用' : busy !== undefined ? '正在处理回复' : undefined
-  const statefulRegenerationUnavailable = !sessionEventsAvailable
-    && (projection.tavern !== undefined || projection.mvu !== undefined)
-  const regenerateDisabled = disabled || statefulRegenerationUnavailable
-  const regenerateUnavailableReason = statefulRegenerationUnavailable
-    ? '当前 DSH Host 缺少安全插件事件能力，无法重新生成含状态的回复'
-    : unavailableReason
-  const previousUnavailable = disabled || selectedIndex <= 0
-  const nextUnavailable = disabled || group === undefined || selectedIndex >= group.versions.length - 1
+  const rewriteUnavailable = disabled || editableUserText === undefined
   return <span data-agent-rp-generation-actions>
-    {currentReply && group !== undefined && group.versions.length > 1 && <span data-agent-rp-version-switcher
-      aria-label={`回复版本 ${selectedIndex + 1}/${group.versions.length}`}>
-      <Tooltip label={previousUnavailable ? unavailableReason ?? '已经是第一版回复' : '上一版回复'} side="bottom">
-        <button type="button" data-agent-rp-generation-action aria-label={busy === 'select-previous' ? '正在切换到上一版回复' : '上一版回复'}
-          aria-disabled={previousUnavailable || undefined} data-unavailable={previousUnavailable || undefined}
-          onClick={previousUnavailable ? undefined : () => {
-            invoke({ operation: 'select', replySeq: anchoredSeq, versionIndex: selectedIndex - 1 }, 'select-previous')
-          }}>
-          {busy === 'select-previous' ? <IconLoadingOutline16 className="agent-rp-generation-loading" /> : <IconChevronLeftOutline14 />}
-        </button>
-      </Tooltip>
-      <span data-agent-rp-version-label aria-live="polite">{selectedIndex + 1}/{group.versions.length}</span>
-      <Tooltip label={nextUnavailable ? unavailableReason ?? '已经是最后一版回复' : '下一版回复'} side="bottom">
-        <button type="button" data-agent-rp-generation-action aria-label={busy === 'select-next' ? '正在切换到下一版回复' : '下一版回复'}
-          aria-disabled={nextUnavailable || undefined} data-unavailable={nextUnavailable || undefined}
-          onClick={nextUnavailable ? undefined : () => {
-            invoke({ operation: 'select', replySeq: anchoredSeq, versionIndex: selectedIndex + 1 }, 'select-next')
-          }}>
-          {busy === 'select-next' ? <IconLoadingOutline16 className="agent-rp-generation-loading" /> : <IconChevronRightOutline14 />}
-        </button>
-      </Tooltip>
-    </span>}
-    {currentReply && <Tooltip label={regenerateDisabled ? regenerateUnavailableReason ?? '重新生成' : '重新生成'} side="bottom">
-      <button type="button" data-agent-rp-generation-action aria-label={busy === 'regenerate' ? '正在重新生成' : '重新生成'}
-        aria-disabled={regenerateDisabled || undefined} data-unavailable={regenerateDisabled || undefined}
-        onClick={regenerateDisabled ? undefined : () => { invoke({ operation: 'regenerate', replySeq: anchoredSeq }) }}>
-        {busy === 'regenerate' ? <IconLoadingOutline16 className="agent-rp-generation-loading" /> : <IconRefreshOutline16 />}
-      </button>
-    </Tooltip>}
-    {currentReply && <Tooltip label={disabled ? unavailableReason ?? '继续生成' : '继续生成'} side="bottom">
-      <button type="button" data-agent-rp-generation-action aria-label={busy === 'continue' ? '正在继续生成' : '继续生成'}
-        aria-disabled={disabled || undefined} data-unavailable={disabled || undefined}
-        onClick={disabled ? undefined : () => { invoke({ operation: 'continue', replySeq: anchoredSeq }) }}>
-        {busy === 'continue' ? <IconLoadingOutline16 className="agent-rp-generation-loading" /> : <IconPlayOutline16 />}
-      </button>
-    </Tooltip>}
     {currentReply && <Tooltip label={sceneNote === '' ? '当前回复没有可绘制的场景' : disabled ? unavailableReason ?? '生成插图' : '生成插图'} side="bottom">
       <button type="button" data-agent-rp-generation-action aria-label="生成插图"
         aria-disabled={(disabled || sceneNote === '') || undefined} data-unavailable={(disabled || sceneNote === '') || undefined}
@@ -1277,71 +1209,30 @@ function GenerationTail({
         <IconSparkle16 />
       </button>
     </Tooltip>}
-    <Menu
-      open={moreOpen}
-      onClose={() => { setMoreOpen(false) }}
-      side="top"
-      align="end"
-      portal
-      compact
-      items={[{
-        id: 'rewrite-input',
-        label: '修改输入并重新生成',
-        icon: <IconRefreshOutline16 />,
-        // Editing in place answers the revised message again, which only the
-        // last turn can do: earlier turns already have replies after them.
-        disabled: regenerateDisabled || editableUserText === undefined || !currentReply,
-      }, {
-        id: 'rewrite',
-        label: '修改输入并另开分支',
-        icon: <IconEditOutline16 />,
-        disabled: disabled || editableUserText === undefined,
-      }]}
-      onSelect={(id) => {
-        setMoreOpen(false)
-        if (editableUserText === undefined) return
-        if (id === 'rewrite' && !disabled) {
-          setError(undefined)
-          setRewriteMode('branch')
-          return
-        }
-        if (id === 'rewrite-input' && !regenerateDisabled && currentReply) {
-          setError(undefined)
-          setRewriteMode('regenerate')
-        }
-      }}
-      anchor={<Tooltip label={editableUserText === undefined ? '这一轮含附件或没有可修改的用户消息' : disabled ? unavailableReason ?? '更多操作' : '更多操作'} side="bottom">
-        <button type="button" data-agent-rp-generation-action aria-label={busy === 'rewrite' || busy === 'rewrite-input' ? '正在修改输入' : '更多操作'}
-          aria-haspopup="menu" aria-expanded={moreOpen} aria-disabled={disabled || undefined} data-unavailable={disabled || undefined}
-          onClick={disabled ? undefined : () => { setMoreOpen(open => !open) }}>
-          {busy === 'rewrite' || busy === 'rewrite-input'
-            ? <IconLoadingOutline16 className="agent-rp-generation-loading" />
-            : <IconEllipsisOutline16 />}
-        </button>
-      </Tooltip>}
-    />
+    <Tooltip label={editableUserText === undefined ? '这一轮含附件或没有可修改的用户消息' : disabled ? unavailableReason ?? '修改输入并另开分支' : '修改输入并另开分支'} side="bottom">
+      <button type="button" data-agent-rp-generation-action aria-label={busy === 'rewrite' ? '正在修改输入' : '修改输入并另开分支'}
+        aria-disabled={rewriteUnavailable || undefined} data-unavailable={rewriteUnavailable || undefined}
+        onClick={rewriteUnavailable ? undefined : () => { setError(undefined); setRewriteOpen(true) }}>
+        {busy === 'rewrite' ? <IconLoadingOutline16 className="agent-rp-generation-loading" /> : <IconEditOutline16 />}
+      </button>
+    </Tooltip>
     {error !== undefined && <Tooltip label={error} side="bottom">
       <span data-agent-rp-generation-error role="alert" aria-label={`操作失败：${error}`} tabIndex={0}><IconWarningOutline16 /></span>
     </Tooltip>}
     {currentReply && drawOpen && <ImageGenerationDialog projection={projection} initialMode="scene" initialNote={sceneNote}
       onClose={() => { setDrawOpen(false) }} onGenerate={request => { runImageGeneration(sessionId, request) }} />}
-    {rewriteMode !== undefined && editableUserText !== undefined && <RewriteTurnDialog
-      initialText={editableUserText} mode={rewriteMode}
-      busy={busy === 'rewrite' || busy === 'rewrite-input'} {...error === undefined ? {} : { error }}
-      onClose={() => { if (busy !== 'rewrite' && busy !== 'rewrite-input') setRewriteMode(undefined) }}
+    {rewriteOpen && editableUserText !== undefined && <RewriteTurnDialog
+      initialText={editableUserText} mode="branch"
+      busy={busy === 'rewrite'} {...error === undefined ? {} : { error }}
+      onClose={() => { if (busy !== 'rewrite') setRewriteOpen(false) }}
       onRewrite={text => {
-        const pending = rewriteMode === 'branch' ? 'rewrite' as const : 'rewrite-input' as const
-        setBusy(pending)
+        setBusy('rewrite')
         setError(undefined)
-        const operation = rewriteMode === 'branch'
-          ? rewriteTurn(sessionId, turn.turn, text)
-          : runGeneration(sessionId, { operation: 'rewrite-input', replySeq: anchoredSeq, text })
-        void operation.then(
-          () => { setBusy(undefined); setRewriteMode(undefined) },
+        void rewriteTurn(sessionId, turn.turn, text).then(
+          () => { setBusy(undefined); setRewriteOpen(false) },
           (reason: unknown) => {
             setBusy(undefined)
-            setError(reason instanceof Error ? reason.message
-              : pending === 'rewrite' ? '无法创建改写对话' : '无法重新生成')
+            setError(reason instanceof Error ? reason.message : '无法创建改写对话')
           },
         )
       }} />}
@@ -2101,20 +1992,6 @@ const agentRpResponsiveStyle = `
 }
 [data-agent-rp-generation-action] .agent-rp-generation-loading {
   animation: agent-rp-action-spin 900ms linear infinite;
-}
-[data-agent-rp-version-switcher] {
-  align-items: center;
-  color: var(--dsw-alias-label-tertiary);
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 0;
-}
-[data-agent-rp-version-label] {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  min-width: 28px;
-  opacity: .72;
-  text-align: center;
 }
 [data-agent-rp-generation-error] {
   color: var(--dsw-alias-state-danger, #dc7777);
@@ -14019,15 +13896,6 @@ export function apply(ctx: ClientContext): void {
     const upload = await importWorldInfoFile(file)
     await attachWorldInfo(sessionId, upload.id)
   }
-  const runGeneration = async (
-    sessionId: SessionId,
-    request: { readonly operation: 'regenerate' | 'continue'; readonly replySeq: number }
-      | { readonly operation: 'select'; readonly replySeq: number; readonly versionIndex: number }
-      | { readonly operation: 'rewrite-input'; readonly replySeq: number; readonly text: string },
-  ): Promise<void> => {
-    const response = await executeAgentRpCommand(sessionId, `/rp-generation ${JSON.stringify(request)}`)
-    if (!response.matched) throw new Error('当前 Host 未启用回复版本控制')
-  }
   const runImageGeneration: RunImageGeneration = (sessionId, request) => {
     const jobId = `image-${crypto.randomUUID()}`
     const payload: ImageGenerationRequest = { format: 0, jobId, ...request }
@@ -14270,7 +14138,7 @@ export function apply(ctx: ClientContext): void {
     name: 'conversation.chat.turnActions',
     id: 'agent-rp-generation',
     order: 100,
-  }, props => <GenerationTail {...props} runGeneration={runGeneration} rewriteTurn={rewriteTurn}
+  }, props => <GenerationTail {...props} rewriteTurn={rewriteTurn}
     runImageGeneration={runImageGeneration} />))
   ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
     name: 'conversation.chat.turnTail',
@@ -14280,7 +14148,7 @@ export function apply(ctx: ClientContext): void {
       const closing = owner.turn.data.get('turn-tail')?.closing
       return closing === null || closing === undefined ? null : { replySeq: closing.finalNode.seq }
     },
-  }, props => <GenerationTail {...props} runGeneration={runGeneration} rewriteTurn={rewriteTurn}
+  }, props => <GenerationTail {...props} rewriteTurn={rewriteTurn}
     runImageGeneration={runImageGeneration} />))
   ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
     name: 'conversation.composer.dock', id: 'agent-rp-status', order: -100,

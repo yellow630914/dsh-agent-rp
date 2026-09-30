@@ -1,8 +1,17 @@
 /** Build complete Session seeds from Host-owned roleplay libraries. */
 
+import { randomUUID } from 'node:crypto'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import { CommandId } from '@deepseek-ai/dsh-commands'
+import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { Session, SessionId, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { CharacterLibrary } from './character-library.ts'
+import { roleplayChatFloors, type RoleplayChatFloor } from './roleplay-chat-floors.ts'
+import { encodeRegexConfiguration, readRegexConfiguration } from './regex-configuration-core.ts'
+import { encodeWorldInfoConfiguration, readWorldInfoConfiguration } from './world-info-configuration-core.ts'
+import { encodeTavernHelperState, readTavernHelperState } from './tavern-helper.ts'
+import { readRoleplayStates } from './roleplay-state.ts'
+import { appendAgentRpMemorySeed, readAgentRpMemoryHistory } from './memory.ts'
 import { createCharacterCardSessionSeed } from './import/character-card-seed.ts'
 import { createPresetSessionSeed } from './import/session-preset.ts'
 import { createSillyTavernChatSeed, resolveSillyTavernChatIdentity } from './import/sillytavern-chat-seed.ts'
@@ -216,6 +225,18 @@ export function parseAgentRpSessionLaunchRequest(value: unknown): AgentRpSession
       text: record.text,
     }
   }
+  if (record.kind === 'branch') {
+    if (typeof record.fromFloor !== 'number' || !Number.isSafeInteger(record.fromFloor) || record.fromFloor < 0
+      || Object.keys(record).some(key => !['format', 'sourceSessionId', 'kind', 'fromFloor'].includes(key))) {
+      throw new Error('分支会话请求字段无效')
+    }
+    return {
+      format: 0,
+      sourceSessionId: record.sourceSessionId as string,
+      kind: 'branch',
+      fromFloor: record.fromFloor,
+    }
+  }
   throw new Error('角色会话启动类型无效')
 }
 
@@ -383,6 +404,208 @@ export function prepareAgentRpSession(
       request.presetId,
     ),
     title: character.detail.displayName,
+  }
+}
+
+/**
+ * One synthesized carry event, before it is given a seq.
+ *
+ * Seeds are validated by `Session.create`, not by this type: the event union's
+ * surface metadata is conditional on the event type, which a generic builder
+ * cannot express while still pushing several event types into one array.
+ */
+type CarriedEvent = Omit<SessionEvent, 'seq'> | {
+  readonly type: string
+  readonly time?: number
+  readonly data: unknown
+  readonly surfaceOp?: 'append'
+  readonly ignorable?: true
+}
+
+/**
+ * Keep the events that do not belong to any turn, renumbered contiguously.
+ *
+ * The launch seeds are not simply "everything before the first turn": a character
+ * launch seeds its greeting as a complete turn and then appends the preset and
+ * world-info seeds *after* it, so a prefix cut at the first `turn/start` silently
+ * drops them. What actually separates identity from transcript is turn
+ * membership, so that is the rule — every turn's contents are re-stated or
+ * carried explicitly, and everything outside a turn is identity.
+ * @param events - complete source events.
+ * @returns the out-of-turn events with fresh contiguous seqs.
+ */
+function outOfTurnSeed(events: readonly SessionEvent[]): readonly SessionEvent[] {
+  const kept: SessionEvent[] = []
+  let depth = 0
+  for (const event of events) {
+    if (event.type === 'turn/start') { depth += 1; continue }
+    if (event.type === 'turn/end') { depth = Math.max(0, depth - 1); continue }
+    if (depth > 0) continue
+    kept.push({ ...event, seq: SessionSeq(kept.length) } as SessionEvent)
+  }
+  return kept
+}
+
+/** Give a run of synthesized events contiguous seqs after an existing seed. */
+function appendCarried(seed: readonly SessionEvent[], carried: readonly CarriedEvent[]): readonly SessionEvent[] {
+  if (carried.length === 0) return seed
+  let time = Math.max(Date.now(), (seed.at(-1)?.time ?? 0) + 1)
+  const events = [...seed]
+  for (const event of carried) {
+    events.push({ ...event, seq: SessionSeq(events.length), time: time += 1 } as SessionEvent)
+  }
+  return events
+}
+
+/**
+ * Re-state only the configuration the kept events do not already establish.
+ *
+ * Out-of-turn events survive into the branch verbatim, so the folds they feed
+ * need no help. What needs carrying is whatever the player changed *inside* a
+ * turn, because those events are dropped with the transcript. Emitting a carry
+ * unconditionally would double-apply the rest — and for state data that is not
+ * merely redundant but invalid, since revisions must stay contiguous.
+ *
+ * The regex, world-info and Tavern overlays fold from any successful
+ * `command/done`, which is why one lone done event carries them: the matching
+ * `command/run` only mattered to the Host that ran it.
+ * @param events - complete source events.
+ * @param kept - the out-of-turn events the branch keeps verbatim.
+ * @returns the carry events, in the order they must be replayed.
+ */
+function carriedRoleplayConfiguration(
+  events: readonly SessionEvent[],
+  kept: readonly SessionEvent[],
+): readonly CarriedEvent[] {
+  const carried: CarriedEvent[] = []
+  const carryCommand = (label: string, current: string, previous: string): void => {
+    if (current === previous) return
+    carried.push({
+      type: 'command/done',
+      data: { commandId: CommandId(`branch-${label}-${randomUUID()}`), kind: 'success', text: current },
+    })
+  }
+  carryCommand('regex',
+    encodeRegexConfiguration(readRegexConfiguration(events)),
+    encodeRegexConfiguration(readRegexConfiguration(kept)))
+  carryCommand('world-info',
+    encodeWorldInfoConfiguration(readWorldInfoConfiguration(events)),
+    encodeWorldInfoConfiguration(readWorldInfoConfiguration(kept)))
+  const tavern = readTavernHelperState(events)
+  const keptTavern = readTavernHelperState(kept)
+  if (tavern !== undefined) {
+    carryCommand('tavern',
+      encodeTavernHelperState(tavern),
+      keptTavern === undefined ? '' : encodeTavernHelperState(keptTavern))
+  }
+  // A carried state is written by the owning module, not by the player: a player
+  // write must cite the exact `rp-state` command event that made it, and that
+  // event may be one of the dropped ones. The value is identical either way;
+  // only the attribution changes, from "the player edited this" to "the module
+  // that owns it established it".
+  const keptStates = readRoleplayStates(kept)
+  for (const state of readRoleplayStates(events)) {
+    const previous = keptStates.find(candidate => candidate.id === state.id)
+    if (previous !== undefined && JSON.stringify(previous.value) === JSON.stringify(state.value)) continue
+    carried.push({
+      type: 'agent-rp/state',
+      data: {
+        format: 0,
+        id: state.id,
+        // Continue whatever the kept events already established, or open the
+        // namespace at one.
+        revision: (previous?.revision ?? 0) + 1,
+        ownerModuleId: previous?.ownerModuleId ?? state.ownerModuleId,
+        writerModuleId: previous?.ownerModuleId ?? state.ownerModuleId,
+        value: state.value,
+      },
+      ignorable: true,
+    } as CarriedEvent)
+  }
+  return carried
+}
+
+/** Replay one floor as its own completed turn, the shape an imported chat uses. */
+function appendFloorTurn(
+  carried: CarriedEvent[],
+  floor: RoleplayChatFloor,
+  turn: number,
+): void {
+  carried.push({ type: 'turn/start', data: { turn } } as CarriedEvent)
+  carried.push({ type: 'step/start', data: { turn, step: 1 } } as CarriedEvent)
+  if (floor.role === 'assistant') {
+    carried.push({
+      type: 'assistant/message',
+      data: {
+        turn,
+        step: 1,
+        message: createAssistantMessage({
+          content: [{ type: 'text', text: floor.text }],
+          source: { provider: 'agent-rp-branch', model: 'history' },
+        }),
+        // Re-stated history never streamed from a model, so the embedded stream is empty.
+        stream: [],
+      },
+      surfaceOp: 'append',
+    } as CarriedEvent)
+  } else {
+    carried.push({
+      type: 'user/message',
+      data: createUserMessage({
+        content: [{ type: 'text', text: floor.text }],
+        source: { kind: 'user' },
+      }),
+      surfaceOp: 'append',
+    } as CarriedEvent)
+  }
+  carried.push({ type: 'step/end', data: { turn, step: 1 } } as CarriedEvent)
+  carried.push({ type: 'turn/end', data: { turn, reason: { kind: 'completed' } } } as CarriedEvent)
+}
+
+/**
+ * Branch an Agent RP Session, keeping the transcript from one floor onward.
+ *
+ * This is an ordinary branch: the card, persona, world books, memory, regex
+ * overlay and state data all carry over, and the source Session is untouched.
+ * The transcript is the one thing that cannot carry over as events — an event
+ * log's seqs start at zero with its seeds first, so "keep the later floors"
+ * has to re-state them the way a chat import does, as one completed turn each.
+ *
+ * What that loses is deliberate and bounded: per-floor annotations, generated
+ * artifacts, reply versions, and the turn plans, settlements and presentations
+ * of the kept floors. The floors' text, roles and order survive, which is what
+ * an export/import round trip preserves too.
+ * @param session - live source session; only read.
+ * @param fromFloor - first visible floor index to keep, as the floor panel numbers them.
+ * @param sourceTitle - the source Session's display title, when it has one.
+ * @returns the seed and title for the branch.
+ */
+export function prepareAgentRpBranchSession(
+  session: Session,
+  fromFloor: number,
+  sourceTitle?: string,
+): PreparedAgentRpSession {
+  if (!Number.isSafeInteger(fromFloor) || fromFloor < 0) throw new Error('起始楼层无效')
+  const events = session.snapshotEvents()
+  const firstTurn = events.find(event => event.type === 'turn/start')
+  if (firstTurn === undefined) throw new Error('来源会话还没有对话可以分支')
+  const floors = roleplayChatFloors(session)
+  if (fromFloor >= floors.length) throw new Error(`第 ${fromFloor} 楼不存在`)
+  const kept = floors.slice(fromFloor)
+  if (kept.length === 0) throw new Error('至少需要保留一条楼层')
+  const outOfTurn = outOfTurnSeed(events)
+  // Memory carries as one seed record, so the kept events' own memory is already
+  // in the fold; passing the active set re-establishes exactly what is current.
+  const base = appendAgentRpMemorySeed(outOfTurn, readAgentRpMemoryHistory(events).active, String(session.id))
+  const carried: CarriedEvent[] = [...carriedRoleplayConfiguration(events, base)]
+  kept.forEach((floor, index) => { appendFloorTurn(carried, floor, index + 1) })
+  const seed = appendCarried(base, carried)
+  const validated = Session.create(SessionId('agent-rp-branch-validation'), seed)
+  const characterName = readActiveSessionCharacter(seed)?.result.name
+  const title = sourceTitle?.trim() || characterName?.trim() || '角色对话'
+  return {
+    seed: Object.freeze(validated.snapshotEvents().slice(0, seed.length)),
+    title: `${title} · 分支`,
   }
 }
 

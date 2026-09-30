@@ -637,6 +637,8 @@ type HeaderProps = PropsRuntime<'conversation.session.header.actions'> & {
   readonly manageMemory: (sessionId: SessionId, request: AgentRpMemoryCommandRequest) => Promise<void>
   /** Hide exactly `hidden` leading floors, restoring first when the count shrinks. */
   readonly manageFloors: (sessionId: SessionId, hidden: number, current: number) => Promise<void>
+  /** Branch a new Session that keeps the transcript from one visible floor onward. */
+  readonly branchFromFloor: (sessionId: SessionId, fromVisibleFloor: number) => Promise<void>
   readonly manageState: (sessionId: SessionId, request: RoleplayStateCommandRequest) => Promise<void>
   readonly manageTurnMode: (sessionId: SessionId, mode: AgentRpProjection['turnMode']) => Promise<void>
   readonly startCharacterSession: (
@@ -4302,7 +4304,7 @@ function RoleplayHeader({
   listCharacters, readCharacter, setCharacterArchived, importCharacterFile, listWorldInfos,
   prepareChatMigration, prepareRpDistributionChatMigration, launchPreparedChatMigration,
   startCharacterSession, exportChat,
-  listMemory, manageMemory, manageFloors, manageState, manageTurnMode,
+  listMemory, manageMemory, manageFloors, branchFromFloor, manageState, manageTurnMode,
   listPresets, listPersonas, savePersona, deletePersona, applyPersona, loadModelCapabilities, runtimeDiagnostics,
   workspaceSettings,
 }: HeaderProps) {
@@ -4574,6 +4576,7 @@ function RoleplayHeader({
     {floorsOpen && <FloorVisibilityDialog
       floors={projection?.floors ?? []}
       onCommit={hidden => manageFloors(sessionId, hidden, (projection?.floors ?? []).filter(floor => floor.hidden).length)}
+      onBranch={fromVisibleFloor => branchFromFloor(sessionId, fromVisibleFloor)}
       onClose={() => { setFloorsOpen(false) }} />}
     {memoryOpen && <MemoryManagerDialog
       onClose={() => { setMemoryOpen(false) }}
@@ -4944,14 +4947,15 @@ const memoryKindLabels: Record<AgentRpMemoryView['kind'], string> = {
   event: '共同经历',
 }
 
-function FloorVisibilityDialog({ floors, onCommit, onClose }: {
+function FloorVisibilityDialog({ floors, onCommit, onBranch, onClose }: {
   readonly floors: AgentRpProjection['floors']
   readonly onCommit: (hidden: number) => Promise<void>
+  readonly onBranch: (fromVisibleFloor: number) => Promise<void>
   readonly onClose: () => void
 }) {
   const committed = floors.filter(floor => floor.hidden).length
   const [hidden, setHidden] = useState(committed)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<'hide' | 'branch'>()
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string>()
   // At least one floor has to stay in context for the character to answer.
@@ -4961,17 +4965,30 @@ function FloorVisibilityDialog({ floors, onCommit, onClose }: {
   const target = Math.min(Math.max(hidden, committed), maximum)
   const dirty = target > committed
   const confirm = (): void => {
-    if (busy || !dirty) return
+    if (busy !== undefined || !dirty) return
     if (!confirming) {
       setConfirming(true)
       return
     }
-    setBusy(true)
+    setBusy('hide')
     setError(undefined)
     void onCommit(target).then(onClose, (reason: unknown) => {
-      setBusy(false)
+      setBusy(undefined)
       setConfirming(false)
       setError(reason instanceof Error ? reason.message : '无法调整隐藏范围')
+    })
+  }
+  // The slider counts every floor, including the ones already hidden, but a
+  // branch can only re-state floors that are still in the transcript. The
+  // difference is exactly the visible floor the branch starts from.
+  const branch = (): void => {
+    if (busy !== undefined) return
+    setBusy('branch')
+    setError(undefined)
+    setConfirming(false)
+    void onBranch(target - committed).then(onClose, (reason: unknown) => {
+      setBusy(undefined)
+      setError(reason instanceof Error ? reason.message : '无法创建分支')
     })
   }
   return <div data-agent-rp-dialog data-agent-rp-floor-panel role="dialog" aria-modal="true" aria-label="楼层" style={{
@@ -4990,8 +5007,8 @@ function FloorVisibilityDialog({ floors, onCommit, onClose }: {
             隐藏的楼层不会进入下一次回复的上下文，只能从最前面开始隐藏，而且无法还原
           </p>
         </div>
-        <button type="button" disabled={busy} onClick={onClose} style={{
-          background: 'transparent', border: 0, color: 'inherit', cursor: busy ? 'default' : 'pointer',
+        <button type="button" disabled={busy !== undefined} onClick={onClose} style={{
+          background: 'transparent', border: 0, color: 'inherit', cursor: busy === undefined ? 'pointer' : 'default',
           font: 'inherit', fontSize: '18px', opacity: .6, padding: '0 3px',
         }} aria-label="关闭楼层面板">×</button>
       </header>
@@ -5008,7 +5025,7 @@ function FloorVisibilityDialog({ floors, onCommit, onClose }: {
           隐藏最前面 {target} 层
         </label>
         <input id="agent-rp-floor-slider" data-agent-rp-floor-slider type="range"
-          min={committed} max={maximum} step={1} value={target} disabled={busy || maximum === committed}
+          min={committed} max={maximum} step={1} value={target} disabled={busy !== undefined || maximum === committed}
           onChange={event => { setHidden(Number(event.target.value)); setConfirming(false) }} style={{ width: '100%' }} />
         <div style={{ display: 'flex', fontSize: '11px', gap: '10px', justifyContent: 'space-between', opacity: .55 }}>
           <span>纳入上下文 {floors.length - target} 层</span>
@@ -5045,10 +5062,23 @@ function FloorVisibilityDialog({ floors, onCommit, onClose }: {
         内容不会消失——楼层面板和「导出聊天」里仍然读得到，但角色不会再看到它们。
       </p>}
 
+      {floors.length > 0 && !confirming && <p style={{ fontSize: '12px', lineHeight: 1.6, margin: '14px 0 0', opacity: .62 }}>
+        也可以<strong>另开分支</strong>：保留第 {target} 层之后的楼层开一个新会话，角色卡、人物、
+        世界书、记忆、正则与状态数据都跟着过去，这段会话原样留着。分支的楼层会像导入聊天那样
+        重新叙述，所以插图、标注与回复版本不会跟过去。
+      </p>}
+
       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
-        <button type="button" disabled={busy} onClick={() => { if (confirming) setConfirming(false); else onClose() }}
+        <button type="button" disabled={busy !== undefined} onClick={() => { if (confirming) setConfirming(false); else onClose() }}
           style={generationButtonStyle}>{confirming ? '返回' : '取消'}</button>
-        <button type="button" data-agent-rp-action="confirm-floors" disabled={busy || !dirty} onClick={confirm} style={{
+        {!confirming && floors.length > 0 && <button type="button" data-agent-rp-action="branch-floors"
+          disabled={busy !== undefined} onClick={branch} style={{
+            ...generationButtonStyle,
+            background: `color-mix(in srgb, ${color} 10%, transparent)`,
+            borderColor: `color-mix(in srgb, ${color} 34%, transparent)`,
+            opacity: busy !== undefined ? .5 : 1,
+          }}>{busy === 'branch' ? '正在创建分支…' : '另开分支'}</button>}
+        <button type="button" data-agent-rp-action="confirm-floors" disabled={busy !== undefined || !dirty} onClick={confirm} style={{
           ...generationButtonStyle,
           background: confirming
             ? 'color-mix(in srgb, var(--dsw-alias-state-danger, #e06470) 22%, transparent)'
@@ -5056,8 +5086,8 @@ function FloorVisibilityDialog({ floors, onCommit, onClose }: {
           borderColor: confirming
             ? 'color-mix(in srgb, var(--dsw-alias-state-danger, #e06470) 52%, transparent)'
             : `color-mix(in srgb, ${color} 48%, transparent)`,
-          opacity: busy || !dirty ? .5 : 1,
-        }}>{busy ? '正在隐藏…' : confirming ? `隐藏 ${target - committed} 层（不可还原）` : '确定'}</button>
+          opacity: busy !== undefined || !dirty ? .5 : 1,
+        }}>{busy === 'hide' ? '正在隐藏…' : confirming ? `隐藏 ${target - committed} 层（不可还原）` : '确定'}</button>
       </div>
     </section>
   </div>
@@ -13469,6 +13499,20 @@ export function apply(ctx: ClientContext): void {
       text: draft,
     })
   }
+  /**
+   * Branch the transcript from one floor on, instead of hiding earlier floors.
+   *
+   * Hiding rewrites the current Session and cannot be undone; a branch leaves the
+   * source untouched, so the floors the player cut stay readable where they are.
+   */
+  const branchFromFloor = async (sourceSessionId: SessionId, fromFloor: number): Promise<void> => {
+    await launchRoleplaySession({
+      format: 0,
+      sourceSessionId,
+      kind: 'branch',
+      fromFloor,
+    })
+  }
   const retainRpDistributionChat = async (
     target: string,
     sessionId: string,
@@ -14044,7 +14088,7 @@ export function apply(ctx: ClientContext): void {
   }
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
     name: 'conversation.session.header.actions', id: 'agent-rp-character-header', order: -100,
-  }, props => <RoleplayHeader {...props} runtimeDiagnostics={runtimeDiagnostics} workspaceSettings={workspaceSettings} loadAvatar={loadAvatar} renameSession={renameSession} configurePreset={configurePreset} importPresetFile={importPresetFile} importPreset={importPreset} managePresetLibrary={managePresetLibrary} configureWorldInfo={configureWorldInfo} configureRegex={configureRegex} importWorldInfo={importWorldInfo} attachWorldInfo={attachWorldInfo} listWorldInfos={listWorldInfos} listCharacters={listCharacters} readCharacter={readCharacter} setCharacterArchived={setCharacterArchived} deleteCharacter={deleteCharacter} importCharacterFile={importCharacterFile} prepareChatMigration={prepareChatMigration} prepareRpDistributionChatMigration={prepareRpDistributionChatMigration} launchPreparedChatMigration={launchPreparedChatMigration} exportChat={exportChat} listMemory={listMemory} manageMemory={manageMemory} manageFloors={manageFloors} manageState={manageState} manageTurnMode={manageTurnMode} startCharacterSession={startCharacterFromCurrentSession} listPresets={listPresets} listRegexPacks={listRegexPacks} importRegexPackFile={importRegexPackFile} deleteRegexPack={deleteRegexPack} listAgentCapabilityPresets={listAgentCapabilityPresets} listPersonas={listPersonas} savePersona={savePersona} deletePersona={deletePersona} applyPersona={applyPersona} loadModelCapabilities={loadModelCapabilities} />))
+  }, props => <RoleplayHeader {...props} runtimeDiagnostics={runtimeDiagnostics} workspaceSettings={workspaceSettings} loadAvatar={loadAvatar} renameSession={renameSession} configurePreset={configurePreset} importPresetFile={importPresetFile} importPreset={importPreset} managePresetLibrary={managePresetLibrary} configureWorldInfo={configureWorldInfo} configureRegex={configureRegex} importWorldInfo={importWorldInfo} attachWorldInfo={attachWorldInfo} listWorldInfos={listWorldInfos} listCharacters={listCharacters} readCharacter={readCharacter} setCharacterArchived={setCharacterArchived} deleteCharacter={deleteCharacter} importCharacterFile={importCharacterFile} prepareChatMigration={prepareChatMigration} prepareRpDistributionChatMigration={prepareRpDistributionChatMigration} launchPreparedChatMigration={launchPreparedChatMigration} exportChat={exportChat} listMemory={listMemory} manageMemory={manageMemory} manageFloors={manageFloors} branchFromFloor={branchFromFloor} manageState={manageState} manageTurnMode={manageTurnMode} startCharacterSession={startCharacterFromCurrentSession} listPresets={listPresets} listRegexPacks={listRegexPacks} importRegexPackFile={importRegexPackFile} deleteRegexPack={deleteRegexPack} listAgentCapabilityPresets={listAgentCapabilityPresets} listPersonas={listPersonas} savePersona={savePersona} deletePersona={deletePersona} applyPersona={applyPersona} loadModelCapabilities={loadModelCapabilities} />))
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'agent-rp',

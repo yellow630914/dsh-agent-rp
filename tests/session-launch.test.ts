@@ -20,10 +20,13 @@ import {
   worldInfoLibraryRoleplayResourceId,
 } from '../src/roleplay-resource-library-providers.ts'
 import {
+  prepareAgentRpBranchSession,
   prepareAgentRpRewriteSession,
   prepareAgentRpSession,
   parseAgentRpSessionLaunchRequest,
 } from '../src/session-launch.ts'
+import { roleplayChatFloors } from '../src/roleplay-chat-floors.ts'
+import { readRoleplayStates } from '../src/roleplay-state.ts'
 import { SillyTavernChatLibrary } from '../src/sillytavern-chat-library.ts'
 import { readSessionPersona } from '../src/session-persona.ts'
 import { WorldInfoLibrary } from '../src/world-info-library.ts'
@@ -441,6 +444,98 @@ test('rewrites a completed turn by branching immediately before its user message
   assert.equal(readActiveSessionCharacter(replay.snapshotEvents())?.result.libraryId, character.id)
   assert.equal(readActiveSessionCharacter(replay.snapshotEvents())?.result.userName, '旅人')
   assert.equal(readActiveSessionPreset(replay.snapshotEvents())?.libraryId, preset.id)
+})
+
+test('branches from one floor, carrying identity and state while re-stating the transcript', (context) => {
+  const { characters, chats, presets, worldInfos } = libraries(context)
+  const character = characters.importFile({
+    data: new Uint8Array(readFileSync('tests/fixtures/manual-character-card.json')),
+    filename: 'character.json',
+    mediaType: 'application/json',
+  })
+  const preset = presets.import(parseSillyTavernPresetJson(JSON.stringify({
+    prompts: [{ identifier: 'main', name: '主提示', role: 'system', content: '保持角色语气' }],
+    prompt_order: [{ character_id: 100001, order: [{ identifier: 'main', enabled: true }] }],
+  }), '分支预设.json'))
+  const prepared = prepareAgentRpSession(characters, chats, presets, worldInfos, {
+    format: 0,
+    sourceSessionId: 'source',
+    kind: 'character',
+    characterId: character.id,
+    greetingIndex: 0,
+    persona: { id: 'persona-01234567', name: '旅人', description: '来自海边。' },
+    presetId: preset.id,
+  })
+  const source = Session.create(SessionId('branch-source'), prepared.seed)
+  const firstTurn = Math.max(...source.snapshotEvents().flatMap(event => event.type === 'turn/start' ? [event.data.turn] : [])) + 1
+  appendConversationTurn(source, firstTurn, '先去港口。', '好，我们沿着潮声往前走。')
+  appendConversationTurn(source, firstTurn + 1, '改去钟楼。', '那就转向钟楼。')
+  // A state revision written during the conversation is not in the launch seed,
+  // so only the carry path can bring it over. Appended directly rather than
+  // through `appendRoleplayState`, which additionally requires the Host's
+  // ignorable-event seam — the carry reads the fold, not the `ignorable` flag.
+  source.append('agent-rp/state', {
+    format: 0,
+    id: 'state:fixture:affinity',
+    revision: 1,
+    ownerModuleId: 'roleplay:fixture',
+    writerModuleId: 'roleplay:fixture',
+    value: { 好感度: 7 },
+  })
+
+  const floors = roleplayChatFloors(source)
+  const greeting = floors[0]?.text
+  assert.equal(typeof greeting, 'string')
+
+  // Cut the greeting and the first exchange; keep from the third visible floor.
+  const branched = prepareAgentRpBranchSession(source, 3, '白露')
+  const replay = Session.create(SessionId('branch-child'), branched.seed)
+  const transcript = replay.deriveMessages()
+    .flatMap(message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []))
+
+  assert.equal(branched.title, '白露 · 分支')
+  // Dropped floors
+  assert.equal(transcript.includes(greeting as string), false)
+  assert.equal(transcript.includes('先去港口。'), false)
+  assert.equal(transcript.includes('好，我们沿着潮声往前走。'), false)
+  // Kept floors, in order, as their own completed turns
+  assert.deepEqual(transcript, ['改去钟楼。', '那就转向钟楼。'])
+  assert.deepEqual(
+    replay.snapshotEvents().flatMap(event => event.type === 'turn/start' ? [event.data.turn] : []),
+    [1, 2],
+  )
+  // Identity and state carried
+  assert.equal(readActiveSessionCharacter(replay.snapshotEvents())?.result.libraryId, character.id)
+  assert.equal(readActiveSessionCharacter(replay.snapshotEvents())?.result.userName, '旅人')
+  assert.equal(readActiveSessionPreset(replay.snapshotEvents())?.libraryId, preset.id)
+  assert.equal(readSessionPersona(replay.snapshotEvents())?.name, '旅人')
+  const carriedState = readRoleplayStates(replay.snapshotEvents())
+    .find(state => state.id === 'state:fixture:affinity')
+  assert.deepEqual(carriedState?.value, { 好感度: 7 })
+  // The branch establishes the namespace, so its revision restarts at one.
+  assert.equal(carriedState?.revision, 1)
+  // The source is untouched.
+  assert.equal(roleplayChatFloors(source).length, floors.length)
+})
+
+test('refuses a branch past the last floor', (context) => {
+  const { characters, chats, presets, worldInfos } = libraries(context)
+  const character = characters.importFile({
+    data: new Uint8Array(readFileSync('tests/fixtures/manual-character-card.json')),
+    filename: 'character.json',
+    mediaType: 'application/json',
+  })
+  const prepared = prepareAgentRpSession(characters, chats, presets, worldInfos, {
+    format: 0,
+    sourceSessionId: 'source',
+    kind: 'character',
+    characterId: character.id,
+    greetingIndex: 0,
+  })
+  const source = Session.create(SessionId('branch-bounds'), prepared.seed)
+  const floors = roleplayChatFloors(source).length
+  assert.throws(() => prepareAgentRpBranchSession(source, floors), /不存在/u)
+  assert.throws(() => prepareAgentRpBranchSession(source, -1), /起始楼层无效/u)
 })
 
 test('rejects an absent, unfinished, or assistant-only rewrite turn', () => {

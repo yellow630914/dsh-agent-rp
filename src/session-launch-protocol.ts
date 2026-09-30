@@ -75,6 +75,22 @@ export interface RewriteSessionLaunchRequest {
   readonly text: string
 }
 
+/**
+ * Branch an existing roleplay Session, keeping the transcript from one floor on.
+ *
+ * Everything outside the transcript carries over — card, persona, world books,
+ * memory, regex overlay and state data. The transcript itself is re-stated the
+ * way a chat import is, so per-floor artifacts, annotations and reply versions
+ * do not follow.
+ */
+export interface BranchSessionLaunchRequest {
+  readonly format: 0
+  readonly sourceSessionId: string
+  readonly kind: 'branch'
+  /** First visible floor to keep, as the floor panel numbers them. */
+  readonly fromFloor: number
+}
+
 /** Complete model-free Session launch accepted by the Agent RP Host. */
 export type AgentRpSessionLaunchRequest =
   | CharacterSessionLaunchRequest
@@ -82,6 +98,7 @@ export type AgentRpSessionLaunchRequest =
   | ChatSessionLaunchRequest
   | RoleplayExperienceSessionLaunchRequest
   | RewriteSessionLaunchRequest
+  | BranchSessionLaunchRequest
 
 /** Library-backed launch request that does not depend on an existing RP transcript. */
 export type LibrarySessionLaunchRequest =

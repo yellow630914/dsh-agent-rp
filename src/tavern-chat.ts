@@ -351,6 +351,13 @@ function rotateMessages(
 /**
  * Hide a leading run of floors from everything downstream of the Session.
  *
+ * TAVERN-COMPAT(set-chat-hidden): SillyTavern's `/hide` and its `is_system`
+ * message flag. Reachable from the floor panel and from any third-party Tavern
+ * script through the `set-chat-hidden` mutation.
+ * 移除后果: 调用 `/hide` 或写 `is_hidden` 的第三方酒馆脚本会失败；玩家侧的等价做法是
+ * 「从第 N 层开始新会话」（导出子范围 + 迁移聊天），它不改动当前会话，也不需要
+ * 位置性 replace。玩家已改用后者，所以这一项是纯相容负担，优先移除候选。
+ *
  * Expressed as DSH's own shadow-price protocol rather than this plugin's
  * overlay: one `compaction/prune` naming the exact shadowed span, immediately
  * followed by one `user/message` that `replace`s it. The overlay is an
@@ -370,6 +377,31 @@ function rotateMessages(
  * @param estimateMessage - the token meter's own estimator; the shadow price
  *   must be computed with it or the meter's running total drifts.
  */
+/**
+ * Count the leading raw surface nodes this plugin may not shadow.
+ *
+ * A Host that carries the rendered system prompt as a surface node reserves
+ * node 0 for it and refuses any replacement covering that node. Those nodes are
+ * not floors, so skipping them is also the behaviour a prefix hide wants; a Host
+ * that keeps the prompt out of the surface simply has none to skip.
+ * @param agent - Agent whose Session surface is read.
+ * @param rawNodes - the raw surface node seqs, in surface order.
+ * @returns how many leading nodes to leave untouched.
+ */
+function protectedSurfaceHead(agent: Agent, rawNodes: readonly number[]): number {
+  const events = agent.session.snapshotEvents()
+  let head = 0
+  while (head < rawNodes.length) {
+    const seq = rawNodes[head]
+    if (seq === undefined) break
+    // `system/message` is absent from the event map on Hosts that predate it, so
+    // this compares the wire name rather than narrowing the union.
+    if ((events[seq]?.type as string | undefined) !== 'system/message') break
+    head += 1
+  }
+  return head
+}
+
 function setHidden(
   agent: Agent,
   request: Extract<TavernChatMutationRequest, { operation: 'set-chat-hidden' }>,
@@ -401,6 +433,11 @@ function setHidden(
   const rawNodes = [...agent.session.surface.nodes].map(seq => Number(seq))
   const cutoff = Math.max(...[...hiding].map(seq => rawNodes.indexOf(seq)))
   if (cutoff < 0) throw new Error('要隐藏的楼层不在当前会话表层中')
+  // A Host that keeps the rendered system prompt on the surface owns node 0 and
+  // refuses any replacement covering it, so the shadowed span must begin at the
+  // first node this plugin may speak for. Anything before that is not a floor
+  // and was never meant to be swallowed by a prefix hide.
+  const head = protectedSurfaceHead(agent, rawNodes)
   // A replacement promoted back to an earlier display position can sit later in
   // the raw surface than floors the player keeps, so the prefix that covers
   // every hidden floor can also swallow kept ones. Those cannot simply be
@@ -409,8 +446,8 @@ function setHidden(
   // floor in display order, which is the only arrangement a positional
   // `replace` can express.
   const keeping = new Set(roleplaySurfaceNodes(agent.session).map(seq => Number(seq)))
-  const trapped = rawNodes.slice(0, cutoff + 1).some(seq => keeping.has(seq) && !hiding.has(seq))
-  const shadowedSeqs = trapped ? rawNodes : rawNodes.slice(0, cutoff + 1)
+  const trapped = rawNodes.slice(head, cutoff + 1).some(seq => keeping.has(seq) && !hiding.has(seq))
+  const shadowedSeqs = trapped ? rawNodes.slice(head) : rawNodes.slice(head, cutoff + 1)
   const restated = trapped ? entries.slice(hiddenEntries.length) : []
 
   const start = shadowedSeqs[0]

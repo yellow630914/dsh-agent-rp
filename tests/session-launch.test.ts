@@ -72,6 +72,7 @@ async function launchExperienceWithWorkspaces(
     readonly sessionIds?: readonly SessionId[]
   }[],
   sourceCwd = FIXTURE_WORKSPACE_PATH,
+  modelSelection?: { readonly lastUsed: unknown; readonly pending: unknown },
 ) {
   const { characters, chats, presets, personas, worldInfos } = libraries(context)
   const worldInfo = worldInfos.importFile({
@@ -86,6 +87,7 @@ async function launchExperienceWithWorkspaces(
   let createdSession: Session | undefined
   let attachedSessionId: SessionId | undefined
   let renamedTitle: string | undefined
+  let selectedModel: { readonly provider: string; readonly model: string } | undefined
   const agents = {
     get: (id: SessionId) => id === sourceId ? sourceAgent : undefined,
     create: async (options: {
@@ -110,9 +112,16 @@ async function launchExperienceWithWorkspaces(
   const ctx = {
     get: (name: string): unknown => {
       if (name === 'agents') return agents
+      if (name === 'sessionProjections') return modelSelection === undefined ? undefined : { stateOf: () => modelSelection }
       if (name === 'sessionController') return {
-        selectModel: async () => ({ selected: { provider: 'fixture', model: 'fixture' } }),
-        modelCatalog: async () => ({ default: { provider: 'fixture', model: 'fixture' } }),
+        selectModel: async (request: { readonly provider: string; readonly model: string }) => {
+          selectedModel = { provider: request.provider, model: request.model }
+          return { selected: { provider: request.provider, model: request.model } }
+        },
+        modelCatalog: async () => ({
+          default: { provider: 'fixture', model: 'fixture' },
+          groups: [{ id: 'fixture', models: [{ id: 'fixture' }] }],
+        }),
       }
       if (name === 'agentPresets') return {
         resolve: async () => ({ id: 'agent-rp', trust: 'user' }),
@@ -159,7 +168,7 @@ async function launchExperienceWithWorkspaces(
     worlds: [{ kind: 'world', id: worldInfoLibraryRoleplayResourceId(worldInfo.id) }],
   }, resources)
 
-  return { result, createdSession, attachedSessionId, renamedTitle }
+  return { result, createdSession, attachedSessionId, renamedTitle, selectedModel }
 }
 
 test('prepares a library character before the Agent is constructed', (context) => {
@@ -679,4 +688,29 @@ test('accepts opt-in memory only for character launches', () => {
     importId: 'chat-0123456789abcdef0123456789abcdef',
     memory: 'copy-active',
   }), /字段无效/u)
+})
+
+test('inherits the source model only while the Host still routes it', async (context) => {
+  const routable = await launchExperienceWithWorkspaces(context, [], FIXTURE_WORKSPACE_PATH, {
+    lastUsed: { provider: 'fixture', model: 'fixture' },
+    pending: null,
+  })
+  assert.deepEqual(routable.selectedModel, { provider: 'fixture', model: 'fixture' })
+
+  // A model the deployment retired is not a selection the new Session can use:
+  // copying it verbatim launches a Session the Host then refuses to send from
+  // ("Select an available model before sending a message"), which reads as a
+  // broken launch rather than a stale preference.
+  const retired = await launchExperienceWithWorkspaces(context, [], FIXTURE_WORKSPACE_PATH, {
+    lastUsed: { provider: 'fixture', model: 'retired-model' },
+    pending: null,
+  })
+  assert.deepEqual(retired.selectedModel, { provider: 'fixture', model: 'fixture' })
+
+  // A pending selection wins over lastUsed, but only when it is routable too.
+  const pendingRetired = await launchExperienceWithWorkspaces(context, [], FIXTURE_WORKSPACE_PATH, {
+    lastUsed: { provider: 'fixture', model: 'fixture' },
+    pending: { provider: 'fixture', model: 'retired-model' },
+  })
+  assert.deepEqual(pendingRetired.selectedModel, { provider: 'fixture', model: 'fixture' })
 })

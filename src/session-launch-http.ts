@@ -78,7 +78,14 @@ interface SessionControllerGateway {
   selectModel(request: LaunchModelSelection & { readonly sessionId: SessionId }): Promise<{
     readonly selected: LaunchModelSelection
   }>
-  modelCatalog(): Promise<{ readonly default: LaunchModelSelection }>
+  modelCatalog(): Promise<{
+    readonly default: LaunchModelSelection
+    /** Providers and the models each one currently routes. */
+    readonly groups: readonly {
+      readonly id: string
+      readonly models: readonly { readonly id: string }[]
+    }[]
+  }>
 }
 
 /** Normalize a workspace path for conservative same-directory fallback matching. */
@@ -137,9 +144,17 @@ export async function launchAgentRpSession(
   // A Session that never recorded a selection still answers with the deployment default.
   const projections = ctx.get('sessionProjections') as SessionProjectionGateway | undefined
   const sourceSelection = projections?.stateOf(source.session, 'modelSelection')
-  const currentModel = sourceSelection?.pending
-    ?? sourceSelection?.lastUsed
-    ?? (await sessionController.modelCatalog()).default
+  const catalog = await sessionController.modelCatalog()
+  // The source's selection is only inherited while the Host still routes it.
+  // A retired model (DSH 0.2.0 replaced deepseek-v4-flash with deepseek-flash)
+  // would otherwise be copied verbatim into the new Session, which then refuses
+  // to send with "Select an available model before sending a message" — the
+  // launch appears to succeed and the Session is unusable.
+  const routable = (selection: LaunchModelSelection | null | undefined): boolean =>
+    selection != null && catalog.groups.some(group => group.id === selection.provider
+      && group.models.some(model => model.id === selection.model))
+  const inherited = [sourceSelection?.pending, sourceSelection?.lastUsed].find(routable)
+  const currentModel = inherited ?? catalog.default
 
   const agentPresets = ctx.get('agentPresets') as AgentPresetGateway | undefined
   if (agentPresets === undefined) throw new Error('当前 Host 无法挂载角色会话预设')

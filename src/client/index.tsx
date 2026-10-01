@@ -12611,8 +12611,21 @@ function roleplayComposerDockComponent(
         readonly capabilityToken: string
         readonly root: Root
       }): void => {
-        original.style.removeProperty('display')
-        delete original.dataset.agentRpHiddenByFrontend
+        // Reveal the Host row only while nothing of ours is on screen yet.
+        //
+        // This also runs for every *update*, and a streamed reply updates on
+        // every chunk — so the row kept flipping between "Host row plus our
+        // rendered display" and "rendered display only", dozens of times a
+        // second, at the foot of the transcript. The raw text flashed behind
+        // the rendered one, and the height kept oscillating under the chat
+        // view's tail-following, which released it: the rest of the reply then
+        // streamed off-screen behind the "back to bottom" button.
+        //
+        // Once `onReady` has hidden the Host row there is always something
+        // visible, so an update has no reason to show it again.
+        if (original.dataset.agentRpHiddenByFrontend !== 'true') {
+          original.style.removeProperty('display')
+        }
         display.style.setProperty('display', 'block')
         mount.root.render(<CharacterDisplay
           appearance={appearance}

@@ -39,6 +39,73 @@ const monoStyle = {
   fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: '12px', lineHeight: 1.55,
 } as const
 
+/**
+ * Adopt a contract into a Session that launched without one.
+ *
+ * Only the character and experience launches ever seeded a state scheme; a chat
+ * migration, a branch, or a Session started before the scheme existed all land
+ * here with nothing. The Host has always accepted a late adoption — it mints
+ * the Session's own identity then instead of at launch — but the dialog only
+ * rendered the contract section when a contract already existed, so there was
+ * no way in to reach it.
+ */
+export function RoleplayStateSchemeAdoptSection({ sessionId, onChanged }: {
+  readonly sessionId: string
+  readonly onChanged: () => void
+}) {
+  const [sources, setSources] = useState<readonly { readonly id: string; readonly name: string }[]>()
+  const [selected, setSelected] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    void listStateSchemeSources().then((entries) => {
+      setSources(entries)
+      setSelected(current => current === '' ? entries[0]?.id ?? '' : current)
+    }, () => { setSources([]) })
+  }, [])
+
+  const adopt = useCallback((): void => {
+    if (busy || selected === '') return
+    setBusy(true)
+    setError(undefined)
+    void changeSessionStateScheme(sessionId, { resourceId: selected })
+      .then(onChanged, (reason: unknown) => { setError(message(reason)) })
+      .finally(() => { setBusy(false) })
+  }, [busy, onChanged, selected, sessionId])
+
+  return <section style={{
+    background: 'var(--dsw-alias-bg-layer-1, #222226)', border: '1px solid var(--dsw-alias-border-l2, #3e3e43)',
+    borderRadius: '11px', display: 'grid', gap: '11px', marginTop: '18px', padding: '13px',
+  }}>
+    <div style={{ alignItems: 'baseline', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+      <strong style={{ fontSize: '13px' }}>状态方案</strong>
+      <span style={{ fontSize: '10px', marginLeft: 'auto', opacity: .46 }}>本会话尚未采用</span>
+    </div>
+    <p style={{ fontSize: '11px', lineHeight: 1.55, margin: 0, opacity: .58 }}>
+      采用之后，这一轮正文结束就会按方案结算状态，状态栏也会出现。会话已有的对话不受影响；
+      方案的初始值会成为第一次结算的基线
+    </p>
+    <label style={{ display: 'grid', fontSize: '11px', gap: '5px', opacity: .8 }}>
+      来源方案
+      <select value={selected} disabled={busy || sources === undefined}
+        onChange={event => { setSelected(event.target.value) }} style={fieldStyle}>
+        {sources === undefined && <option value="">载入中…</option>}
+        {sources?.length === 0 && <option value="">（没有可用的状态方案）</option>}
+        {(sources ?? []).map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+      </select>
+    </label>
+    <div style={{ display: 'flex', gap: '8px' }}>
+      <button type="button" disabled={busy || selected === ''} onClick={adopt} style={buttonStyle}>
+        {busy ? '采用中…' : '采用这个方案'}
+      </button>
+    </div>
+    {error !== undefined && <p role="status" style={{
+      color: 'var(--dsw-alias-state-warning, #d6a955)', fontSize: '11px', lineHeight: 1.5, margin: 0,
+    }}>{error}</p>}
+  </section>
+}
+
 /** Show and edit the Session-owned contract: source, namespace, opening value, rules and panel. */
 export function RoleplayStateSchemeSection({ scheme, sessionId, settledRevision, onManage, onChanged }: {
   readonly scheme: NonNullable<AgentRpProjection['stateScheme']>

@@ -600,3 +600,39 @@ test('reports a settlement still in flight, so the panel can refuse a second one
   })
   assert.equal(view().stateSettlement?.settling, false)
 })
+
+test('a Session launched without a contract can adopt one later', () => {
+  // Only the character and experience launches ever seed a scheme. A migrated
+  // chat, a branch, or anything started before the scheme existed lands with
+  // none — and the state dialog has to offer a way in, or the Session can never
+  // settle state at all.
+  const session = ignorable(Session.create(SessionId('state-scheme-adopt')))
+  assert.equal(readRoleplayStateScheme(session.snapshotEvents()), undefined)
+
+  const target = parseRoleplayStateScheme({
+    format: 0,
+    id: roleplayStateSchemeResourceId('scheme-adopt'),
+    name: '魔都迷途 · 四季國際中心',
+    stateId: 'state:native',
+    initial: { 时空: { 时间: '上午' } },
+    rules: '只更新剧情中明确发生变化的状态。',
+  })
+  const adopted = changeSessionRoleplayStateScheme({
+    session,
+    library: { list: () => [], read: id => id === 'scheme-adopt' ? target : undefined },
+    change: { resourceId: roleplayStateSchemeResourceId('scheme-adopt') },
+  })
+
+  const active = readRoleplayStateScheme(session.snapshotEvents())
+  assert.ok(active !== undefined)
+  assert.equal(active.name, '魔都迷途 · 四季國際中心')
+  assert.equal(active.stateId, 'state:native')
+  // The Session mints its own identity on adoption rather than reusing the
+  // library entry's, so a later library edit cannot rewrite this Session.
+  assert.notEqual(active.id, target.id)
+  assert.equal(active.id, adopted.id)
+  // Nothing has been settled yet, so the opening value is the scheme's own.
+  const value = readRoleplayStateSchemeValue(session.snapshotEvents(), active)
+  assert.equal(value.revision, 0)
+  assert.deepEqual(value.value, { 时空: { 时间: '上午' } })
+})

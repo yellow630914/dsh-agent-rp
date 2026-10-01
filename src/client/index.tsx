@@ -42,7 +42,10 @@ import {
 } from './st-extension-surface.tsx'
 import { StoryWorkspaceEditor } from './story-workspace-editor.tsx'
 import { RoleplayStatePanel } from './state-panel.tsx'
-import { RoleplayStateSchemeSection } from './state-scheme-session-panel.tsx'
+import {
+  RoleplayStateSchemeAdoptSection,
+  RoleplayStateSchemeSection,
+} from './state-scheme-session-panel.tsx'
 import { listStateSchemes, resettleRoleplayState } from './state-scheme-client.ts'
 import type { StateSchemeLibrarySummary } from '../state-scheme-library-protocol.ts'
 import {
@@ -4967,13 +4970,15 @@ function RoleplayStateManagerDialog({ states, scheme, sessionId, onManage, onClo
           }} aria-label="关闭状态数据">×</button>
         </div>
       </header>
-      {scheme !== undefined && <RoleplayStateSchemeSection
-        scheme={scheme}
-        sessionId={sessionId}
-        settledRevision={states.find(state => state.id === scheme.stateId)?.revision ?? 0}
-        onManage={onManage}
-        onChanged={() => { setError(undefined) }}
-      />}
+      {scheme === undefined
+        ? <RoleplayStateSchemeAdoptSection sessionId={sessionId} onChanged={() => { setError(undefined) }} />
+        : <RoleplayStateSchemeSection
+          scheme={scheme}
+          sessionId={sessionId}
+          settledRevision={states.find(state => state.id === scheme.stateId)?.revision ?? 0}
+          onManage={onManage}
+          onChanged={() => { setError(undefined) }}
+        />}
       {formVisible && <div style={{
         background: 'var(--dsw-alias-bg-layer-1, #222226)', border: `1px solid color-mix(in srgb, ${color} 34%, transparent)`,
         borderRadius: '11px', display: 'grid', gap: '10px', marginTop: '18px', padding: '13px',

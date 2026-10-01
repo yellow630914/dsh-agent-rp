@@ -1,6 +1,6 @@
 /** Task-oriented library for reusable Agent RP resources. */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type {
   CharacterLibraryCollection,
   CharacterLibraryDetail,
@@ -90,42 +90,56 @@ const tagChipStyle = {
 } as const
 
 /**
- * One resource's labels, shown inline and edited as comma-separated text.
+ * One resource's labels: removable chips plus a combobox that both picks an
+ * existing label and creates a new one.
  *
- * Labels are flat and display-only, so the editor is deliberately the simplest
- * thing that works: no picker, no creation step, no rename — typing a label that
- * does not exist yet creates it, and removing it from the last resource that
- * carried it is what makes it disappear.
+ * A native `datalist` rather than a custom popup — it is the one control that is
+ * genuinely both a text field and a dropdown, so choosing and inventing are the
+ * same gesture. Committing is deliberately explicit (Enter, blur, or the button)
+ * rather than on every keystroke that happens to match: with a label like 「西」
+ * already in the list, auto-committing would swallow 「西幻」 halfway through.
  */
-function ResourceTagRow({ tags, busy, onSave }: {
+function ResourceTagRow({ tags, available, busy, onSave }: {
   readonly tags: readonly string[]
+  readonly available: readonly string[]
   readonly busy: boolean
   readonly onSave: (next: readonly string[]) => void
 }) {
-  const [draft, setDraft] = useState<string>()
-  if (draft !== undefined) {
-    return <form style={{ alignItems: 'center', display: 'flex', gap: '6px', marginTop: '5px', width: '100%' }}
-      onSubmit={(event) => {
-        event.preventDefault()
-        onSave(draft.split(/[,，]/u).map(value => value.trim()).filter(value => value !== ''))
-        setDraft(undefined)
-      }}>
-      <input value={draft} autoFocus disabled={busy} placeholder="用逗号分隔，留空表示未分类"
-        onChange={event => { setDraft(event.target.value) }}
-        onKeyDown={(event) => { if (event.key === 'Escape') setDraft(undefined) }}
-        style={{
-          background: 'var(--dsw-alias-bg-elevated, #202126)', border: '1px solid var(--dsw-alias-border-l2, #3d3d43)',
-          borderRadius: '7px', color: 'inherit', flex: 1, font: 'inherit', fontSize: '11px', minWidth: 0,
-          padding: '4px 8px',
-        }} />
-      <button type="submit" disabled={busy} style={tagChipStyle}>保存</button>
-      <button type="button" disabled={busy} onClick={() => { setDraft(undefined) }} style={tagChipStyle}>取消</button>
-    </form>
+  const [draft, setDraft] = useState('')
+  const listId = useId()
+  const commit = (): void => {
+    const tag = draft.trim()
+    setDraft('')
+    if (tag === '' || tags.includes(tag)) return
+    onSave([...tags, tag])
   }
+  const unused = available.filter(tag => !tags.includes(tag))
   return <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '5px' }}>
-    {tags.map(tag => <span key={tag} style={{ ...tagChipStyle, cursor: 'default', opacity: .75 }}>{tag}</span>)}
-    <button type="button" disabled={busy} onClick={() => { setDraft(tags.join('，')) }}
-      style={{ ...tagChipStyle, opacity: .5 }}>{tags.length === 0 ? '＋ 分类' : '编辑分类'}</button>
+    {tags.map(tag => <span key={tag} style={{ ...tagChipStyle, cursor: 'default', paddingRight: '4px' }}>
+      {tag}
+      <button type="button" disabled={busy} aria-label={`移除分类 ${tag}`}
+        onClick={() => { onSave(tags.filter(value => value !== tag)) }} style={{
+          background: 'transparent', border: 0, color: 'inherit', cursor: busy ? 'default' : 'pointer',
+          font: 'inherit', fontSize: '11px', marginLeft: '4px', opacity: .55, padding: '0 2px',
+        }}>×</button>
+    </span>)}
+    <input list={listId} value={draft} disabled={busy} placeholder={unused.length === 0 ? '新增分类…' : '选择或新增分类…'}
+      onChange={event => { setDraft(event.target.value) }}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') { event.preventDefault(); commit() }
+        if (event.key === 'Escape') setDraft('')
+      }}
+      style={{
+        background: 'var(--dsw-alias-bg-elevated, #202126)', border: '1px solid var(--dsw-alias-border-l2, #3d3d43)',
+        borderRadius: '999px', color: 'inherit', font: 'inherit', fontSize: '11px', maxWidth: '170px',
+        minWidth: '110px', padding: '3px 10px',
+      }} />
+    <datalist id={listId}>
+      {unused.map(tag => <option key={tag} value={tag} />)}
+    </datalist>
+    {draft.trim() !== '' && <button type="button" disabled={busy} onMouseDown={event => { event.preventDefault() }}
+      onClick={commit} style={tagChipStyle}>加上</button>}
   </div>
 }
 
@@ -995,7 +1009,12 @@ export function RoleplayResourceCenter({
               }}>{busy === `character-world:${worldBindingDraft.character.id}` ? '保存中…' : '保存世界组合'}</button>
             </div>
           </div>}
-          {sectionTags !== undefined && (availableTags.length > 0 || untaggedCount > 0)
+          {/*
+            The filter row appears with the first label and not before: a library
+            where nothing is categorized has nothing to filter by, and 「全部 ·
+            未分类 N」 on its own is just noise.
+          */}
+          {sectionTags !== undefined && availableTags.length > 0
             && <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '10px' }}>
             <button type="button" onClick={() => { setTagFilter(undefined) }} style={{
               ...tagChipStyle,
@@ -1023,7 +1042,7 @@ export function RoleplayResourceCenter({
                 <span style={{ display: 'block', fontSize: '10px', marginTop: '4px', opacity: .48, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   V{entry.cardVersion} · {entry.greetingCount} 个开场{entry.worldInfoCount > 0 ? ` · ${entry.worldInfoCount} 条世界书` : ''}{entry.archived ? ' · 已收起' : ''}
                 </span>
-                {!entry.archived && <ResourceTagRow tags={entry.tags} busy={busy !== undefined}
+                {!entry.archived && <ResourceTagRow tags={entry.tags} available={availableTags} busy={busy !== undefined}
                   onSave={next => { applyTags('characters', entry.id, next) }} />}
               </div>
               <button type="button" disabled={busy !== undefined || entry.archived}
@@ -1046,7 +1065,7 @@ export function RoleplayResourceCenter({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <strong style={{ display: 'block', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</strong>
                 <span style={{ display: 'block', fontSize: '10px', marginTop: '4px', opacity: .48 }}>{entry.entryCount} 条目{entry.defaultForNewSessions ? ' · 新会话默认加载' : ''}{entry.degradations.length > 0 ? ` · ${entry.degradations.length} 项兼容提醒` : ''}</span>
-                <ResourceTagRow tags={entry.tags} busy={busy !== undefined}
+                <ResourceTagRow tags={entry.tags} available={availableTags} busy={busy !== undefined}
                   onSave={next => { applyTags('world-info', entry.id, next) }} />
               </div>
               <button type="button" data-agent-rp-action="edit-world-info" disabled={busy !== undefined}
@@ -1128,7 +1147,7 @@ export function RoleplayResourceCenter({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <strong style={{ display: 'block', fontSize: '13px' }}>{entry.name}</strong>
                 <span style={{ display: '-webkit-box', fontSize: '10px', lineHeight: 1.5, marginTop: '4px', opacity: .48, overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{entry.description || '没有额外人物设定'}</span>
-                <ResourceTagRow tags={entry.tags} busy={busy !== undefined}
+                <ResourceTagRow tags={entry.tags} available={availableTags} busy={busy !== undefined}
                   onSave={next => { applyTags('personas', entry.id, next, entry as never) }} />
               </div>
               <button type="button" disabled={busy !== undefined} onClick={() => {

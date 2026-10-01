@@ -117,10 +117,26 @@ export function WorldInfoEditorDialog({ entry, load, save, onSaved, onClose }: {
     return () => { current = false }
   }, [entry.id])
 
-  const patch = (index: number, value: Partial<WorldInfoEditableEntry>): void => {
-    setRows(current => current?.map((row, position) => position === index
-      ? { ...row, entry: { ...row.entry, ...value } }
-      : row))
+  /**
+   * Merge one field change into a row.
+   *
+   * `remove` drops optional keys outright rather than setting them to
+   * `undefined`: an entry with no `scanDepth` follows the book's own, which is a
+   * different stored shape from one that carries the key. `at_depth` is also
+   * the only position that reads a depth and a role, so the other two have to
+   * shed them or the entry claims an injection it never performs.
+   */
+  const patch = (
+    index: number,
+    value: Partial<WorldInfoEditableEntry>,
+    remove: readonly ('injectionDepth' | 'injectionRole' | 'scanDepth')[] = [],
+  ): void => {
+    setRows(current => current?.map((row, position) => {
+      if (position !== index) return row
+      const next: Record<string, unknown> = { ...row.entry, ...value }
+      for (const key of remove) delete next[key]
+      return { ...row, entry: next as unknown as WorldInfoEditableEntry }
+    }))
     setDirty(true)
   }
   const addRow = (): void => {
@@ -248,6 +264,77 @@ export function WorldInfoEditorDialog({ entry, load, save, onSaved, onClose }: {
                 style={{ ...fieldStyle, lineHeight: 1.55, resize: 'vertical' }}
                 onChange={event => { patch(selected, { content: event.target.value }) }} />
             </label>
+            <div style={{ display: 'grid', gap: '8px', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+              <label style={{ display: 'grid', fontSize: '11px', gap: '4px', opacity: .8 }}>插入位置
+                <select value={current.entry.position} disabled={busy} style={fieldStyle}
+                  onChange={event => {
+                    const position = event.target.value as WorldInfoEditableEntry['position']
+                    // `at_depth` is the only position that reads a depth and a
+                    // role; leaving them behind on the other two would make the
+                    // stored entry claim an injection it never performs.
+                    patch(selected, position === 'at_depth'
+                      ? {
+                          position,
+                          injectionDepth: current.entry.injectionDepth ?? 4,
+                          injectionRole: current.entry.injectionRole ?? 'system',
+                        }
+                      : { position }, position === 'at_depth' ? [] : ['injectionDepth', 'injectionRole'])
+                  }}>
+                  <option value="before_char">角色定义之前</option>
+                  <option value="after_char">角色定义之后</option>
+                  <option value="at_depth">对话历史中</option>
+                </select>
+              </label>
+              <label style={{ display: 'grid', fontSize: '11px', gap: '4px', opacity: .8 }}>插入顺序（小的在前）
+                <input type="number" value={current.entry.insertionOrder} disabled={busy} style={fieldStyle}
+                  onChange={event => { patch(selected, { insertionOrder: Number(event.target.value) || 0 }) }} />
+              </label>
+            </div>
+
+            {current.entry.position === 'at_depth' && <div style={{
+              display: 'grid', gap: '8px', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+            }}>
+              <label style={{ display: 'grid', fontSize: '11px', gap: '4px', opacity: .8 }}>插入深度（0 = 最新一条之后）
+                <input type="number" min={0} max={10_000} value={current.entry.injectionDepth ?? 4} disabled={busy}
+                  style={fieldStyle} onChange={event => {
+                    const depth = Math.max(0, Math.min(10_000, Math.trunc(Number(event.target.value) || 0)))
+                    patch(selected, { injectionDepth: depth })
+                  }} />
+              </label>
+              <label style={{ display: 'grid', fontSize: '11px', gap: '4px', opacity: .8 }}>注入角色
+                <select value={current.entry.injectionRole ?? 'system'} disabled={busy} style={fieldStyle}
+                  onChange={event => {
+                    patch(selected, { injectionRole: event.target.value as 'system' | 'user' | 'assistant' })
+                  }}>
+                  <option value="system">system</option>
+                  <option value="user">user</option>
+                  <option value="assistant">assistant</option>
+                </select>
+              </label>
+            </div>}
+
+            <div style={{ display: 'grid', gap: '8px', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+              <label style={{ display: 'grid', fontSize: '11px', gap: '4px', opacity: .8 }}>次要关键词逻辑
+                <select value={current.entry.secondaryLogic} disabled={busy || !current.entry.selective}
+                  style={fieldStyle} onChange={event => {
+                    patch(selected, { secondaryLogic: event.target.value as WorldInfoEditableEntry['secondaryLogic'] })
+                  }}>
+                  <option value="and-any">任一次要词也命中</option>
+                  <option value="and-all">全部次要词都命中</option>
+                  <option value="not-any">任一次要词命中就排除</option>
+                  <option value="not-all">全部次要词命中才排除</option>
+                </select>
+              </label>
+              <label style={{ display: 'grid', fontSize: '11px', gap: '4px', opacity: .8 }}>条目扫描深度（留空跟随整本）
+                <input type="number" min={0} max={10_000} value={current.entry.scanDepth ?? ''} disabled={busy}
+                  placeholder="跟随整本" style={fieldStyle} onChange={event => {
+                    const raw = event.target.value.trim()
+                    if (raw === '') patch(selected, {}, ['scanDepth'])
+                    else patch(selected, { scanDepth: Math.max(0, Math.min(10_000, Math.trunc(Number(raw) || 0))) })
+                  }} />
+              </label>
+            </div>
+
             <div style={{ display: 'flex', flexWrap: 'wrap', fontSize: '11px', gap: '12px', opacity: .8 }}>
               <label style={{ alignItems: 'center', display: 'flex', gap: '5px' }}>
                 <input type="checkbox" checked={current.entry.enabled} disabled={busy}
@@ -257,10 +344,23 @@ export function WorldInfoEditorDialog({ entry, load, save, onSaved, onClose }: {
                 <input type="checkbox" checked={current.entry.constant} disabled={busy}
                   onChange={event => { patch(selected, { constant: event.target.checked }) }} />常驻
               </label>
-              <label style={{ alignItems: 'center', display: 'flex', gap: '5px' }}>插入顺序
-                <input type="number" value={current.entry.insertionOrder} disabled={busy}
-                  style={{ ...fieldStyle, width: '84px' }}
-                  onChange={event => { patch(selected, { insertionOrder: Number(event.target.value) || 0 }) }} />
+              <label style={{ alignItems: 'center', display: 'flex', gap: '5px' }}
+                title="关掉的话，次要关键词不参与匹配">
+                <input type="checkbox" checked={current.entry.selective} disabled={busy}
+                  onChange={event => { patch(selected, { selective: event.target.checked }) }} />次要词参与匹配
+              </label>
+              <label style={{ alignItems: 'center', display: 'flex', gap: '5px' }}>
+                <input type="checkbox" checked={current.entry.caseSensitive} disabled={busy}
+                  onChange={event => { patch(selected, { caseSensitive: event.target.checked }) }} />区分大小写
+              </label>
+              <label style={{ alignItems: 'center', display: 'flex', gap: '5px' }}>
+                <input type="checkbox" checked={current.entry.matchWholeWords} disabled={busy}
+                  onChange={event => { patch(selected, { matchWholeWords: event.target.checked }) }} />全词匹配
+              </label>
+              <label style={{ alignItems: 'center', display: 'flex', gap: '5px' }}
+                title="命中后一定进入提示词，不受世界书预算上限约束">
+                <input type="checkbox" checked={current.entry.ignoreBudget} disabled={busy}
+                  onChange={event => { patch(selected, { ignoreBudget: event.target.checked }) }} />不计入预算
               </label>
             </div>
           </>}

@@ -278,3 +278,64 @@ test('keeping a book scan depth unchanged does not move it or churn the id', asy
   assert.deepEqual(keys, ['name', 'scan_depth', 'entries', 'recursive_scanning'], 'scan_depth stays where the file had it')
   assert.equal(await save(normalized), normalized, 'a second identical save is a no-op')
 })
+
+test('an entry\'s insertion position, depth and role round-trip through the resource center', async context => {
+  // What the resource center could not express before: where an entry lands in
+  // the prompt. The save path always carried it — `applyEditable` spreads the
+  // whole editable value — so this pins the contract the editor now drives.
+  const store = library(context)
+  const original = store.importFile({ data: source, filename: '海城.json' })
+  const route = routeFor(store)
+  const loaded = await call(route, 'GET', `${WORLD_INFO_LIBRARY_PATH}?id=${encodeURIComponent(original.id)}`)
+  const entries = loaded.json.entries as readonly WorldInfoEditableEntry[]
+
+  const saved = await call(route, 'PUT', WORLD_INFO_LIBRARY_PATH, {
+    format: 0,
+    id: original.id,
+    entries: [
+      {
+        sourceIndex: 0,
+        entry: {
+          ...entries[0]!,
+          position: 'at_depth',
+          injectionDepth: 2,
+          injectionRole: 'user',
+          insertionOrder: 995,
+          selective: true,
+          secondaryLogic: 'and-all',
+          scanDepth: 6,
+          ignoreBudget: true,
+        },
+      },
+      // The other half of the move the inventory found everywhere: a core rule
+      // pulled out of the chat and parked after the character definition, where
+      // it is a stable prefix again. Its depth and role have to be gone, not
+      // merely ignored.
+      {
+        sourceIndex: 1,
+        entry: { ...entries[1]!, position: 'after_char', insertionOrder: 999 },
+      },
+    ],
+  })
+  assert.equal(saved.status, 200)
+  const upload = saved.json.upload as { readonly id: string }
+
+  const reloaded = await call(route, 'GET', `${WORLD_INFO_LIBRARY_PATH}?id=${encodeURIComponent(upload.id)}`)
+  const back = reloaded.json.entries as readonly WorldInfoEditableEntry[]
+  assert.equal(back[0]?.position, 'at_depth')
+  assert.equal(back[0]?.injectionDepth, 2)
+  assert.equal(back[0]?.injectionRole, 'user')
+  assert.equal(back[0]?.insertionOrder, 995)
+  assert.equal(back[0]?.selective, true)
+  assert.equal(back[0]?.secondaryLogic, 'and-all')
+  assert.equal(back[0]?.scanDepth, 6)
+  assert.equal(back[0]?.ignoreBudget, true)
+
+  assert.equal(back[1]?.position, 'after_char')
+  assert.equal(back[1]?.insertionOrder, 999)
+  assert.equal(back[1]?.injectionDepth, undefined)
+  assert.equal(back[1]?.injectionRole, undefined)
+
+  const asset = store.asset(upload.id)
+  assert.deepEqual(asset.worldInfo.lorebook.entries.map(entry => entry.position), ['at_depth', 'after_char'])
+})

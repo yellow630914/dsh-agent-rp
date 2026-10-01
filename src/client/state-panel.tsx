@@ -197,6 +197,10 @@ export function RoleplayStatePanel({ scheme, sessionId, settlement, collapsed, o
     () => compileStatePanelDocument(rendered.source, template.format, token, nonce),
     [nonce, rendered.source, template.format, token],
   )
+  // A settlement already running for this turn, automatic or requested from
+  // another tab. The Host refuses an overlapping one outright; disabling here
+  // just means the player is told before spending the click.
+  const settling = settlement?.settling === true
   const resettle = actions?.resettle
   const runResettle = useCallback((): void => {
     if (resettle === undefined || busy) return
@@ -229,9 +233,10 @@ export function RoleplayStatePanel({ scheme, sessionId, settlement, collapsed, o
       </button>
       <button type="button" disabled={busy} onClick={() => { setReloadToken(value => value + 1) }}
         title="重新载入模板并重绘，不改变已保存的状态" style={actionButtonStyle}>重新渲染</button>
-      {resettle !== undefined && <button type="button" disabled={busy} onClick={runResettle}
-        title="按结算前的状态重新计算本轮变化" style={actionButtonStyle}>
-        {busy ? '结算中…' : '重新结算'}
+      {resettle !== undefined && <button type="button" disabled={busy || settling} onClick={runResettle}
+        title={settling ? '本轮正在结算，请等它结束' : '按结算前的状态重新计算本轮变化'}
+        style={actionButtonStyle}>
+        {busy || settling ? '结算中…' : '重新结算'}
       </button>}
     </header>
     {notice !== undefined && !collapsed && <p role="status" style={{

@@ -158,6 +158,7 @@ function validStateSettlement(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
   if (!Number.isSafeInteger(record.turn) || !Array.isArray(record.stages)) return false
+  if (typeof record.settling !== 'boolean') return false
   if (record.outcome !== undefined && typeof record.outcome !== 'string') return false
   return record.stages.every((stage) => {
     if (typeof stage !== 'object' || stage === null || Array.isArray(stage)) return false
@@ -1744,8 +1745,18 @@ export function createAgentRpProjectionDefinition(
           const outcome = worker === undefined
             ? undefined
             : (worker.data as { readonly outcome?: unknown }).outcome
+          const answered = new Set(trail.flatMap(item => item.kind === 'result'
+            ? [Number((item.data as { readonly requestSeq?: unknown }).requestSeq ?? -1)] : []))
+          const ownRequests = [...requests].filter(([, request]) => request.turn === turn)
+          // Either a dispatched stage is still open, or the automatic Worker has
+          // dispatched for this turn and not yet reported — the second clause
+          // covers the retry delay between a failed stage and its replacement,
+          // where nothing is momentarily in flight but the run is not over.
+          const settling = ownRequests.some(([seq]) => !answered.has(seq))
+            || (outcome === undefined && ownRequests.length > 0)
           return {
             turn,
+            settling,
             ...(typeof outcome === 'string' ? { outcome: outcome as 'applied' } : {}),
             stages,
           }

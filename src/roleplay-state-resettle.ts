@@ -8,7 +8,11 @@ import type { ResolvedConfig } from './config.ts'
 import type { EjsTemplateEngine } from './ejs-template.ts'
 import { applyMvuOperations } from './mvu.ts'
 import { appendRoleplayState, readRoleplayStates } from './roleplay-state.ts'
-import { collectRoleplayStagedStateSettlement, runRoleplayStagedStateSettlement } from './roleplay-staged-state-settlement.ts'
+import {
+  claimRoleplayStateSettlement,
+  collectRoleplayStagedStateSettlement,
+  runRoleplayStagedStateSettlement,
+} from './roleplay-staged-state-settlement.ts'
 import type { RoleplayRuntimeExtensionRegistry } from './roleplay-runtime-extension.ts'
 import {
   readSessionRoleplayTurnPlans,
@@ -49,6 +53,26 @@ export async function resettleRoleplayState(input: {
   readonly templateEngine?: EjsTemplateEngine
   readonly extensions?: RoleplayRuntimeExtensionRegistry
 }): Promise<RoleplayStateResettleResult> {
+  // Claimed before anything is read, and held across the whole recalculation.
+  //
+  // The automatic pipeline settles inside `agent/turn-stopping`, which runs
+  // before the turn's `turn/end` is appended, so a request arriving in that
+  // window would resettle the *previous* turn and write its revision first —
+  // the real settlement then fails its `expectedRevision` check and the turn's
+  // actual state change is lost. Claiming here rather than inside the runner
+  // also makes two overlapping player requests cost one plan replay, not two.
+  const release = claimRoleplayStateSettlement(String(input.agent.session.id))
+  if (release === undefined) return { outcome: 'skipped', error: '本轮正在结算，请等它结束后再试' }
+  try {
+    return await recalculateRoleplayState(input)
+  } finally {
+    release()
+  }
+}
+
+async function recalculateRoleplayState(
+  input: Parameters<typeof resettleRoleplayState>[0],
+): Promise<RoleplayStateResettleResult> {
   const session = input.agent.session
   const turn = lastClosedTurn(session.snapshotEvents())
   if (turn === undefined) return { outcome: 'skipped', error: '当前会话还没有已完成的回合' }
@@ -76,6 +100,7 @@ export async function resettleRoleplayState(input: {
     verification: input.verification,
     signal: input.signal,
     force: true,
+    claimed: true,
   })
   if (outcome.outcome === 'failed') return { outcome: 'failed', error: '状态重新结算失败，已保留原状态' }
   const settled = collectRoleplayStagedStateSettlement({

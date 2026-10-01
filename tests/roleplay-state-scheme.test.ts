@@ -548,3 +548,55 @@ test('projects what the settlement did, so a failed verification is visible', ()
     { stage: 'verification', outcome: 'failure', error: '结果为空' },
   ])
 })
+
+test('reports a settlement still in flight, so the panel can refuse a second one', () => {
+  const session = seeded('state-scheme-settlement-in-flight')
+  const view = (): ReturnType<typeof agentRpProjectionDefinition.wire.view> => {
+    let state = agentRpProjectionDefinition.init(session.header, session.inheritedEventCount)
+    for (const event of session.snapshotEvents()) state = agentRpProjectionDefinition.apply(state, event)
+    return agentRpProjectionDefinition.wire.view(state)
+  }
+  const dispatch = (requestId: string): number => session.appendIgnorable('agent-rp/staged-state-request', {
+    format: 0,
+    requestId,
+    sessionId: String(session.id),
+    turn: 4,
+    step: 1,
+    throughEventSeq: 1,
+    planEventSeq: 0,
+    stage: requestId === 'p1' ? 'proposal' : 'verification',
+    ...(requestId === 'p1' ? {} : { proposalResultSeq: 0 }),
+    target: {
+      engine: 'native-v0', tool: 'apply_roleplay_state', moduleId: ROLEPLAY_STATE_SCHEME_MODULE_ID,
+      stateId: 'state:native', expectedRevision: 0, operations: ['replace'],
+    },
+    dispatch: { provider: 'fixture', model: 'fixture', messages: [] },
+  } as never).seq
+
+  // Dispatched, no result: a stage is open.
+  const proposal = dispatch('p1')
+  assert.equal(view().stateSettlement?.settling, true)
+
+  // Answered, but the Worker has not reported — this is the retry window, where
+  // nothing is momentarily in flight and the run is nonetheless not over.
+  session.appendIgnorable('agent-rp/staged-state-result', {
+    format: 0, requestId: 'p1', requestSeq: proposal,
+    result: { kind: 'success', text: '{"operations":[]}', operations: [] },
+  } as never)
+  assert.equal(view().stateSettlement?.settling, true)
+
+  const verification = dispatch('v1')
+  assert.equal(view().stateSettlement?.settling, true)
+  session.appendIgnorable('agent-rp/staged-state-result', {
+    format: 0, requestId: 'v1', requestSeq: verification,
+    result: { kind: 'success', text: '{"operations":[]}', operations: [] },
+  } as never)
+  assert.equal(view().stateSettlement?.settling, true)
+
+  // The Worker's terminal record closes the run.
+  session.appendIgnorable('agent-rp/turn-worker-result', {
+    format: 0, sessionId: String(session.id), turn: 4, step: 1,
+    workerId: 'state-settlement', phase: 'settle', outcome: 'unchanged',
+  })
+  assert.equal(view().stateSettlement?.settling, false)
+})

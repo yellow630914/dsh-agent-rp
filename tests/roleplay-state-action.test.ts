@@ -33,11 +33,13 @@ import {
   ROLEPLAY_STATE_ACTION_TOOL,
 } from '../src/roleplay-state-action.ts'
 import {
+  claimRoleplayStateSettlement,
   collectRoleplayStagedStateSettlement,
   resolveRoleplayStateVerificationConfig,
   resolveRoleplayStateVerificationModel,
   runRoleplayStagedStateSettlement,
 } from '../src/roleplay-staged-state-settlement.ts'
+import { resettleRoleplayState } from '../src/roleplay-state-resettle.ts'
 import {
   ensureDefaultRoleplayTurnMode,
   readRoleplayTurnMode,
@@ -1097,4 +1099,101 @@ test('keeps a genuine staged state failure visible', async () => {
       resultEventSeqs: [session.snapshotEvents().findLast(event => event.type === 'agent-rp/staged-state-result')!.seq],
     },
   })
+})
+
+test('refuses a second state settlement while one is already running for the Session', async () => {
+  // The automatic pipeline settles inside `agent/turn-stopping`, before the
+  // turn's `turn/end` lands, so a player request arriving in that window used to
+  // recalculate the previous turn and write its revision first — which made the
+  // real settlement fail its `expectedRevision` check and dropped the turn's
+  // actual state change.
+  const { session, plan } = preparedEmptyStagedSettlement({ id: 'staged-state-concurrent' })
+  let admit = (): void => {}
+  const held = new Promise<void>((resolve) => { admit = resolve })
+  let requestCount = 0
+  const fake = {
+    sessions: { flush: async () => true },
+    llm: {
+      stream() {
+        requestCount += 1
+        return (async function* () {
+          if (requestCount === 1) await held
+          const text = '{"operations":[]}'
+          yield { type: 'block-start', index: 0, blockType: 'text' }
+          yield { type: 'text-delta', index: 0, text }
+          yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        })()
+      },
+    },
+  } as unknown as Context
+  const agent = { id: session.id, session } as Agent
+  const settle = () => runRoleplayStagedStateSettlement({
+    ctx: fake,
+    agent,
+    turn: 1,
+    plan: { step: 1, plan },
+    verification: MODEL_DEFAULT_STATE_VERIFICATION,
+    signal: new AbortController().signal,
+  })
+
+  const first = settle()
+  assert.deepEqual(await settle(), { outcome: 'skipped' })
+  assert.equal(requestCount, 1)
+  admit()
+  assert.notEqual((await first).outcome, 'skipped')
+
+  // The claim is released once the run ends, so the Session is settleable again.
+  const release = claimRoleplayStateSettlement(String(session.id))
+  assert.notEqual(release, undefined)
+  release?.()
+})
+
+test('refuses a player recalculation while the Session is already settling', async () => {
+  const { session } = preparedEmptyStagedSettlement({ id: 'resettle-while-settling' })
+  const release = claimRoleplayStateSettlement(String(session.id))
+  assert.notEqual(release, undefined)
+  try {
+    // A bare context: the claim has to be refused before anything is read, so
+    // reaching the plan replay would throw instead of returning this.
+    assert.deepEqual(await resettleRoleplayState({
+      ctx: {} as unknown as Context,
+      agent: { id: session.id, session } as Agent,
+      deployment,
+      verification: MODEL_DEFAULT_STATE_VERIFICATION,
+      signal: new AbortController().signal,
+    }), { outcome: 'skipped', error: '本轮正在结算，请等它结束后再试' })
+  } finally {
+    release?.()
+  }
+})
+
+test('releases the settlement claim when a recalculation throws', async () => {
+  const { session } = preparedEmptyStagedSettlement({ id: 'resettle-claim-release' })
+  // Claims on the Session id, then fails inside. Both halves are asserted: the
+  // claim is held while the recalculation runs, and it comes back afterwards.
+  let heldDuringRun: boolean | undefined
+  const agent = {
+    id: session.id,
+    session: {
+      id: session.id,
+      snapshotEvents: () => {
+        const leaked = claimRoleplayStateSettlement(String(session.id))
+        heldDuringRun = leaked === undefined
+        leaked?.()
+        throw new Error('读取会话失败')
+      },
+    },
+  } as unknown as Agent
+  await assert.rejects(resettleRoleplayState({
+    ctx: {} as unknown as Context,
+    agent,
+    deployment,
+    verification: MODEL_DEFAULT_STATE_VERIFICATION,
+    signal: new AbortController().signal,
+  }), /读取会话失败/u)
+  assert.equal(heldDuringRun, true)
+  const release = claimRoleplayStateSettlement(String(session.id))
+  assert.notEqual(release, undefined)
+  release?.()
 })

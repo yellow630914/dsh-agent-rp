@@ -628,6 +628,33 @@ async function dispatchStateSettlementWithRetry(
   return dispatchStateSettlement(input)
 }
 
+/**
+ * Sessions whose state is being settled right now.
+ *
+ * Two settlements of one Session must never overlap. The automatic pipeline
+ * runs inside `agent/turn-stopping`, *before* the turn's `turn/end` is
+ * appended, so a player-requested recalculation starting in that window
+ * recalculates the previous turn, writes its own revision first, and makes the
+ * real settlement fail its `expectedRevision` check — the turn's actual state
+ * change is lost. Overlapping runs can also leave the newest request without a
+ * terminal result, which the collector refuses outright.
+ *
+ * In-memory and per process: a Host restart cannot leave a claim behind, and
+ * every claim is released in a `finally`.
+ */
+const settlingSessions = new Set<string>()
+
+/**
+ * Take this Session's settlement slot.
+ * @param sessionId - Session whose state would be recalculated.
+ * @returns the release function, or undefined when a settlement is already running.
+ */
+export function claimRoleplayStateSettlement(sessionId: string): (() => void) | undefined {
+  if (settlingSessions.has(sessionId)) return undefined
+  settlingSessions.add(sessionId)
+  return () => { settlingSessions.delete(sessionId) }
+}
+
 /** Run the state calculation once for the latest completed Agent step. */
 export async function runRoleplayStagedStateSettlement(input: {
   readonly ctx: Context
@@ -644,11 +671,29 @@ export async function runRoleplayStagedStateSettlement(input: {
    * reads the reply through the overlay the player is actually looking at.
    */
   readonly force?: boolean
+  /** The caller already holds this Session's settlement claim and will release it. */
+  readonly claimed?: boolean
 }): Promise<RoleplayTurnWorkerOutcome> {
   const target = input.plan.plan.act.stateActions[0]
   if (target === undefined) return { outcome: 'skipped' }
   const state = input.plan.plan.stateReads.find(read => read.id === target.stateId)
   if (state?.value === undefined) return { outcome: 'skipped' }
+  const release = input.claimed === true
+    ? () => undefined
+    : claimRoleplayStateSettlement(String(input.agent.session.id))
+  if (release === undefined) return { outcome: 'skipped' }
+  try {
+    return await settleStagedState(input, target, state.value)
+  } finally {
+    release()
+  }
+}
+
+async function settleStagedState(
+  input: Parameters<typeof runRoleplayStagedStateSettlement>[0],
+  target: RoleplayStateActionPlan,
+  current: JsonValue,
+): Promise<RoleplayTurnWorkerOutcome> {
   const planEvent = matchingPlanEvent(input.agent.session.snapshotEvents(), input.turn, input.plan)
   const through = stepEnd(input.agent.session.snapshotEvents(), input.turn, input.plan.step)
   if (input.force !== true
@@ -666,7 +711,7 @@ export async function runRoleplayStagedStateSettlement(input: {
     planEvent,
     surfaceThrough,
     target,
-    state.value,
+    current,
     {
       characterName: input.plan.plan.prompt.transforms.actorName,
       ...(input.plan.plan.prompt.transforms.participantName === undefined
@@ -683,7 +728,7 @@ export async function runRoleplayStagedStateSettlement(input: {
     throughEventSeq: through.seq,
     planEventSeq: planEvent.seq,
     target,
-    current: state.value,
+    current: current,
     request: settlementRequest(input.agent, evidence, target, input.signal),
     stage: 'proposal',
   })
@@ -702,7 +747,7 @@ export async function runRoleplayStagedStateSettlement(input: {
     throughEventSeq: through.seq,
     planEventSeq: planEvent.seq,
     target,
-    current: state.value,
+    current: current,
     request: settlementVerificationRequest(
       input.agent,
       evidence,

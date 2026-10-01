@@ -183,6 +183,16 @@ export interface AgentRpProjection {
    */
   readonly stateSettlement?: {
     readonly turn: number
+    /**
+     * A settlement of this turn is running right now.
+     *
+     * True while a dispatched stage has no result yet, and for the whole
+     * automatic run — including the delay between a failed stage and its retry,
+     * where no stage is momentarily in flight. The panel disables its
+     * recalculate button on this, because a second settlement overlapping the
+     * first loses the turn's real state change.
+     */
+    readonly settling: boolean
     /** Terminal Worker outcome, absent while the Worker has not reported yet. */
     readonly outcome?: 'applied' | 'unchanged' | 'skipped' | 'failed'
     readonly stages: readonly {

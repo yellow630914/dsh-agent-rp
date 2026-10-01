@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createSystemMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { resolveConfig } from '../src/config.ts'
 import {
@@ -179,4 +179,36 @@ test('replays a dispatched turn exactly through the same registered extension se
   dispose()
   assert.throws(() => replaySessionRoleplayTurnPlan({ session, record, deployment, extensions: registry }),
     /no longer matches its durable content digest/u)
+})
+
+test('replays a plan whose pending message the Agent Loop appended after the record', () => {
+  const registry = new RoleplayRuntimeExtensionRegistry()
+  registry.register({
+    module: { id: 'extension:late-append', source: 'native', phases: ['prepare'] },
+    resolve: () => ({ outcomes: { prepare: { outcome: 'idle', contributions: 0 } } }),
+  })
+  const session = emptySession('extension-replay-late-append')
+  session.append('turn/start', { turn: 1 })
+  const pending = createUserMessage({
+    source: { kind: 'user' },
+    content: [{ type: 'text', text: '继续。' }],
+  })
+  const resolved = resolveSessionRoleplayRuntime({ session, deployment, extensions: registry })
+  const plan = prepareRoleplayTurn({ session, pendingMessages: [pending], deployment, resolved })
+  session.append('step/start', { turn: 1, step: 1 })
+
+  // The DSH 0.2.0 order. `agent/request` writes the receipt first, then the loop
+  // renders the step's system prompt as surface node 0 and only then appends the
+  // inbox message this turn claimed — so the pending message lands *behind* the
+  // receipt in the log, where a prefix-only search can never reach it.
+  const record = appendSessionRoleplayTurnPlan(session, 1, 1, plan)
+  session.append('system/message', {
+    turn: 1,
+    step: 1,
+    message: createSystemMessage('系统提示词'),
+  }, { surfaceOp: 'append' })
+  session.append('user/message', pending, { surfaceOp: 'append' })
+
+  const replayed = replaySessionRoleplayTurnPlan({ session, record, deployment, extensions: registry })
+  assert.deepEqual(replayed, plan)
 })

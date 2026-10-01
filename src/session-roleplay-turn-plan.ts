@@ -118,8 +118,19 @@ function pendingMessagesForRecord(
   if (new Set(input.pendingMessageIds).size !== input.pendingMessageIds.length) {
     throw new Error('Roleplay turn plan contains duplicate pending message ids')
   }
-  const candidates = events.slice(input.sessionSeq, record.seq).flatMap(event =>
-    event.type === 'user/message' ? [event.data] : [])
+  // The pending messages are the inbox items this turn claimed. They are still
+  // in the inbox when the plan is recorded, and the Agent Loop appends them to
+  // the log immediately afterwards — since DSH 0.2.0 that append lands *after*
+  // the `agent/request` hook that writes this record, behind the step's
+  // `system/message`, so a prefix-only search never finds them.
+  //
+  // The window is still bounded and replay-stable: from the plan's own
+  // preparation boundary to the end of the turn it belongs to. An id that
+  // resolves to anything other than exactly one message is still refused.
+  const turnEnd = events.findIndex(event => event.seq > record.seq
+    && (event.type === 'turn/end' || event.type === 'turn/start'))
+  const candidates = events.slice(input.sessionSeq, turnEnd < 0 ? events.length : turnEnd)
+    .flatMap(event => event.type === 'user/message' ? [event.data] : [])
   return input.pendingMessageIds.map(id => {
     const matches = candidates.filter(message => String(message.id) === id)
     if (matches.length !== 1) {

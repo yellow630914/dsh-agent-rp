@@ -27,7 +27,7 @@ function parseSaveRequest(value: unknown): PersonaLibrarySaveRequest {
   const keys = Object.keys(record)
   if (record.format !== 0 || typeof record.name !== 'string' || typeof record.description !== 'string'
     || (record.id !== undefined && typeof record.id !== 'string')
-    || keys.some(key => key !== 'format' && key !== 'id' && key !== 'name' && key !== 'description')) {
+    || keys.some(key => !['format', 'id', 'name', 'description', 'tags'].includes(key))) {
     throw new Error('Persona 请求字段无效')
   }
   return record as unknown as PersonaLibrarySaveRequest

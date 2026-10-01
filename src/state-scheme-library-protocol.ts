@@ -18,6 +18,8 @@ export interface StateSchemeLibrarySummary {
   readonly templateFormat: RoleplayStateTemplate['format']
   readonly revision: number
   readonly updatedAt: number
+  /** Flat resource-center labels; display-only, nothing downstream reads them. */
+  readonly tags: readonly string[]
 }
 
 /** Complete authored scheme returned when one entry is opened for editing. */
@@ -40,6 +42,8 @@ export interface StateSchemeLibrarySaveRequest {
   readonly initial: JsonValue
   readonly rules: string
   readonly template: RoleplayStateTemplate
+  /** Omitted keeps the scheme's existing labels; an empty array clears them. */
+  readonly tags?: readonly string[]
 }
 
 export interface StateSchemeLibraryListResponse {

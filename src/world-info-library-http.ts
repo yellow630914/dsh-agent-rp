@@ -73,10 +73,20 @@ export function installWorldInfoLibraryHttp(
           if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('世界书默认加载设置无效')
           const record = value as Record<string, unknown>
           if (record.format !== 0 || typeof record.id !== 'string'
-            || typeof record.defaultForNewSessions !== 'boolean'
-            || Object.keys(record).some(key => !['format', 'id', 'defaultForNewSessions'].includes(key))) {
+            || Object.keys(record).some(key => !['format', 'id', 'defaultForNewSessions', 'tags'].includes(key))) {
             throw new Error('世界书默认加载设置字段无效')
           }
+          // One PATCH carries either the default-session preference or the
+          // resource-center labels; sending both at once is a malformed request
+          // rather than two silent writes.
+          if ((record.defaultForNewSessions === undefined) === (record.tags === undefined)) {
+            throw new Error('世界书设置请求字段无效')
+          }
+          if (record.tags !== undefined) {
+            json(response, 200, { format: 0, upload: library.setTags(record.id, record.tags as readonly string[]) })
+            return
+          }
+          if (typeof record.defaultForNewSessions !== 'boolean') throw new Error('世界书默认加载设置字段无效')
           json(response, 200, { format: 0, upload: library.setDefault(record.id, record.defaultForNewSessions) })
         } catch (error: unknown) {
           json(response, 400, { error: error instanceof Error ? error.message : String(error) })

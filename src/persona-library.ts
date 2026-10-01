@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
+import { parseResourceTags } from './resource-tags.ts'
 import type { PersonaLibraryEntry, PersonaLibrarySaveRequest } from './persona-library-protocol.ts'
 
 const ID_PATTERN = /^persona-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
@@ -40,7 +41,9 @@ function parseStored(value: unknown): StoredPersona {
     || typeof record.updatedAt !== 'number' || !Number.isSafeInteger(record.updatedAt) || record.updatedAt < record.createdAt) {
     throw new Error('Persona 文件字段无效')
   }
-  return record as unknown as StoredPersona
+  // Labels were added after the first personas were written, so a file without
+  // them stays valid; a malformed set is refused like any other bad field.
+  return { ...record, tags: parseResourceTags(record.tags, '分类') } as unknown as StoredPersona
 }
 
 /** Small local library whose entries can be snapshotted into independent Sessions. */
@@ -58,13 +61,19 @@ export class PersonaLibrary {
       .filter(filename => filename.endsWith('.json'))
       .map(filename => this.readFile(join(this.root, filename)))
       .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name))
-      .map(({ id, name, description, updatedAt }) => ({ id, name, description, updatedAt }))
+      .map(({ id, name, description, updatedAt, tags }) => ({ id, name, description, updatedAt, tags }))
   }
 
   /** Read one Persona by opaque id. */
   get(id: string): PersonaLibraryEntry {
     const stored = this.readFile(this.path(id))
-    return { id: stored.id, name: stored.name, description: stored.description, updatedAt: stored.updatedAt }
+    return {
+      id: stored.id,
+      name: stored.name,
+      description: stored.description,
+      updatedAt: stored.updatedAt,
+      tags: stored.tags,
+    }
   }
 
   /** Create or update one Persona and return its normalized value. */
@@ -84,6 +93,9 @@ export class PersonaLibrary {
       description,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
+      // Omitted labels keep whatever the entry already had, so an edit that only
+      // changes the description cannot silently clear them.
+      tags: request.tags === undefined ? (existing?.tags ?? []) : parseResourceTags(request.tags, '分类'),
     }
     const staging = join(this.root, `.${id}.${process.pid}.${randomUUID()}.tmp`)
     try {

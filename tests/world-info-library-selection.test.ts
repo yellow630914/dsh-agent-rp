@@ -13,7 +13,7 @@ const upload = (value: string, name: string): WorldInfoLibraryUpload => ({
   name,
   entryCount: 1,
   degradations: [],
-  defaultForNewSessions: false,
+  defaultForNewSessions: false, tags: []
 })
 const book = (value: string): AgentRpProjection['worldInfo']['books'][number] => ({
   id: value,

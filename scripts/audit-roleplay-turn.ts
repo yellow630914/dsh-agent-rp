@@ -399,7 +399,7 @@ export async function auditRoleplayTurn(input: RoleplayTurnAuditInput): Promise<
       name: worldInfo.name?.trim() || basename(input.worldInfoPath, '.json'),
       entryCount: worldInfo.lorebook.entries.length,
       degradations: worldInfo.degradations,
-      defaultForNewSessions: false,
+      defaultForNewSessions: false, tags: [],
     },
     worldInfo,
     filename: basename(input.worldInfoPath),

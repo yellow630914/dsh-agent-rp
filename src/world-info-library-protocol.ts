@@ -13,6 +13,15 @@ export interface WorldInfoLibraryUpload {
   readonly entryCount: number
   readonly degradations: readonly string[]
   readonly defaultForNewSessions: boolean
+  /** Flat resource-center labels; display-only, nothing downstream reads them. */
+  readonly tags: readonly string[]
+}
+
+/** Replace one retained source's resource-center labels. */
+export interface WorldInfoLibraryTagsRequest {
+  readonly format: 0
+  readonly id: string
+  readonly tags: readonly string[]
 }
 
 /** Host-owned preference for attaching one retained World Info source to future RP Sessions. */

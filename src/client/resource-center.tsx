@@ -9,6 +9,7 @@ import type {
   CharacterWorldBindingUpdateRequest,
 } from '../character-library-protocol.ts'
 import type { PersonaLibraryEntry, PersonaLibrarySaveRequest } from '../persona-library-protocol.ts'
+import { saveResourceTags, type TaggableResource } from './resource-tags-client.ts'
 import type { PresetLibrarySummary } from '../preset-library-http-protocol.ts'
 import type { RegexPackLibrarySummary } from '../regex-pack-library-protocol.ts'
 import type { ArchivedSessionListResponse } from '../archived-session-protocol.ts'
@@ -79,6 +80,54 @@ const secondaryButtonStyle = {
   padding: '6px 9px',
   whiteSpace: 'nowrap',
 } as const
+
+/** The label with no label: everything the player has not categorized yet. */
+const UNTAGGED = '\u0000untagged'
+
+const tagChipStyle = {
+  background: 'transparent', border: '1px solid var(--dsw-alias-border-l2, #3d3d43)', borderRadius: '999px',
+  color: 'inherit', cursor: 'pointer', font: 'inherit', fontSize: '11px', padding: '3px 10px', whiteSpace: 'nowrap',
+} as const
+
+/**
+ * One resource's labels, shown inline and edited as comma-separated text.
+ *
+ * Labels are flat and display-only, so the editor is deliberately the simplest
+ * thing that works: no picker, no creation step, no rename — typing a label that
+ * does not exist yet creates it, and removing it from the last resource that
+ * carried it is what makes it disappear.
+ */
+function ResourceTagRow({ tags, busy, onSave }: {
+  readonly tags: readonly string[]
+  readonly busy: boolean
+  readonly onSave: (next: readonly string[]) => void
+}) {
+  const [draft, setDraft] = useState<string>()
+  if (draft !== undefined) {
+    return <form style={{ alignItems: 'center', display: 'flex', gap: '6px', marginTop: '5px', width: '100%' }}
+      onSubmit={(event) => {
+        event.preventDefault()
+        onSave(draft.split(/[,，]/u).map(value => value.trim()).filter(value => value !== ''))
+        setDraft(undefined)
+      }}>
+      <input value={draft} autoFocus disabled={busy} placeholder="用逗号分隔，留空表示未分类"
+        onChange={event => { setDraft(event.target.value) }}
+        onKeyDown={(event) => { if (event.key === 'Escape') setDraft(undefined) }}
+        style={{
+          background: 'var(--dsw-alias-bg-elevated, #202126)', border: '1px solid var(--dsw-alias-border-l2, #3d3d43)',
+          borderRadius: '7px', color: 'inherit', flex: 1, font: 'inherit', fontSize: '11px', minWidth: 0,
+          padding: '4px 8px',
+        }} />
+      <button type="submit" disabled={busy} style={tagChipStyle}>保存</button>
+      <button type="button" disabled={busy} onClick={() => { setDraft(undefined) }} style={tagChipStyle}>取消</button>
+    </form>
+  }
+  return <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '5px' }}>
+    {tags.map(tag => <span key={tag} style={{ ...tagChipStyle, cursor: 'default', opacity: .75 }}>{tag}</span>)}
+    <button type="button" disabled={busy} onClick={() => { setDraft(tags.join('，')) }}
+      style={{ ...tagChipStyle, opacity: .5 }}>{tags.length === 0 ? '＋ 分类' : '编辑分类'}</button>
+  </div>
+}
 
 function message(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason)
@@ -407,6 +456,7 @@ export function RoleplayResourceCenter({
   onClose,
 }: ResourceCenterProps) {
   const [section, setSection] = useState<ResourceSection>(initialSection)
+  const [tagFilter, setTagFilter] = useState<string>()
   const [archived, setArchived] = useState<ArchivedSessionListResponse>()
   const [query, setQuery] = useState('')
   const [characters, setCharacters] = useState<readonly CharacterLibrarySummary[]>()
@@ -471,12 +521,19 @@ export function RoleplayResourceCenter({
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const matches = (...values: readonly string[]): boolean => normalizedQuery === ''
     || values.some(value => value.toLocaleLowerCase().includes(normalizedQuery))
+  // A label filter narrows within the section it was picked in; `UNTAGGED`
+  // selects exactly the resources the player has not categorized.
+  const tagged = (tags: readonly string[]): boolean => tagFilter === undefined
+    || (tagFilter === UNTAGGED ? tags.length === 0 : tags.includes(tagFilter))
   const visibleCharacters = useMemo(() => (characters ?? []).filter(entry =>
-    matches(entry.displayName, entry.name, entry.originalFilename)), [characters, normalizedQuery])
-  const visibleWorldInfos = useMemo(() => (worldInfos ?? []).filter(entry => matches(entry.name)), [worldInfos, normalizedQuery])
+    matches(entry.displayName, entry.name, entry.originalFilename) && tagged(entry.tags)),
+  [characters, normalizedQuery, tagFilter])
+  const visibleWorldInfos = useMemo(() => (worldInfos ?? []).filter(entry =>
+    matches(entry.name) && tagged(entry.tags)), [worldInfos, normalizedQuery, tagFilter])
   const visiblePresets = useMemo(() => (presets ?? []).filter(entry => matches(entry.name)), [presets, normalizedQuery])
   const visibleRegexPacks = useMemo(() => (regexPacks ?? []).filter(entry => matches(entry.name)), [regexPacks, normalizedQuery])
-  const visiblePersonas = useMemo(() => (personas ?? []).filter(entry => matches(entry.name, entry.description)), [personas, normalizedQuery])
+  const visiblePersonas = useMemo(() => (personas ?? []).filter(entry =>
+    matches(entry.name, entry.description) && tagged(entry.tags)), [personas, normalizedQuery, tagFilter])
   const visibleArchived = useMemo(
     () => (archived?.entries ?? []).filter(entry => matches(entry.title ?? entry.id, entry.cwd ?? '')),
     [archived, normalizedQuery],
@@ -717,9 +774,34 @@ export function RoleplayResourceCenter({
     else if (section === 'presets') presetInputRef.current?.click()
     else if (section === 'regex-packs') regexPackInputRef.current?.click()
   }
+  // Labels exist only where resources carry them, and the chip row is built from
+  // the resources themselves — there is no label registry to keep in sync, so a
+  // label lives exactly as long as something still wears it.
+  const sectionTags: TaggableResource | undefined = section === 'characters' ? 'characters'
+    : section === 'world-info' ? 'world-info'
+      : section === 'personas' ? 'personas' : undefined
+  const sectionTagged: readonly { readonly tags: readonly string[] }[] = section === 'characters' ? (characters ?? [])
+    : section === 'world-info' ? (worldInfos ?? [])
+      : section === 'personas' ? (personas ?? []) : []
+  const availableTags = useMemo(
+    () => [...new Set(sectionTagged.flatMap(entry => entry.tags))].sort((left, right) => left.localeCompare(right)),
+    [sectionTagged],
+  )
+  const untaggedCount = sectionTagged.filter(entry => entry.tags.length === 0).length
+  const applyTags = (kind: TaggableResource, id: string, tags: readonly string[], context?: never): void => {
+    startAction(`tags:${id}`)
+    void saveResourceTags(kind, id, tags, context).then(async () => {
+      setNotice('分类已更新')
+      if (kind === 'characters') {
+        const [active, archivedCards] = await Promise.all([listCharacters('active'), listCharacters('archived')])
+        setCharacters([...active, ...archivedCards])
+      } else if (kind === 'world-info') setWorldInfos(await listWorldInfos())
+      else if (kind === 'personas') setPersonas(await listPersonas())
+    }, (reason: unknown) => { setError(message(reason)) }).finally(finishAction)
+  }
   const rowStyle = {
     alignItems: 'center', borderTop: '1px solid var(--dsw-alias-border-l2, #39393c)',
-    display: 'flex', gap: '12px', padding: '11px 12px',
+    display: 'flex', flexWrap: 'wrap', gap: '12px', padding: '11px 12px',
   } as const
   const actionStyle = (active = true) => ({
     ...secondaryButtonStyle,
@@ -913,6 +995,23 @@ export function RoleplayResourceCenter({
               }}>{busy === `character-world:${worldBindingDraft.character.id}` ? '保存中…' : '保存世界组合'}</button>
             </div>
           </div>}
+          {sectionTags !== undefined && (availableTags.length > 0 || untaggedCount > 0)
+            && <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '10px' }}>
+            <button type="button" onClick={() => { setTagFilter(undefined) }} style={{
+              ...tagChipStyle,
+              background: tagFilter === undefined ? 'color-mix(in srgb, currentColor 13%, transparent)' : 'transparent',
+            }}>全部</button>
+            {availableTags.map(tag => <button key={tag} type="button"
+              onClick={() => { setTagFilter(current => current === tag ? undefined : tag) }} style={{
+                ...tagChipStyle,
+                background: tagFilter === tag ? 'color-mix(in srgb, currentColor 13%, transparent)' : 'transparent',
+              }}>{tag}</button>)}
+            {untaggedCount > 0 && <button type="button"
+              onClick={() => { setTagFilter(current => current === UNTAGGED ? undefined : UNTAGGED) }} style={{
+                ...tagChipStyle, opacity: .62,
+                background: tagFilter === UNTAGGED ? 'color-mix(in srgb, currentColor 13%, transparent)' : 'transparent',
+              }}>未分类 {untaggedCount}</button>}
+          </div>}
           {loading && <div style={{ fontSize: '12px', opacity: .52, padding: '22px 4px' }}>正在读取{sectionName(section)}…</div>}
           {!loading && empty && <div style={{ fontSize: '12px', lineHeight: 1.65, opacity: .55, padding: '22px 4px', textAlign: 'center' }}>
             {normalizedQuery === '' ? `还没有${sectionName(section)}资源` : `没有找到匹配的${sectionName(section)}`}
@@ -924,6 +1023,8 @@ export function RoleplayResourceCenter({
                 <span style={{ display: 'block', fontSize: '10px', marginTop: '4px', opacity: .48, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   V{entry.cardVersion} · {entry.greetingCount} 个开场{entry.worldInfoCount > 0 ? ` · ${entry.worldInfoCount} 条世界书` : ''}{entry.archived ? ' · 已收起' : ''}
                 </span>
+                {!entry.archived && <ResourceTagRow tags={entry.tags} busy={busy !== undefined}
+                  onSave={next => { applyTags('characters', entry.id, next) }} />}
               </div>
               <button type="button" disabled={busy !== undefined || entry.archived}
                 title={entry.archived ? '请先恢复这个角色' : '编辑未来新会话使用的默认世界组合'}
@@ -945,6 +1046,8 @@ export function RoleplayResourceCenter({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <strong style={{ display: 'block', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</strong>
                 <span style={{ display: 'block', fontSize: '10px', marginTop: '4px', opacity: .48 }}>{entry.entryCount} 条目{entry.defaultForNewSessions ? ' · 新会话默认加载' : ''}{entry.degradations.length > 0 ? ` · ${entry.degradations.length} 项兼容提醒` : ''}</span>
+                <ResourceTagRow tags={entry.tags} busy={busy !== undefined}
+                  onSave={next => { applyTags('world-info', entry.id, next) }} />
               </div>
               <button type="button" data-agent-rp-action="edit-world-info" disabled={busy !== undefined}
                 onClick={() => { setEditingWorldInfo(entry) }} style={actionStyle(busy === undefined)}>编辑</button>
@@ -1025,6 +1128,8 @@ export function RoleplayResourceCenter({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <strong style={{ display: 'block', fontSize: '13px' }}>{entry.name}</strong>
                 <span style={{ display: '-webkit-box', fontSize: '10px', lineHeight: 1.5, marginTop: '4px', opacity: .48, overflow: 'hidden', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>{entry.description || '没有额外人物设定'}</span>
+                <ResourceTagRow tags={entry.tags} busy={busy !== undefined}
+                  onSave={next => { applyTags('personas', entry.id, next, entry as never) }} />
               </div>
               <button type="button" disabled={busy !== undefined} onClick={() => {
                 setPersonaDraft({ id: entry.id, name: entry.name, description: entry.description }); setConfirmingPersonaId(undefined)

@@ -89,7 +89,7 @@ function worldAsset(id: string, name: string, content: string) {
       name,
       entryCount: 1,
       degradations: [],
-      defaultForNewSessions: false,
+      defaultForNewSessions: false, tags: []
     },
     worldInfo: parseWorldInfoJson(source),
     filename: `${name}.json`,

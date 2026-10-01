@@ -8,6 +8,7 @@ import { MAX_WORLD_INFO_JSON_BYTES, parseWorldInfoJsonBytes } from './import/wor
 import type { ImportedWorldInfo } from './import/types.ts'
 import type { WorldInfoLibraryUpload } from './world-info-library-protocol.ts'
 import type { CharacterWorldBindingStore } from './character-world-binding-store.ts'
+import { mergeResourceTags, parseResourceTags } from './resource-tags.ts'
 
 const ID_PATTERN = /^world-info-[a-f0-9]{32}$/u
 
@@ -135,7 +136,15 @@ export class WorldInfoLibrary {
     }
 
     if (this.isDefault(id)) writeFileSync(join(this.root, `${next}.default`), '1', { encoding: 'utf8' })
-    for (const suffix of ['.json', '.name', '.default']) {
+    // Labels follow the content to its new identity, or an edit would silently
+    // drop the book out of every category it was in. When `existed` is true the
+    // edit collapsed two books into one, so the labels merge rather than one
+    // side winning — they are additive by nature, unlike a single folder.
+    const carriedTags = existed ? mergeResourceTags(this.tagsOf(id), this.tagsOf(next)) : this.tagsOf(id)
+    if (carriedTags.length > 0) {
+      writeFileSync(join(this.root, `${next}.tags`), JSON.stringify(carriedTags), { encoding: 'utf8' })
+    }
+    for (const suffix of ['.json', '.name', '.default', '.tags']) {
       const path = join(this.root, `${id}${suffix}`)
       if (existsSync(path)) unlinkSync(path)
     }
@@ -147,7 +156,7 @@ export class WorldInfoLibrary {
     const upload = this.resolve(id).upload
     const characterIds = this.bindings?.referencingCharacters(id) ?? []
     if (characterIds.length > 0) throw new Error('这本世界书仍由角色绑定，请先解除角色世界绑定')
-    for (const suffix of ['.json', '.name', '.default']) {
+    for (const suffix of ['.json', '.name', '.default', '.tags']) {
       const path = join(this.root, `${id}${suffix}`)
       if (existsSync(path)) unlinkSync(path)
     }
@@ -185,6 +194,38 @@ export class WorldInfoLibrary {
     return { filename, data }
   }
 
+  /**
+   * Resource-center labels for one book.
+   *
+   * A sidecar file beside the content, exactly like `.name` and `.default`:
+   * the id is the sha256 of the book's bytes, so anything stored *inside* the
+   * file would change the id every time a label changed.
+   */
+  private tagsOf(id: string): readonly string[] {
+    const path = join(this.root, `${id}.tags`)
+    if (!existsSync(path)) return []
+    try {
+      return parseResourceTags(JSON.parse(readFileSync(path, 'utf8')), '分类')
+    } catch {
+      // A hand-edited or truncated sidecar must not take the library down; the
+      // book is still perfectly readable without its labels.
+      return []
+    }
+  }
+
+  /** Replace the resource-center labels for one retained source. */
+  setTags(id: string, tags: readonly string[]): WorldInfoLibraryUpload {
+    this.readSource(id)
+    const normalized = parseResourceTags(tags, '分类')
+    const path = join(this.root, `${id}.tags`)
+    if (normalized.length === 0) {
+      if (existsSync(path)) unlinkSync(path)
+    } else {
+      writeFileSync(path, JSON.stringify(normalized), { encoding: 'utf8' })
+    }
+    return this.resolve(id).upload
+  }
+
   private isDefault(id: string): boolean {
     const preferencePath = join(this.root, `${id}.default`)
     return existsSync(preferencePath) && readFileSync(preferencePath, 'utf8').trim() === '1'
@@ -197,6 +238,7 @@ export class WorldInfoLibrary {
       entryCount: worldInfo.lorebook.entries.length,
       degradations: [...worldInfo.degradations],
       defaultForNewSessions: this.isDefault(id),
+      tags: this.tagsOf(id),
     }
   }
 }

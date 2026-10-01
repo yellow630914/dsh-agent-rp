@@ -290,6 +290,22 @@ export function installCharacterLibraryHttp(
           json(response, 200, { format: 0, entry: browserDetail(entry) })
           return
         }
+        if (request.method === 'POST' && parts.length === 2 && parts[0] !== undefined && parts[1] === 'tags') {
+          let value: unknown
+          try {
+            value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await readUpload(request)))
+          } catch (error) {
+            throw new Error('角色分类请求不是有效 JSON', { cause: error })
+          }
+          if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('角色分类请求无效')
+          const record = value as Record<string, unknown>
+          if (record.format !== 0 || Object.keys(record).some(key => !['format', 'tags'].includes(key))) {
+            throw new Error('角色分类请求字段无效')
+          }
+          const entry = library.setTags(parts[0], record.tags as readonly string[])
+          json(response, 200, { format: 0, entry: browserDetail(entry) })
+          return
+        }
         if (request.method === 'POST' && parts.length === 3 && parts[0] !== undefined
           && parts[1] === 'remote-resources' && (parts[2] === 'approve' || parts[2] === 'revoke')) {
           const search = new URL(request.url ?? '/', 'http://agent-rp.local').searchParams

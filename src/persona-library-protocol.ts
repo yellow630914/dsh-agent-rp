@@ -9,6 +9,8 @@ export interface PersonaLibraryEntry {
   readonly name: string
   readonly description: string
   readonly updatedAt: number
+  /** Flat resource-center labels; display-only, nothing downstream reads them. */
+  readonly tags: readonly string[]
 }
 
 /** Fields accepted when creating or editing one reusable Persona. */
@@ -17,6 +19,8 @@ export interface PersonaLibrarySaveRequest {
   readonly id?: string
   readonly name: string
   readonly description: string
+  /** Omitted keeps the entry's existing labels; an empty array clears them. */
+  readonly tags?: readonly string[]
 }
 
 /** Immutable Persona snapshot selected for one new Roleplay Session. */

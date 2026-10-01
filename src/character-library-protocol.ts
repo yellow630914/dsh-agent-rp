@@ -153,6 +153,8 @@ export interface CharacterLibrarySummary {
   readonly imageAssetCount: number
   readonly tavernHelper?: TavernHelperImportSummary
   readonly archived: boolean
+  /** Flat resource-center labels; the archive carries none. */
+  readonly tags: readonly string[]
   readonly transport: 'png' | 'json' | 'charx'
   readonly importedAt: number
   readonly updatedAt: number

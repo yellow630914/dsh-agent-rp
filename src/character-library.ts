@@ -15,6 +15,7 @@ import {
 import { basename, join, resolve } from 'node:path'
 import { unzipSync, zipSync } from 'fflate'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
+import { parseResourceTags } from './resource-tags.ts'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { CharacterImportTransport } from './import/session-character.ts'
 import type {
@@ -65,6 +66,7 @@ interface StoredCharacterMetadata {
   readonly createdAt: number
   readonly updatedAt: number
   readonly archivedAt?: number
+  readonly tags?: readonly string[]
   readonly index?: StoredCharacterIndex
 }
 
@@ -317,7 +319,14 @@ function parseMetadata(value: unknown): StoredCharacterMetadata {
     throw new Error('character library metadata has invalid fields')
   }
   const index = meta.index === undefined ? undefined : parseStoredIndex(meta.index)
-  return { ...(meta as unknown as StoredCharacterMetadata), ...(index === undefined ? {} : { index }) }
+  // Labels arrived after the first cards were imported, so absence stays legal;
+  // a malformed set is refused the way any other bad field is.
+  const tags = parseResourceTags(meta.tags, '分类')
+  return {
+    ...(meta as unknown as StoredCharacterMetadata),
+    ...(index === undefined ? {} : { index }),
+    ...(tags.length === 0 ? {} : { tags }),
+  }
 }
 
 function safeHttpsOrigin(value: string, label: string): string {
@@ -668,6 +677,7 @@ function summary(
     imageAssetCount,
     ...(card.frontend.tavernHelper === undefined ? {} : { tavernHelper: card.frontend.tavernHelper }),
     archived: meta.archivedAt !== undefined,
+    tags: meta.tags ?? [],
     transport: meta.transport,
     importedAt: meta.createdAt,
     updatedAt: meta.updatedAt,
@@ -703,6 +713,7 @@ function indexedSummary(meta: StoredCharacterMetadata, index: StoredCharacterInd
     imageAssetCount: index.imageAssetCount,
     ...(index.tavernHelper === undefined ? {} : { tavernHelper: index.tavernHelper }),
     archived: meta.archivedAt !== undefined,
+    tags: meta.tags ?? [],
     transport: meta.transport,
     importedAt: meta.createdAt,
     updatedAt: meta.updatedAt,
@@ -1328,7 +1339,21 @@ export class CharacterLibrary {
     const meta = this.readMetadata(id)
     if (meta.archivedAt !== undefined) return this.get(id)
     const now = Date.now()
-    this.writeMetadata({ ...meta, archivedAt: now, updatedAt: now })
+    // The archive carries no categories: a card goes in without them and comes
+    // back out unlabelled, so a restore always lands in 未分类 rather than in a
+    // category the player may since have renamed or stopped using.
+    const { tags: _cleared, ...withoutTags } = meta
+    this.writeMetadata({ ...withoutTags, archivedAt: now, updatedAt: now })
+    return this.get(id)
+  }
+
+  /** Replace the resource-center labels for one active card. */
+  setTags(id: string, tags: readonly string[]): CharacterLibraryDetail {
+    const meta = this.readMetadata(id)
+    if (meta.archivedAt !== undefined) throw new Error('收纳箱中的角色没有分类，请先恢复')
+    const next = parseResourceTags(tags, '分类')
+    const { tags: _previous, ...rest } = meta
+    this.writeMetadata({ ...rest, ...(next.length === 0 ? {} : { tags: next }), updatedAt: Date.now() })
     return this.get(id)
   }
 

@@ -152,7 +152,7 @@ test('lets a standalone world own a scene without inventing an actor', () => {
       name: '海城剧情',
       entryCount: 1,
       degradations: [],
-      defaultForNewSessions: false,
+      defaultForNewSessions: false, tags: []
     },
     worldInfo,
     filename: '海城剧情.json',

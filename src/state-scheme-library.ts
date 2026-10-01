@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
+import { parseResourceTags } from './resource-tags.ts'
 import { snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
   parseRoleplayStateScheme,
@@ -35,6 +36,7 @@ interface StoredStateScheme {
   readonly revision: number
   readonly createdAt: number
   readonly updatedAt: number
+  readonly tags: readonly string[]
 }
 
 /** Filesystem location override used by focused checks and portable deployments. */
@@ -59,6 +61,7 @@ function summary(value: StoredStateScheme): StateSchemeLibrarySummary {
     templateFormat: value.template.format,
     revision: value.revision,
     updatedAt: value.updatedAt,
+    tags: value.tags,
   }
 }
 
@@ -85,6 +88,8 @@ function stored(value: unknown): StoredStateScheme {
     revision: Number(record.revision),
     createdAt: Number(record.createdAt),
     updatedAt: Number(record.updatedAt),
+    // Labels arrived after the first schemes were authored, so absence is legal.
+    tags: parseResourceTags(record.tags, '分类'),
   }
 }
 
@@ -187,6 +192,9 @@ export class StateSchemeLibrary implements RoleplayStateSchemeSource {
       revision: (existing?.revision ?? 0) + 1,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
+      // Omitted labels keep what the scheme already had, so saving an edited
+      // rule set cannot silently clear them.
+      tags: request.tags === undefined ? (existing?.tags ?? []) : parseResourceTags(request.tags, '分类'),
     }
     const encoded = `${JSON.stringify(value, null, 2)}\n`
     if (Buffer.byteLength(encoded) > 1024 * 1024) throw new Error('状态方案超过 1 MiB')

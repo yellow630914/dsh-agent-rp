@@ -53,6 +53,7 @@ test('keeps one exact reusable Character Card asset with selectable greetings', 
     avatarAvailable: false,
     imageAssetCount: 0,
     archived: false,
+    tags: [],
     transport: 'json',
     importedAt: first.importedAt,
     updatedAt: first.updatedAt,
@@ -365,4 +366,31 @@ test('saves reversible character fields and regex switches beside every original
   assert.equal(exportedPng.mediaType, 'image/png')
   assert.equal(parseCharacterCardJsonBytes(new TextEncoder().encode(readCharacterCardPng(exportedPng.data).json)).name, 'PNG 本机版')
   assert.deepEqual(library.asset(pngEdited.id).data, png)
+})
+
+test('the archive carries no categories, so a restore lands unlabelled', (context) => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-agent-rp-character-tags-'))
+  context.after(() => { rmSync(root, { recursive: true, force: true }) })
+  const data = new Uint8Array(readFileSync('tests/fixtures/manual-character-card.json'))
+  const library = new CharacterLibrary({ root })
+  const entry = library.import({
+    data,
+    filename: '白露.json',
+    mediaType: 'application/json',
+    card: parseCharacterCardJsonBytes(data),
+    transport: { transport: 'json' },
+  })
+
+  assert.deepEqual(library.setTags(entry.id, ['主线', ' 西幻 ']).tags.length, 2)
+  assert.equal(library.list('active')[0]?.tags.length, 2)
+
+  // Into the archive without them, and back out unlabelled: a restore always
+  // lands in 未分类 rather than in a category the player may have since dropped.
+  assert.deepEqual(library.archive(entry.id).tags, [])
+  assert.deepEqual(library.list('archived')[0]?.tags, [])
+  assert.deepEqual(library.restore(entry.id).tags, [])
+  assert.deepEqual(library.list('active')[0]?.tags, [])
+
+  library.archive(entry.id)
+  assert.throws(() => library.setTags(entry.id, ['主线']), /收纳箱/u)
 })

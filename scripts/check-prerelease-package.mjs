@@ -17,7 +17,6 @@ const EXPECTED_FILES = [
   'lib/client.js.map',
   'cordis.patch.yml',
   'docs',
-  'preset',
 ]
 const REQUIRED_TARBALL_FILES = [
   'package/LICENSE',
@@ -33,8 +32,6 @@ const REQUIRED_TARBALL_FILES = [
   'package/lib/index.js',
   'package/lib/repair-session.js',
   'package/package.json',
-  'package/preset/agent.cordis.yml',
-  'package/preset/preset.yml',
 ]
 
 function fail(message) {

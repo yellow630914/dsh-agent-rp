@@ -1,4 +1,9 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+// DSH 0.2.0 retired `@deepseek-ai/dsh-client-runtime`, whose `ClientContext`
+// carried every client service at once. A client plugin's context is now the
+// ordinary cordis one — what Agent RP's own client takes too — and each service
+// it uses is declared by importing that service's own module augmentation.
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import {
   AGENT_RP_ST_EXTENSION_SERVICE,
   AGENT_RP_WORKBENCH_SECTION_SLOT,

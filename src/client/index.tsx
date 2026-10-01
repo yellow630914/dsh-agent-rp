@@ -669,6 +669,31 @@ type HeaderProps = PropsRuntime<'conversation.session.header.actions'> & {
 
 type ComposerDockProps = PropsRuntime<'conversation.composer.dock'>
 
+/**
+ * The InputBar column that owns the composer card, located from inside the
+ * `conversation.composer.dock` outlet.
+ *
+ * DSH 0.2.0 moved that outlet into the InputBar's own bottom strip — a centred
+ * flex row rendered *below* the card, sharing it with the context meter — so the
+ * outlet's parent is no longer the composer column. Everything that reached for
+ * `dock.parentElement` then addressed the wrong element: the status panel landed
+ * under the composer and squeezed into that row, the draft placeholder was never
+ * applied, and immersive mode stopped hiding the composer's tool controls.
+ *
+ * Walking up to the ancestor that directly owns `[data-composer-card]` recovers
+ * the column no matter how the outlets are nested.
+ */
+function composerCardSeat(dock: HTMLElement): {
+  readonly root: HTMLElement
+  readonly card: HTMLElement
+} | undefined {
+  for (let element = dock.parentElement; element !== null; element = element.parentElement) {
+    const card = element.querySelector<HTMLElement>(':scope > [data-composer-card]')
+    if (card !== null) return { card, root: element }
+  }
+  return undefined
+}
+
 type GenerationTailProps = TurnTailOwnerProps & {
   readonly sessionId: SessionId
   readonly rewriteTurn: (sessionId: SessionId, turn: number, draft: string) => Promise<void>
@@ -12005,13 +12030,15 @@ function roleplayComposerDockComponent(
   }, [runtimeDiagnostics, sessionId])
   useLayoutEffect(() => {
     const dock = rootRef.current?.closest<HTMLElement>('[data-slot="conversation.composer.dock"]')
-    const inputRoot = dock?.parentElement
-    if (dock == null || inputRoot == null) return
+    const seat = dock == null ? undefined : composerCardSeat(dock)
+    if (seat === undefined) return
     const host = document.createElement('div')
     host.dataset.agentRpStatusPanelDock = 'true'
-    host.style.cssText = 'box-sizing:border-box;min-width:0;padding:0 0 8px;width:100%;'
-    const card = inputRoot.querySelector<HTMLElement>('[data-composer-card]')
-    inputRoot.insertBefore(host, card ?? dock)
+    // Mirror the card's own width contract so the panel lines up with the
+    // composer instead of spanning the column's full clearance.
+    host.style.cssText = 'box-sizing:border-box;max-width:var(--dsh-composer-card-max-width);'
+      + 'min-width:0;padding:0 0 8px;width:100%;'
+    seat.root.insertBefore(host, seat.card)
     setStatusPanelHost(host)
     return () => {
       setStatusPanelHost(current => current === host ? undefined : current)
@@ -12089,8 +12116,9 @@ function roleplayComposerDockComponent(
   }, [background?.index, sessionId, viewMode])
   useLayoutEffect(() => {
     const dock = rootRef.current?.closest<HTMLElement>('[data-slot="conversation.composer.dock"]')
-    const inputRoot = dock?.parentElement
-    if (dock == null || inputRoot == null || placeholder === undefined) return
+    const seat = dock == null ? undefined : composerCardSeat(dock)
+    if (dock == null || seat === undefined || placeholder === undefined) return
+    const inputRoot = seat.root
     const managedTextareas = new Map<HTMLTextAreaElement, string | null>()
     const hiddenControls = new Map<HTMLElement, { display: string; priority: string }>()
     const hide = (element: Element): void => {
@@ -12118,7 +12146,9 @@ function roleplayComposerDockComponent(
         if (element.tagName !== 'BUTTON' && !ownsMenuButton) hide(element)
       }
       for (const element of Array.from(inputRoot.children)) {
-        if (element !== card && element !== dock
+        // `contains` rather than identity: since 0.2.0 the dock outlet is nested
+        // inside the column's bottom strip, so the child to keep is that strip.
+        if (element !== card && !element.contains(dock)
           && (element as HTMLElement).dataset.agentRpStatusPanelDock !== 'true') hide(element)
       }
     }

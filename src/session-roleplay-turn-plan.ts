@@ -2,6 +2,7 @@
 
 import { Session, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
 import { roleplayModelHistory } from './roleplay-surface-overlay.ts'
+import { roleplayClaimedPlanMessages } from './roleplay-turn-claimed-messages.ts'
 import type { ResolvedConfig } from './config.ts'
 import type { EjsTemplateEngine } from './ejs-template.ts'
 import { prepareRoleplayTurn, type RoleplayTurnPlan } from './roleplay-turn-plan.ts'
@@ -114,30 +115,8 @@ function pendingMessagesForRecord(
   events: readonly SessionEvent[],
   record: SessionEvent<'agent-rp/turn-plan'>,
 ): readonly UserMessage[] {
-  const { input } = record.data.reference
-  if (new Set(input.pendingMessageIds).size !== input.pendingMessageIds.length) {
-    throw new Error('Roleplay turn plan contains duplicate pending message ids')
-  }
-  // The pending messages are the inbox items this turn claimed. They are still
-  // in the inbox when the plan is recorded, and the Agent Loop appends them to
-  // the log immediately afterwards — since DSH 0.2.0 that append lands *after*
-  // the `agent/request` hook that writes this record, behind the step's
-  // `system/message`, so a prefix-only search never finds them.
-  //
-  // The window is still bounded and replay-stable: from the plan's own
-  // preparation boundary to the end of the turn it belongs to. An id that
-  // resolves to anything other than exactly one message is still refused.
-  const turnEnd = events.findIndex(event => event.seq > record.seq
-    && (event.type === 'turn/end' || event.type === 'turn/start'))
-  const candidates = events.slice(input.sessionSeq, turnEnd < 0 ? events.length : turnEnd)
-    .flatMap(event => event.type === 'user/message' ? [event.data] : [])
-  return input.pendingMessageIds.map(id => {
-    const matches = candidates.filter(message => String(message.id) === id)
-    if (matches.length !== 1) {
-      throw new Error(`Roleplay turn plan pending message ${JSON.stringify(id)} is unavailable or ambiguous`)
-    }
-    return matches[0]!
-  })
+  return roleplayClaimedPlanMessages(events, record, 'Roleplay turn plan pending message')
+    .map(event => event.data)
 }
 
 /** Rebuild one complete prepared plan from its exact Session prefix and verify its content digest. */

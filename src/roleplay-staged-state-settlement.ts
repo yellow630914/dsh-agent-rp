@@ -16,6 +16,7 @@ import {
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { foldSurface, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { roleplaySurfaceNodes } from './roleplay-surface-overlay.ts'
+import { roleplayClaimedPlanMessages } from './roleplay-turn-claimed-messages.ts'
 import { readRoleplayStateScheme } from './roleplay-state-scheme.ts'
 import { jsonrepair } from 'jsonrepair'
 import {
@@ -245,19 +246,9 @@ function playerInputText(
   events: readonly SessionEvent[],
   planEvent: SessionEvent<'agent-rp/turn-plan'>,
 ): string {
-  const input = planEvent.data.reference.input
-  if (new Set(input.pendingMessageIds).size !== input.pendingMessageIds.length) {
-    throw new Error('Roleplay staged settlement plan contains duplicate pending message ids')
-  }
-  const candidates = events.slice(input.sessionSeq, planEvent.seq).flatMap(event =>
-    event.type === 'user/message' ? [event] : [])
-  const text = input.pendingMessageIds.map((id) => {
-    const matches = candidates.filter(event => String(event.data.id) === id)
-    if (matches.length !== 1) {
-      throw new Error(`Roleplay staged settlement player input ${JSON.stringify(id)} is unavailable or ambiguous`)
-    }
-    return textContent(matches[0]!.data.content)
-  }).join('\n\n')
+  const text = roleplayClaimedPlanMessages(events, planEvent, 'Roleplay staged settlement player input')
+    .map(event => textContent(event.data.content))
+    .join('\n\n')
   return boundedSettlementText(text)
 }
 

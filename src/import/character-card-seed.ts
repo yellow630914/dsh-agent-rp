@@ -7,6 +7,7 @@ import {
   type CharacterImportTransport,
   type CharacterImportMeta,
 } from './session-character.ts'
+import { protectedSystemHeadMessage } from './protected-system-head.ts'
 import type { ImportedCharacterCard } from './types.ts'
 import type { SessionPersonaSnapshot } from '../persona-library-protocol.ts'
 import type {} from '../session-persona.ts'
@@ -99,6 +100,12 @@ export function createCharacterCardSessionSeed(
     }
     push({ type: 'turn/start', time: time + 1, data: { turn: 1 } })
     push({ type: 'step/start', time: time + 1, data: { turn: 1, step: 1 } })
+    push({
+      type: 'system/message',
+      time: time + 1,
+      data: { turn: 1, step: 1, message: protectedSystemHeadMessage() },
+      surfaceOp: 'append',
+    })
     push({
       type: 'assistant/message',
       time: time + 1,

@@ -51,7 +51,10 @@ test('snapshots one reusable Persona independently from the Character Card', () 
 
   assert.deepEqual(readSessionPersona(seed), persona)
   assert.equal(seed[1]?.type, 'agent-rp/persona-seed')
-  assert.equal(seed[4]?.type, 'assistant/message')
+  // The greeting turn opens with the reserved empty system node, so the
+  // greeting itself is the second surface event, not the first.
+  assert.equal(seed[4]?.type, 'system/message')
+  assert.equal(seed[5]?.type, 'assistant/message')
 })
 
 test('retains a reusable library id for CHARX media projection', () => {

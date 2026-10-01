@@ -12,6 +12,7 @@ import {
   decodeSillyTavernChatCommandRecord,
   type SillyTavernChatCommandRecord,
 } from '../sillytavern-chat-protocol.ts'
+import { protectedSystemHeadMessage } from './protected-system-head.ts'
 import type { ImportedSillyTavernChat, ImportedSillyTavernChatMessage } from './types.ts'
 
 /** Durable import metadata that points back to the original JSONL attachment. */
@@ -144,12 +145,21 @@ function appendMessageEvents(
   message: ImportedSillyTavernChatMessage,
   turn: number,
   time: number,
+  systemHead: boolean,
 ): void {
   const push = (event: SessionSeedEvent): void => {
     events.push({ ...event, seq: events.length } as SessionEvent)
   }
   push({ type: 'turn/start', time, data: { turn } })
   push({ type: 'step/start', time, data: { turn, step: 1 } })
+  if (systemHead) {
+    push({
+      type: 'system/message',
+      time,
+      data: { turn, step: 1, message: protectedSystemHeadMessage() },
+      surfaceOp: 'append',
+    })
+  }
   if (message.kind === 'assistant') {
     push({
       type: 'assistant/message',
@@ -207,7 +217,7 @@ export function createSillyTavernChatSeed(
     if (message.kind === 'system' || message.text.length === 0) continue
     turn += 1
     fallbackTime += 1
-    appendMessageEvents(events, message, turn, eventTime(message, fallbackTime))
+    appendMessageEvents(events, message, turn, eventTime(message, fallbackTime), turn === 1)
   }
   const validated = Session.create(SessionId('agent-rp-sillytavern-import-validation'), events)
   return Object.freeze(validated.snapshotEvents().slice(0, events.length))

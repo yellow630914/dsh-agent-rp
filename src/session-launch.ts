@@ -14,6 +14,7 @@ import { readRoleplayStates } from './roleplay-state.ts'
 import { appendAgentRpMemorySeed, readAgentRpMemoryHistory } from './memory.ts'
 import { createCharacterCardSessionSeed } from './import/character-card-seed.ts'
 import { createPresetSessionSeed } from './import/session-preset.ts'
+import { protectedSystemHeadMessage } from './import/protected-system-head.ts'
 import { createSillyTavernChatSeed, resolveSillyTavernChatIdentity } from './import/sillytavern-chat-seed.ts'
 import { createSillyTavernMigrationSeed } from './import/sillytavern-migration-seed.ts'
 import {
@@ -581,9 +582,17 @@ function appendFloorTurn(
   carried: CarriedEvent[],
   floor: RoleplayChatFloor,
   turn: number,
+  systemHead: boolean,
 ): void {
   carried.push({ type: 'turn/start', data: { turn } } as CarriedEvent)
   carried.push({ type: 'step/start', data: { turn, step: 1 } } as CarriedEvent)
+  if (systemHead) {
+    carried.push({
+      type: 'system/message',
+      data: { turn, step: 1, message: protectedSystemHeadMessage() },
+      surfaceOp: 'append',
+    } as CarriedEvent)
+  }
   if (floor.role === 'assistant') {
     carried.push({
       type: 'assistant/message',
@@ -649,7 +658,7 @@ export function prepareAgentRpBranchSession(
   // in the fold; passing the active set re-establishes exactly what is current.
   const base = appendAgentRpMemorySeed(outOfTurn, readAgentRpMemoryHistory(events).active, String(session.id))
   const carried: CarriedEvent[] = [...carriedRoleplayConfiguration(events, base)]
-  kept.forEach((floor, index) => { appendFloorTurn(carried, floor, index + 1) })
+  kept.forEach((floor, index) => { appendFloorTurn(carried, floor, index + 1, index === 0) })
   const seed = appendCarried(base, carried)
   const validated = Session.create(SessionId('agent-rp-branch-validation'), seed)
   const characterName = readActiveSessionCharacter(seed)?.result.name

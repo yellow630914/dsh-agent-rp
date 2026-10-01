@@ -20,6 +20,7 @@ const book = (value: string): AgentRpProjection['worldInfo']['books'][number] =>
   name: value,
   source: value.startsWith('character:') ? 'character' : 'standalone',
   scanDepthModified: false,
+  removed: false,
   recursiveScanning: false,
   degradations: [],
   entries: [],

@@ -22,7 +22,11 @@ import {
   encodeGenerationCommandResult,
 } from './generation-command-result.ts'
 import { readCurrentSessionMvuStateFromLorebooks } from './mvu.ts'
-import { configuredLorebook, readWorldInfoConfiguration } from './world-info-configuration-core.ts'
+import {
+  configuredLorebook,
+  readWorldInfoConfiguration,
+  retainedWorldInfoSources,
+} from './world-info-configuration-core.ts'
 import { readActiveSessionLorebookSourcesFromEvents } from './world-info-configuration.ts'
 import {
   decodeTavernHelperState,
@@ -289,8 +293,9 @@ export function appendReviewedReplyVersion(
 
 function mvuSnapshot(agent: Agent): GenerationStateRecord['mvu'] {
   const configuration = readWorldInfoConfiguration(agent.session.snapshotEvents())
-  const lorebooks = readActiveSessionLorebookSourcesFromEvents(agent.session.snapshotEvents())
-    .map(source => configuredLorebook(source, configuration).lorebook)
+  const lorebooks = retainedWorldInfoSources(
+    readActiveSessionLorebookSourcesFromEvents(agent.session.snapshotEvents()), configuration,
+  ).map(source => configuredLorebook(source, configuration).lorebook)
   return readCurrentSessionMvuStateFromLorebooks(lorebooks, agent.session)
 }
 

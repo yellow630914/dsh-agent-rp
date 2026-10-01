@@ -11,6 +11,11 @@ import { createWorldInfoLibrarySessionSeed } from '../src/import/world-info-seed
 import type { ImportedSillyTavernPreset } from '../src/import/sillytavern-preset.ts'
 import { ROLEPLAY_TURN_PHASES } from '../src/roleplay-runtime.ts'
 import { resolveSessionRoleplayRuntime } from '../src/session-roleplay-runtime.ts'
+import { CommandId } from '@deepseek-ai/dsh-commands'
+import {
+  configureWorldInfo,
+  encodeWorldInfoConfiguration,
+} from '../src/world-info-configuration-core.ts'
 import { supportsAgentRpSessionEvents } from '../src/session-event-compat.ts'
 
 const deployment = resolveConfig({ characterName: '岚' })
@@ -162,4 +167,57 @@ test('lets a standalone world own a scene without inventing an actor', () => {
   assert.equal(runtime.snapshot.experience.name, '海城剧情')
   assert.equal(runtime.snapshot.actor, undefined)
   assert.deepEqual(runtime.snapshot.world.bindings.map(binding => binding.placement), ['experience'])
+})
+
+test('a book removed from the Session stops reaching the runtime bindings', () => {
+  const card = parseCharacterCardJson(JSON.stringify({
+    spec: 'chara_card_v2',
+    spec_version: '2.0',
+    data: {
+      name: '白露', description: '钟表匠', personality: '沉静', scenario: '修理铺打烊前',
+      first_mes: '门还没锁。', mes_example: '', creator_notes: '', system_prompt: '',
+      post_history_instructions: '', alternate_greetings: [], tags: [], creator: 'fixture',
+      character_version: '1', extensions: {},
+      character_book: {
+        name: '海城', recursive_scanning: false, extensions: {},
+        entries: [{
+          keys: ['钟楼'], secondary_keys: [], content: '旧钟楼在午夜停摆。', enabled: true,
+          insertion_order: 1, constant: false, selective: false, position: 'before_char',
+          name: '钟楼', use_regex: false, extensions: {},
+        }],
+      },
+    },
+  }))
+  const seed = createCharacterCardSessionSeed(card, {
+    kind: 'file' as const,
+    attachmentId: AttachmentId('sha256:runtime-removed-card'),
+    bytes: 100,
+    name: '白露.json',
+    mediaType: 'application/json',
+  }, 0, card.firstMessage, { transport: 'json' })
+  const session = Session.create(SessionId('runtime-removed-book'), seed)
+
+  const before = resolveSessionRoleplayRuntime({ session, deployment })
+  assert.deepEqual(before.snapshot.world.bindings.map(binding => binding.name), ['海城'])
+  const bookId = `character:${String(AttachmentId('sha256:runtime-removed-card'))}`
+
+  session.append('command/run', {
+    commandId: CommandId('cmd-runtime-remove'), name: 'rp-world-info', args: ' {}', source: { kind: 'user' },
+  })
+  session.append('command/done', {
+    commandId: CommandId('cmd-runtime-remove'),
+    kind: 'success',
+    text: encodeWorldInfoConfiguration(configureWorldInfo({ format: 0, revision: 0, overrides: [] },
+      { operation: 'remove-book', revision: 0, bookId, removed: true },
+      [{
+        id: bookId,
+        name: '海城',
+        source: 'character',
+        lorebook: card.lorebook!,
+        degradations: [],
+      }])),
+  })
+
+  const after = resolveSessionRoleplayRuntime({ session, deployment })
+  assert.deepEqual(after.snapshot.world.bindings, [])
 })

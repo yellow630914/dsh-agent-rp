@@ -26,6 +26,7 @@ import {
 } from './tavern-helper.ts'
 import {
   configuredLorebook,
+  retainedWorldInfoSources,
   readWorldInfoConfiguration,
   worldInfoTokenBudget,
   type SessionLorebookSource,
@@ -152,7 +153,9 @@ export function resolveSessionRoleplayRuntime(input: {
     current: readRoleplayStateSchemeValue(events, stateSchemeSnapshot),
   }
   const worldConfiguration = readWorldInfoConfiguration(events)
-  const lorebooks = readActiveSessionLorebookSourcesFromEvents(events).map(source => ({
+  const lorebooks = retainedWorldInfoSources(
+    readActiveSessionLorebookSourcesFromEvents(events), worldConfiguration,
+  ).map(source => ({
     source,
     configured: configuredLorebook(source, worldConfiguration).lorebook,
   }))

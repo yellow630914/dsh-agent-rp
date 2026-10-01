@@ -274,6 +274,15 @@ export function parseWorldInfoConfigurationRequest(source: string): WorldInfoCon
       ...(scanDepth === undefined ? {} : { scanDepth }),
     }
   }
+  if (record.operation === 'remove-book') {
+    if (typeof record.removed !== 'boolean') throw new Error('removed 必须是布尔值')
+    return {
+      operation: 'remove-book',
+      revision,
+      bookId: requestedBookId(record, '世界书操作请求'),
+      removed: record.removed,
+    }
+  }
   if (record.operation === 'set-book-enabled') {
     if (typeof record.enabled !== 'boolean') throw new Error('enabled 必须是布尔值')
     return {
@@ -331,6 +340,17 @@ function parseState(value: unknown): WorldInfoConfigurationState {
   const bookOverrides = (record.bookOverrides ?? []).map(parseBookOverride)
   const bookIds = bookOverrides.map(item => item.bookId)
   if (new Set(bookIds).size !== bookIds.length) throw new Error('世界书配置包含重复的整本设置')
+  // Same reasoning as bookOverrides: snapshots written before whole-book
+  // removal existed carry no removedBooks, so absence stays legal.
+  if (record.removedBooks !== undefined && !Array.isArray(record.removedBooks)) {
+    throw new Error('世界书配置格式无效')
+  }
+  const removedBooks = (record.removedBooks ?? []).map((item, index) => {
+    const bookId = text(item, `removedBooks[${index}]`)
+    if (bookId.trim() === '') throw new Error(`removedBooks[${index}] 不能为空`)
+    return bookId
+  })
+  if (new Set(removedBooks).size !== removedBooks.length) throw new Error('世界书配置包含重复的整本移除')
   const parsedTokenBudget = record.tokenBudget === undefined
     ? undefined : nonNegativeInteger(record.tokenBudget, 'tokenBudget')
   if (parsedTokenBudget !== undefined && parsedTokenBudget > MAX_SESSION_WORLD_INFO_TOKEN_BUDGET) {
@@ -342,6 +362,7 @@ function parseState(value: unknown): WorldInfoConfigurationState {
     revision: nonNegativeInteger(record.revision, 'revision'),
     overrides,
     ...(bookOverrides.length === 0 ? {} : { bookOverrides }),
+    ...(removedBooks.length === 0 ? {} : { removedBooks }),
     ...(tokenBudget === undefined ? {} : { tokenBudget }),
   }
 }
@@ -406,6 +427,25 @@ export function applyEditable(entry: ImportedLorebookEntry, value: WorldInfoEdit
   }
 }
 
+/**
+ * Drop the books this Session removed whole.
+ *
+ * Every path that assembles prompt content has to go through this, or a removed
+ * book keeps reaching the model while the manager says it is gone. The manager
+ * itself deliberately does NOT filter — it shows removed books so they can be
+ * restored, the same way a deleted entry stays visible.
+ * @param sources - every book this Session seeded.
+ * @param state - the Session's overlay.
+ * @returns the books that still reach the prompt.
+ */
+export function retainedWorldInfoSources(
+  sources: readonly SessionLorebookSource[],
+  state: WorldInfoConfigurationState,
+): readonly SessionLorebookSource[] {
+  const removed = new Set(state.removedBooks ?? [])
+  return removed.size === 0 ? sources : sources.filter(source => !removed.has(source.id))
+}
+
 /** Resolve this Session's book-level override for one imported book, if it set one. */
 export function worldInfoBookOverride(
   state: WorldInfoConfigurationState,
@@ -466,8 +506,8 @@ export function configureWorldInfo(
 ): WorldInfoConfigurationState {
   if (request.revision !== state.revision) throw new Error('世界书已在别处改变，请刷新后重试')
   if (request.operation === 'reset-all') {
-    const { bookOverrides: _clearedBooks, ...withoutBookOverrides } = state
-    return { ...withoutBookOverrides, revision: state.revision + 1, overrides: [] }
+    const { bookOverrides: _clearedBooks, removedBooks: _clearedRemovals, ...cleared } = state
+    return { ...cleared, revision: state.revision + 1, overrides: [] }
   }
   if (request.operation === 'set-budget') {
     if (request.tokenBudget === 0) {
@@ -478,17 +518,21 @@ export function configureWorldInfo(
   }
   if (request.operation === 'reset-book' || request.operation === 'reset-book-scan-depth') {
     if (!sources.some(source => source.id === request.bookId)) throw new Error('目标世界书不存在')
-    const { bookOverrides: previous, ...rest } = state
+    const { bookOverrides: previous, removedBooks: previousRemovals, ...rest } = state
     const bookOverrides = (previous ?? []).filter(item => item.bookId !== request.bookId)
+    // "Restore from file" covers the whole book, removal included; the narrower
+    // scan-depth request leaves both the entry overlay and the removal alone.
+    const removedBooks = request.operation === 'reset-book'
+      ? (previousRemovals ?? []).filter(bookId => bookId !== request.bookId)
+      : (previousRemovals ?? [])
     return {
       ...rest,
       revision: state.revision + 1,
-      // "Restore from file" covers the whole book, scan depth included; the
-      // narrower request leaves the entry overlay alone.
       ...(request.operation === 'reset-book'
         ? { overrides: state.overrides.filter(item => item.bookId !== request.bookId) }
         : {}),
       ...(bookOverrides.length === 0 ? {} : { bookOverrides }),
+      ...(removedBooks.length === 0 ? {} : { removedBooks }),
     }
   }
   if (request.operation === 'set-book-scan-depth') {
@@ -503,6 +547,22 @@ export function configureWorldInfo(
           ...(request.scanDepth === undefined ? {} : { scanDepth: request.scanDepth }),
         },
       ],
+    }
+  }
+  if (request.operation === 'remove-book') {
+    const source = sources.find(book => book.id === request.bookId)
+    if (source === undefined) throw new Error('目标世界书不存在')
+    const removed = new Set(state.removedBooks ?? [])
+    if (request.removed) removed.add(request.bookId)
+    else removed.delete(request.bookId)
+    const next = [...removed]
+    // Drop the key outright when nothing is removed, so an overlay that ends up
+    // back at the default serializes the way one that never removed anything does.
+    const { removedBooks: _previous, ...rest } = state
+    return {
+      ...rest,
+      revision: state.revision + 1,
+      ...(next.length === 0 ? {} : { removedBooks: next }),
     }
   }
   if (request.operation === 'set-book-enabled') {

@@ -50,6 +50,15 @@ export interface WorldInfoConfigurationState {
   readonly overrides: readonly WorldInfoEntryOverride[]
   /** Book-level settings this Session overrides; omitted entirely by snapshots written before book overrides existed. */
   readonly bookOverrides?: readonly WorldInfoBookOverride[]
+  /**
+   * Books this Session dropped whole, by book id.
+   *
+   * A Session's books come from seed events, and the log is append-only, so a
+   * seed cannot be taken back — removal is an overlay decision exactly like an
+   * entry's `deleted`. The book stays in the manager so it can be restored; it
+   * just stops reaching the prompt.
+   */
+  readonly removedBooks?: readonly string[]
   /** Optional player-selected aggregate cap across every active book; omitted records do not add a plugin cap. */
   readonly tokenBudget?: number
 }
@@ -59,6 +68,7 @@ export type WorldInfoConfigurationRequest =
   | { readonly operation: 'toggle'; readonly revision: number; readonly bookId: string; readonly entryIndex: number; readonly enabled: boolean }
   | { readonly operation: 'set-book-enabled'; readonly revision: number; readonly bookId: string; readonly enabled: boolean }
   | { readonly operation: 'reset-book'; readonly revision: number; readonly bookId: string }
+  | { readonly operation: 'remove-book'; readonly revision: number; readonly bookId: string; readonly removed: boolean }
   | { readonly operation: 'set-book-scan-depth'; readonly revision: number; readonly bookId: string; readonly scanDepth?: number }
   | { readonly operation: 'reset-book-scan-depth'; readonly revision: number; readonly bookId: string }
   | { readonly operation: 'edit'; readonly revision: number; readonly bookId: string; readonly entryIndex: number; readonly entry: WorldInfoEditableEntry }

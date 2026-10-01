@@ -85,6 +85,8 @@ export interface AgentRpProjection {
       readonly fileScanDepth?: number
       /** True when this Session decided the depth itself, including deciding the book has none. */
       readonly scanDepthModified: boolean
+      /** This Session dropped the whole book; it is shown only so it can be restored. */
+      readonly removed: boolean
       readonly tokenBudget?: number
       readonly recursiveScanning: boolean
       readonly degradations: readonly string[]

@@ -750,6 +750,9 @@ function worldInfoProjectionUncached(
       ...(configured.lorebook.scanDepth === undefined ? {} : { scanDepth: configured.lorebook.scanDepth }),
       ...(source.lorebook.scanDepth === undefined ? {} : { fileScanDepth: source.lorebook.scanDepth }),
       scanDepthModified: worldInfoBookOverride(state.worldInfoConfiguration, source.id) !== undefined,
+      // Removed books stay in the manager so they can be restored; they just
+      // no longer reach the prompt.
+      removed: (state.worldInfoConfiguration.removedBooks ?? []).includes(source.id),
       ...(source.lorebook.tokenBudget === undefined ? {} : { tokenBudget: source.lorebook.tokenBudget }),
       recursiveScanning: source.lorebook.recursiveScanning,
       degradations: source.degradations,

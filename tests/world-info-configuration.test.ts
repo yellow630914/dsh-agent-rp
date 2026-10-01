@@ -12,6 +12,7 @@ import {
   encodeWorldInfoConfiguration,
   parseWorldInfoConfigurationRequest,
   readWorldInfoConfiguration,
+  retainedWorldInfoSources,
   worldInfoTokenBudget,
   type SessionLorebookSource,
 } from '../src/world-info-configuration-core.ts'
@@ -281,4 +282,75 @@ test('carries book scan depth through a persisted overlay snapshot', () => {
   } as never])
   assert.equal(legacy.bookOverrides, undefined)
   assert.equal(legacy.revision, 7)
+})
+
+test('removes one whole book from the Session and puts it back', () => {
+  // A Session's books come from seed events and the log is append-only, so a
+  // seed cannot be taken back. Removal is an overlay decision, like an entry's
+  // `deleted`: the book stays in the manager so it can be restored, it just
+  // stops reaching the prompt.
+  const book = source()
+  const other = { ...source(), id: 'standalone:other', name: '另一本' }
+  const sources = [book, other]
+
+  const removed = configureWorldInfo({ format: 0, revision: 0, overrides: [] },
+    parseWorldInfoConfigurationRequest(JSON.stringify({
+      operation: 'remove-book', revision: 0, bookId: book.id, removed: true,
+    })), sources)
+  assert.equal(removed.revision, 1)
+  assert.deepEqual(removed.removedBooks, [book.id])
+  assert.deepEqual(retainedWorldInfoSources(sources, removed).map(entry => entry.id), [other.id])
+  // The manager still sees it; only the prompt side filters.
+  assert.equal(configuredLorebook(book, removed).lorebook.entries.length, 2)
+
+  const back = configureWorldInfo(removed, parseWorldInfoConfigurationRequest(JSON.stringify({
+    operation: 'remove-book', revision: 1, bookId: book.id, removed: false,
+  })), sources)
+  assert.equal(back.revision, 2)
+  // Restoring the last removal drops the key, so the overlay serializes the way
+  // one that never removed anything does.
+  assert.equal(Object.hasOwn(back, 'removedBooks'), false)
+  assert.deepEqual(retainedWorldInfoSources(sources, back).map(entry => entry.id), [book.id, other.id])
+})
+
+test('a removal survives an encode round trip and is cleared by the restores that own it', () => {
+  const book = source()
+  const sources = [book]
+  const removed = configureWorldInfo({ format: 0, revision: 0, overrides: [] },
+    { operation: 'remove-book', revision: 0, bookId: book.id, removed: true }, sources)
+
+  const session = Session.create(SessionId('world-info-remove-book'))
+  session.append('command/run', {
+    commandId: CommandId('cmd-remove-book'), name: 'rp-world-info', args: ' {}', source: { kind: 'user' },
+  })
+  session.append('command/done', {
+    commandId: CommandId('cmd-remove-book'),
+    kind: 'success',
+    text: encodeWorldInfoConfiguration(removed),
+  })
+  assert.deepEqual(readWorldInfoConfiguration(session.snapshotEvents()).removedBooks, [book.id])
+
+  // "Restore from file" covers the whole book, removal included.
+  const reset = configureWorldInfo(removed, {
+    operation: 'reset-book', revision: 1, bookId: book.id,
+  }, sources)
+  assert.equal(Object.hasOwn(reset, 'removedBooks'), false)
+
+  // The narrower scan-depth restore leaves it alone.
+  const depthOnly = configureWorldInfo(removed, {
+    operation: 'reset-book-scan-depth', revision: 1, bookId: book.id,
+  }, sources)
+  assert.deepEqual(depthOnly.removedBooks, [book.id])
+
+  const all = configureWorldInfo(removed, { operation: 'reset-all', revision: 1 }, sources)
+  assert.equal(Object.hasOwn(all, 'removedBooks'), false)
+})
+
+test('refuses to remove a book this Session does not have', () => {
+  assert.throws(() => configureWorldInfo({ format: 0, revision: 0, overrides: [] },
+    { operation: 'remove-book', revision: 0, bookId: 'standalone:missing', removed: true }, [source()]),
+  /目标世界书不存在/u)
+  assert.throws(() => parseWorldInfoConfigurationRequest(JSON.stringify({
+    operation: 'remove-book', revision: 0, bookId: 'standalone:fixture',
+  })), /removed 必须是布尔值/u)
 })

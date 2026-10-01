@@ -5824,13 +5824,20 @@ function WorldInfoManagerDialog({ debugEnabled, worldInfo, listWorldInfos, onAtt
             const itemEntries = item.entries.filter(candidate => !candidate.deleted)
             const itemEnabled = itemEntries.filter(candidate => candidate.enabled).length
             const itemBlocked = itemEntries.filter(candidate => candidate.compatibilityBlockers.length > 0 || candidate.hasDecorators).length
-            return <section key={item.id} data-agent-rp-world-info-book={item.id} style={{ marginBottom: '15px' }}>
+            return <section key={item.id} data-agent-rp-world-info-book={item.id}
+              data-agent-rp-world-info-book-removed={item.removed ? 'true' : undefined}
+              style={{ marginBottom: '15px', opacity: item.removed ? .5 : 1 }}>
             <div style={{ fontSize: '11px', padding: '4px 8px 7px' }}>
               <div style={{ alignItems: 'baseline', display: 'flex', fontWeight: 650, gap: '6px' }}>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                <span style={{
+                  overflow: 'hidden', textDecoration: item.removed ? 'line-through' : undefined,
+                  textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>{item.name}</span>
                 <span style={{ marginLeft: 'auto', opacity: .5, whiteSpace: 'nowrap' }}>{item.source === 'character' ? '角色卡' : '外部'}</span>
               </div>
-              <div style={{ marginTop: '4px', opacity: .48 }}>{itemEnabled}/{itemEntries.length} 条启用{itemBlocked === 0 ? '' : ` · ${itemBlocked} 条等待兼容`}</div>
+              <div style={{ marginTop: '4px', opacity: .48 }}>{item.removed
+                ? '已从本会话移除，不再进入提示词'
+                : `${String(itemEnabled)}/${String(itemEntries.length)} 条启用${itemBlocked === 0 ? '' : ` · ${String(itemBlocked)} 条等待兼容`}`}</div>
               <div data-agent-rp-world-info-book-actions style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '7px' }}>
                 <button type="button" disabled={saving || itemEntries.length === 0 || itemEnabled === itemEntries.length} onClick={() => {
                   mutate({ operation: 'set-book-enabled', revision: worldInfo.revision, bookId: item.id, enabled: true })
@@ -5838,7 +5845,12 @@ function WorldInfoManagerDialog({ debugEnabled, worldInfo, listWorldInfos, onAtt
                 <button type="button" disabled={saving || itemEnabled === 0} onClick={() => {
                   mutate({ operation: 'set-book-enabled', revision: worldInfo.revision, bookId: item.id, enabled: false })
                 }} style={{ ...generationButtonStyle, fontSize: '10px', padding: '4px 7px' }}>整本关闭</button>
-                {(item.scanDepthModified || item.entries.some(candidate => candidate.modified || candidate.deleted)) && <button type="button" disabled={saving} onClick={() => {
+                <button type="button" disabled={saving} onClick={() => {
+                  mutate({ operation: 'remove-book', revision: worldInfo.revision, bookId: item.id, removed: !item.removed })
+                }} style={{ ...generationButtonStyle, fontSize: '10px', padding: '4px 7px' }}>
+                  {item.removed ? '放回本会话' : '整本移除'}
+                </button>
+                {(item.scanDepthModified || item.removed || item.entries.some(candidate => candidate.modified || candidate.deleted)) && <button type="button" disabled={saving} onClick={() => {
                   mutate({ operation: 'reset-book', revision: worldInfo.revision, bookId: item.id })
                 }} style={{ ...generationButtonStyle, fontSize: '10px', padding: '4px 7px' }}>恢复原文件</button>}
               </div>

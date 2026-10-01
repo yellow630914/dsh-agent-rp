@@ -5,13 +5,13 @@
   "description": "Native roleplay runtime and SillyTavern compatibility plugin for DeepSeek Harness.",
   "license": "MIT",
   "author": "Ocheron",
-  "homepage": "https://github.com/hewzhew/dsh-agent-rp#readme",
+  "homepage": "https://github.com/yellow630914/dsh-agent-rp#readme",
   "bugs": {
-    "url": "https://github.com/hewzhew/dsh-agent-rp/issues"
+    "url": "https://github.com/yellow630914/dsh-agent-rp/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hewzhew/dsh-agent-rp.git"
+    "url": "git+https://github.com/yellow630914/dsh-agent-rp.git"
   },
   "keywords": [
     "deepseek-harness",

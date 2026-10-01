@@ -56,7 +56,7 @@ function validateManifest(manifest) {
   if (!VERSION_PATTERN.test(manifest.version)) fail('version must match 0.0.0-rc.N')
   if (manifest.private !== false) fail('private must be explicitly false')
   if (manifest.license !== 'MIT') fail('license must be MIT')
-  if (manifest.repository?.url !== 'git+https://github.com/hewzhew/dsh-agent-rp.git') {
+  if (manifest.repository?.url !== 'git+https://github.com/yellow630914/dsh-agent-rp.git') {
     fail('repository must identify the public source repository')
   }
   if (manifest.publishConfig?.access !== 'public') fail('publishConfig.access must be public')

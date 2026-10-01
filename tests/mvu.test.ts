@@ -13,7 +13,7 @@ import {
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { roleplaySurfaceOverride } from '../src/roleplay-surface-overlay.ts'
 import { parseCharacterCardJson } from '../src/import/character-card.ts'
-import { applyMvuReply, appendMvuState, readCurrentMvuState, readCurrentSessionMvuState, readInitialMvuState } from '../src/mvu.ts'
+import { applyMvuReply, appendMvuState, parseMvuStateOperation, readCurrentMvuState, readCurrentSessionMvuState, readInitialMvuState } from '../src/mvu.ts'
 import { installMvuStreamCompletion } from '../src/mvu-stream.ts'
 import { ROLEPLAY_TURN_PHASES } from '../src/roleplay-runtime.ts'
 import { readRoleplayTurnRecords } from '../src/roleplay-turn-record.ts'
@@ -320,4 +320,24 @@ test('repairs a missing MVU block from only the frozen act plan in a cardless Se
   appendRoleplayTurnSettlement(session, settlement)
   assert.deepEqual(readRoleplayTurnRecords(session)[0]?.act?.steps[0]?.modelCalls,
     receipt.steps[0]?.modelCalls)
+})
+
+test('folds negative zero instead of discarding the whole settlement patch', () => {
+  // `JSON.parse('-0')` yields negative zero, and `JSON.stringify(-0)` is `"0"`,
+  // so lossless-JSON validation used to reject it and abort every operation in
+  // the patch. The settlement request runs at temperature 0, so the same bad
+  // literal returned on every retry and the turn stayed unsettled for good.
+  assert.deepEqual(parseMvuStateOperation(JSON.parse('{"op":"delta","path":"/进度/雌化","value":-0}')),
+    { op: 'delta', path: '/进度/雌化', value: 0 })
+  assert.deepEqual(parseMvuStateOperation(JSON.parse('{"op":"replace","path":"/档案/标记","value":[-0,"入职中",{"n":-0}]}')),
+    { op: 'replace', path: '/档案/标记', value: [0, '入职中', { n: 0 }] })
+  assert.deepEqual(parseMvuStateOperation({ op: 'remove', path: '/档案/标记' }),
+    { op: 'remove', path: '/档案/标记' })
+  assert.deepEqual(parseMvuStateOperation({ op: 'replace', path: '/身体/情欲', value: 5 }),
+    { op: 'replace', path: '/身体/情欲', value: 5 })
+})
+
+test('names the offending operation when its value still cannot round-trip', () => {
+  assert.throws(() => parseMvuStateOperation({ op: 'delta', path: '/身体/情欲', value: Number.POSITIVE_INFINITY }),
+    /op=delta path=\/身体\/情欲 value="Infinity"/u)
 })

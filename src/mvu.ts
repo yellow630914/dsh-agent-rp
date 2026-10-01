@@ -312,6 +312,39 @@ function replaceAt(root: JsonValue, pointer: string, value: JsonValue): void {
   }
 }
 
+/**
+ * Fold negative zero to zero before lossless-JSON validation.
+ *
+ * `JSON.parse('-0')` produces negative zero, which `snapshotJsonValue` rejects
+ * because `JSON.stringify(-0) === '0'` does not round-trip. Validation here is
+ * all-or-nothing, so one `-0` anywhere in a settlement aborts the whole patch
+ * and the turn records no state at all. The settlement request runs at
+ * `temperature: 0`, so the same bad literal comes back on every retry — a
+ * single `-0` can strand a turn permanently.
+ *
+ * The model reaches it two ways: by writing `-0` outright, or by writing a bare
+ * `-` for "nothing", which jsonrepair completes to `-0`.
+ */
+function normalizeMvuOperationValue(value: unknown): unknown {
+  if (typeof value === 'number') return Object.is(value, -0) ? 0 : value
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(entry => normalizeMvuOperationValue(entry))
+  const output: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value)) output[key] = normalizeMvuOperationValue(entry)
+  return output
+}
+
+/** Name the offending operation when its value still cannot round-trip. */
+function operationValuePreview(value: unknown): string {
+  try {
+    const encoded = JSON.stringify(value, (_key, entry: unknown) =>
+      typeof entry === 'number' && !Number.isFinite(entry) ? String(entry) : entry)
+    return (encoded ?? String(value)).slice(0, 200)
+  } catch {
+    return '(unserializable)'
+  }
+}
+
 /** Normalize one untrusted semantic operation into a detached JSON value. */
 export function parseMvuStateOperation(value: unknown): MvuStateOperation {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('MVU patch entries must be objects')
@@ -321,8 +354,13 @@ export function parseMvuStateOperation(value: unknown): MvuStateOperation {
   if (record.path !== undefined && typeof record.path !== 'string') throw new Error('MVU operation path must be a string')
   if (record.from !== undefined && typeof record.from !== 'string') throw new Error('MVU move source must be a string')
   if (record.to !== undefined && typeof record.to !== 'string') throw new Error('MVU move destination must be a string')
-  const snapshot = record.value === undefined ? undefined : snapshotJsonValue(record.value) as JsonValue | undefined
-  if (record.value !== undefined && snapshot === undefined) throw new Error('MVU operation value must be JSON-compatible')
+  const raw = record.value === undefined ? undefined : normalizeMvuOperationValue(record.value)
+  const snapshot = raw === undefined ? undefined : snapshotJsonValue(raw) as JsonValue | undefined
+  if (raw !== undefined && snapshot === undefined) {
+    throw new Error('MVU operation value must be JSON-compatible: '
+      + `op=${String(record.op)} path=${String(record.path ?? '')} `
+      + `value=${operationValuePreview(record.value)}`)
+  }
   return { op: record.op, ...(record.path === undefined ? {} : { path: record.path }), ...(record.from === undefined ? {} : { from: record.from }), ...(record.to === undefined ? {} : { to: record.to }), ...(snapshot === undefined ? {} : { value: snapshot }) }
 }
 

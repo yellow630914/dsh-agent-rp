@@ -319,3 +319,56 @@ test('plans each row once per planner, so a streamed chunk cannot rerun every ru
   // The row that is not streaming keeps its cached plan across those frames.
   assert.equal(planner.user({ seq: 10 }), first)
 })
+
+test('keeps a depth-scoped rule off the reply that is still streaming', () => {
+  // The player's real case: "隐藏 6 层之外的状态栏" — strip the status block on
+  // floors older than six. A streaming reply has no final node, so it is in no
+  // projection and its depth cannot be measured; treating that as "depth
+  // unknown" let the rule run over the live text, blanking the status block
+  // mid-stream and letting it reappear once the reply landed.
+  const hideOldStatus = displayScript({
+    scriptName: '隐藏 6 层之外的状态栏',
+    findRegex: '/```status[\\s\\S]*?```/g',
+    replaceString: '',
+    placement: [2],
+    markdownOnly: false,
+    minDepth: 6,
+  })
+  const planner = createRoleplayDisplayPlanner({
+    projection,
+    frontend: { ...frontend, regexScripts: [hideOldStatus] },
+    immersive: true,
+    overrides: new Map(),
+  })
+  const streaming = '正文继续。\n```status\nHP 12\n```'
+  assert.deepEqual(planner.assistant({ blockText: streaming }), { kind: 'host' })
+})
+
+test('still applies a depth-scoped rule to a settled row deep enough to match', () => {
+  const deepMessages: readonly RoleplayDisplayMessage[] = [
+    { messageId: 0, seq: 10, role: 'assistant', text: '旧回复\n```status\nHP 12\n```', isHidden: false },
+    ...Array.from({ length: 6 }, (_value, index) => ({
+      messageId: index + 1, seq: 20 + index, role: 'user' as const, text: `第 ${String(index)} 句`, isHidden: false,
+    })),
+  ]
+  const planner = createRoleplayDisplayPlanner({
+    projection: { ...projection, tavern: { messages: deepMessages } },
+    frontend: {
+      ...frontend,
+      regexScripts: [displayScript({
+        findRegex: '/```status[\\s\\S]*?```/g',
+        replaceString: '',
+        placement: [2],
+        markdownOnly: false,
+        minDepth: 6,
+      })],
+    },
+    immersive: true,
+    overrides: new Map(),
+  })
+  const plan = planner.assistant({ finalSeq: 10, blockText: '旧回复\n```status\nHP 12\n```' })
+  assert.equal(plan.kind, 'render')
+  if (plan.kind !== 'render') return
+  assert.equal(plan.source, 'display-regex')
+  assert.equal(JSON.stringify(plan.compilation.segments).includes('HP 12'), false)
+})

@@ -260,13 +260,25 @@ export function createRoleplayDisplayPlanner(input: {
           ?? (finalSeq === undefined ? undefined : messageIdBySeq.get(finalSeq))
         const override = messageId === undefined ? undefined : overrides.get(messageId)
         if (override !== undefined) return overridePlan(override, messageId!)
+        // The reply being streamed has no final node yet, so it is in no
+        // projection and `messageDepth` cannot place it. It is nevertheless the
+        // newest message, and depth 0 is exactly what it gets the moment it
+        // lands. Leaving it `undefined` means "depth unknown", which `inDepth`
+        // reads as "run every script" — so a depth-scoped rule ran over the
+        // streaming text and then stopped applying once the reply landed. A
+        // `minDepth` rule that hides the status block on old floors blanked it
+        // mid-stream and let it reappear at the end.
+        //
+        // A row that reached a final node keeps its measured depth; the
+        // selected-generation branch below is only reachable with one.
+        const depth = finalSeq === undefined ? 0 : messageDepth(messages, messageId)
         if (immersive && generation !== undefined) {
           if (anchoredSeq !== generation.anchorSeq) return { kind: 'hidden', reason: 'unselected-generation' }
           if (selected !== undefined) {
             const rendered = renderCharacterDisplay(selected.text.replaceAll(ROLEPLAY_STATUS_PLACEHOLDER, ''), {
               name: projection.characterName,
               frontend: displayFrontend,
-            }, AI_OUTPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
+            }, AI_OUTPUT_PLACEMENT, depth, projection.userName, sharedRegexScripts)
             return {
               kind: 'render', source: 'selected-generation', compilation: compileCharacterDisplay(rendered),
               ...(messageId === undefined ? {} : { messageId }),
@@ -279,7 +291,7 @@ export function createRoleplayDisplayPlanner(input: {
         const rendered = renderCharacterDisplay(raw.replaceAll(ROLEPLAY_STATUS_PLACEHOLDER, ''), {
           name: projection.characterName,
           frontend: displayFrontend,
-        }, AI_OUTPUT_PLACEMENT, messageDepth(messages, messageId), projection.userName, sharedRegexScripts)
+        }, AI_OUTPUT_PLACEMENT, depth, projection.userName, sharedRegexScripts)
         return rendered === raw
           ? { kind: 'host' }
           : {

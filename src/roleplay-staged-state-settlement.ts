@@ -375,9 +375,11 @@ async function settlementVerificationRequest(
   )
   // The persisted effort was chosen against whichever model was selected then;
   // the verification route may since have moved to one that never accepts it.
-  const effort = persistedEffort === undefined
-    ? { config: {}, reasoningOff: false }
-    : await negotiateWorkerReasoningEffort(ctx, route, String(persistedEffort), signal)
+  // "Model default" still has to be negotiated: a model that always thinks
+  // refuses a request that names no effort just as it refuses `off`.
+  const effort = await negotiateWorkerReasoningEffort(
+    ctx, route, persistedEffort === undefined ? undefined : String(persistedEffort), signal,
+  )
   // Only an explicit "off" guarantees the whole budget reaches the answer.
   const reasoningOff = effort.reasoningOff
   return {

@@ -47,16 +47,26 @@ function leastThinking(declared: readonly string[]): string | undefined {
  * little or no thinking, so silently raising the effort would spend the whole
  * completion on reasoning and return no answer at all; losing some depth is
  * both visible and recoverable, and a stalled turn is neither.
+ *
+ * `undefined` means the caller has no preference — the player left the control
+ * on "model default" — which is normally expressed by omitting the field. That
+ * is only safe where the model declares `off`: an adapter may render an absent
+ * effort as an explicit disable on the wire, and a model that always thinks
+ * refuses that exactly as it refuses `off`. So on such a model even "no
+ * preference" has to name a level, and it names the least.
  * @param reasoning - the model's declared reasoning controls, if it has any.
- * @param requested - the effort this Worker would prefer.
+ * @param requested - the effort this Worker would prefer, or `undefined` for none.
  * @returns the request fragment, and whether reasoning is actually off.
  */
 export function acceptWorkerReasoningEffort(
   reasoning: LlmModelReasoningInfo | undefined,
-  requested: string,
+  requested: string | undefined,
 ): WorkerReasoningEffort {
   const declared = reasoning?.efforts.map(effort => String(effort.id)) ?? []
-  const effort = declared.includes(requested) ? requested : leastThinking(declared)
+  const omittable = declared.length === 0 || declared.includes('off')
+  const effort = requested === undefined
+    ? (omittable ? undefined : leastThinking(declared))
+    : (declared.includes(requested) ? requested : leastThinking(declared))
   return effort === undefined
     ? { config: {}, reasoningOff: false }
     : { config: { reasoningEffort: ReasoningEffortId(effort) }, reasoningOff: effort === 'off' }
@@ -70,14 +80,14 @@ export function acceptWorkerReasoningEffort(
  * whole turn because the model catalogue was briefly unreadable.
  * @param ctx - Host context owning the LLM service.
  * @param route - the exact provider and model this Worker dispatches to.
- * @param requested - the effort this Worker would prefer.
+ * @param requested - the effort this Worker would prefer, or `undefined` for none.
  * @param signal - optional cancellation for the capability lookup.
  * @returns the request fragment, and whether reasoning is actually off.
  */
 export async function negotiateWorkerReasoningEffort(
   ctx: Context,
   route: Pick<GenerateOptions, 'provider' | 'model'>,
-  requested: string,
+  requested: string | undefined,
   signal?: AbortSignal,
 ): Promise<WorkerReasoningEffort> {
   const info = await ctx.llm.resolveModelInfo(route.provider, route.model, signal)

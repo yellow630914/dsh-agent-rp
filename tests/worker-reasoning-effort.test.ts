@@ -91,3 +91,24 @@ test('an unreadable catalogue omits the field instead of failing the Worker', as
   assert.deepEqual(negotiated.config, {})
   assert.equal(negotiated.reasoningOff, false, 'the safe direction is to assume the model thinks')
 })
+
+test('"no preference" keeps omitting the field where the model declares off', () => {
+  // DeepSeek declares `off`, so leaving the control on "model default" must go
+  // on sending nothing and letting the provider decide, as it always has.
+  const accepted = acceptWorkerReasoningEffort(efforts('off', 'low', 'high'), undefined)
+  assert.deepEqual(accepted.config, {})
+  assert.equal(accepted.reasoningOff, false)
+})
+
+test('"no preference" names the least level on a model that always thinks', () => {
+  // Omitting is not neutral everywhere: an adapter may render an absent effort
+  // as an explicit disable, which such a model refuses exactly as it refuses
+  // `off`. This is the verification pass left on "model default" against Z.ai.
+  const accepted = acceptWorkerReasoningEffort(efforts('high', 'low', 'max'), undefined)
+  assert.deepEqual(accepted.config, { reasoningEffort: 'low' })
+  assert.equal(accepted.reasoningOff, false)
+})
+
+test('"no preference" against a model with no controls still omits', () => {
+  assert.deepEqual(acceptWorkerReasoningEffort(undefined, undefined).config, {})
+})

@@ -61,6 +61,8 @@ interface ResourceCenterProps {
   readonly savePersona: (request: PersonaLibrarySaveRequest) => Promise<PersonaLibraryEntry>
   readonly deletePersona: (id: string) => Promise<PersonaLibraryEntry>
   readonly onConfigureWorldInfo?: (entry: WorldInfoLibraryUpload) => void
+  /** Open the preset manager against this library entry rather than a Session. */
+  readonly onEditPreset?: (entry: PresetLibrarySummary) => void
   readonly onClose: () => void
 }
 
@@ -467,6 +469,7 @@ export function RoleplayResourceCenter({
   listRegexPacks, importRegexPackFile, deleteRegexPack, listArchivedSessions,
   listPersonas, savePersona, deletePersona,
   onConfigureWorldInfo,
+  onEditPreset,
   onClose,
 }: ResourceCenterProps) {
   const [section, setSection] = useState<ResourceSection>(initialSection)
@@ -1096,7 +1099,12 @@ export function RoleplayResourceCenter({
               {presetDraft?.id === entry.id ? <>
                 <button type="button" disabled={busy !== undefined} onClick={() => { setPresetDraft(undefined) }} style={actionStyle(busy === undefined)}>取消</button>
                 <button type="button" disabled={busy !== undefined || presetDraft.name.trim() === ''} onClick={savePresetName} style={actionStyle(busy === undefined && presetDraft.name.trim() !== '')}>{busy === `preset:${entry.id}` ? '保存中…' : '保存'}</button>
-              </> : <button type="button" disabled={busy !== undefined} onClick={() => { setPresetDraft({ id: entry.id, name: entry.name }) }} style={actionStyle(busy === undefined)}>改名</button>}
+              </> : <>
+                {onEditPreset !== undefined && <button type="button" data-agent-rp-action="edit-library-preset"
+                  disabled={busy !== undefined} onClick={() => { onEditPreset(entry) }}
+                  style={actionStyle(busy === undefined)}>编辑</button>}
+                <button type="button" disabled={busy !== undefined} onClick={() => { setPresetDraft({ id: entry.id, name: entry.name }) }} style={actionStyle(busy === undefined)}>改名</button>
+              </>}
               <button type="button" disabled={busy !== undefined} onClick={() => { removePreset(entry) }} style={{
                 ...actionStyle(busy === undefined),
                 color: confirmingPresetId === entry.id ? 'var(--dsw-alias-state-danger, #e88989)' : 'inherit',

@@ -13,6 +13,10 @@ import {
 import { parseSillyTavernPresetBytes } from './import/sillytavern-preset.ts'
 import { PresetLibrary } from './preset-library.ts'
 import { PRESET_LIBRARY_PATH } from './preset-library-http-protocol.ts'
+import { configurePreset, parsePresetConfigurationRequest } from './preset-configuration-core.ts'
+import { presetProjection } from './projection.ts'
+
+const MAX_PRESET_EDIT_BYTES = 4 * 1024 * 1024
 
 const MAX_PRESET_BYTES = 64 * 1024 * 1024
 
@@ -50,7 +54,65 @@ export function installPresetLibraryHttp(ctx: Context, library: PresetLibrary, s
       }
       try {
         if (request.method === 'GET') {
-          json(response, 200, { format: 0, entries: library.list() })
+          const id = new URL(request.url ?? '/', 'http://agent-rp.local').searchParams.get('id')
+          if (id === null) {
+            json(response, 200, { format: 0, entries: library.list() })
+            return
+          }
+          // One preset in full, shaped the way the manager dialog already reads
+          // a Session's own: the stored value is its own baseline, so nothing
+          // reads as modified and "restore" restores to what is on disk.
+          const entry = library.get(id)
+          json(response, 200, {
+            format: 0,
+            id: entry.id,
+            updatedAt: entry.updatedAt,
+            view: presetProjection(entry.name, entry.preset, 0, entry.preset, entry.id),
+          })
+          return
+        }
+        if (request.method === 'PUT') {
+          const body = await readJsonRequest(request, {
+            limit: MAX_PRESET_EDIT_BYTES,
+            emptyMessage: '预设编辑请求为空',
+            tooLargeMessage: '预设编辑请求过大',
+            invalidMessage: '预设编辑请求不是有效 JSON',
+          }) as Record<string, unknown>
+          if (body.format !== 0 || typeof body.id !== 'string' || body.id === ''
+            || typeof body.expectedUpdatedAt !== 'number' || !Number.isSafeInteger(body.expectedUpdatedAt)
+            || Object.keys(body).some(key => !['format', 'id', 'expectedUpdatedAt', 'request'].includes(key))) {
+            throw new Error('预设编辑请求无效')
+          }
+          const entry = library.get(body.id)
+          // The library has no overlay, so two editors would silently overwrite
+          // one another. The stored timestamp is the concurrency token.
+          if (entry.updatedAt !== body.expectedUpdatedAt) {
+            throw new Error('这个预设已在别处改变，请关闭后重新打开')
+          }
+          // The same pure reducer the Session manager uses. `importedPreset` is
+          // the stored value, so `revision` is always 0 here and "restore"
+          // means "back to what is on disk".
+          const next = configurePreset({
+            result: {
+              version: 0,
+              name: entry.name,
+              sourceEventSeq: 0,
+              sourceAttachmentId: entry.id,
+              promptCount: entry.promptCount,
+              enabledCount: entry.enabledCount,
+              regexScriptCount: entry.regexScriptCount,
+            },
+            importedPreset: entry.preset,
+            preset: entry.preset,
+            revision: 0,
+          }, parsePresetConfigurationRequest(JSON.stringify(body.request)))
+          const saved = library.replace(entry.id, next)
+          json(response, 200, {
+            format: 0,
+            id: saved.id,
+            updatedAt: saved.updatedAt,
+            view: presetProjection(saved.name, saved.preset, 0, saved.preset, saved.id),
+          })
           return
         }
         if (request.method === 'PATCH') {
@@ -74,7 +136,7 @@ export function installPresetLibraryHttp(ctx: Context, library: PresetLibrary, s
           return
         }
         if (request.method !== 'POST') {
-          response.setHeader('allow', 'DELETE, GET, PATCH, POST')
+          response.setHeader('allow', 'DELETE, GET, PATCH, POST, PUT')
           json(response, 405, { error: 'method not allowed' })
           return
         }

@@ -837,7 +837,14 @@ function parsePresetMeta(value: JsonValue | undefined): PresetImportMeta | undef
   return value as unknown as PresetImportMeta
 }
 
-function presetProjection(
+/**
+ * Build the editor's view of one preset.
+ *
+ * Exported because the resource center edits a *library* preset through the
+ * same dialog as a Session's own: there, the stored value is its own baseline,
+ * so `importedPreset` defaults to `preset` and nothing reads as modified.
+ */
+export function presetProjection(
   name: string,
   preset: ImportedSillyTavernPreset,
   revision: number,

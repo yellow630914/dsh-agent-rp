@@ -216,6 +216,36 @@ export class PresetLibrary {
     rmSync(path)
   }
 
+  /**
+   * Replace one stored preset's content in place.
+   *
+   * `save` is "save as" — it mints a new id — which is right for promoting a
+   * Session's configuration into the library, and wrong for editing the library
+   * entry itself. This keeps the id, the name and `createdAt`, so every Session
+   * that points at this preset keeps pointing at it.
+   * @param id - the preset being edited.
+   * @param preset - complete replacement content.
+   * @returns the stored entry under its unchanged identity.
+   */
+  replace(id: string, preset: ImportedSillyTavernPreset): PresetLibraryEntry {
+    this.assertId(id)
+    const path = join(this.root, `${id}${FILE_SUFFIX}`)
+    if (!existsSync(path)) throw new Error(`预设库中没有 ${JSON.stringify(id)}`)
+    const document = record(JSON.parse(readFileSync(path, 'utf8')), 'preset library file') as StoredPreset
+    const meta = metadata(document.dsh_agent_rp_library)
+    const staging = join(this.root, `.${id}.${process.pid}.${randomUUID()}.tmp`)
+    try {
+      writeFileSync(staging, storedDocument(id, meta.name, { ...preset, name: meta.name }, meta.createdAt, Date.now()), {
+        encoding: 'utf8', mode: 0o600,
+      })
+      renameSync(staging, path)
+    } catch (error: unknown) {
+      rmSync(staging, { force: true })
+      throw error
+    }
+    return this.readFile(path)
+  }
+
   /** Change the library-facing name without altering any existing Session copy. */
   rename(id: string, name: string): PresetLibraryEntry {
     this.assertId(id)

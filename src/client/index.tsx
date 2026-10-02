@@ -932,6 +932,47 @@ async function renamePresetLibraryEntry(id: string, name: string): Promise<Prese
   return value.entry
 }
 
+/** One library preset in full, shaped the way the manager dialog reads a Session's own. */
+interface LibraryPresetEditorState {
+  readonly id: string
+  readonly updatedAt: number
+  readonly view: NonNullable<AgentRpProjection['preset']>
+}
+
+async function settlePresetEditor(response: Response): Promise<LibraryPresetEditorState> {
+  const value = await response.json() as Partial<LibraryPresetEditorState> & { readonly error?: string }
+  if (!response.ok || value.view === undefined || value.id === undefined || value.updatedAt === undefined) {
+    throw new Error(value.error ?? `预设读取失败（${String(response.status)}）`)
+  }
+  return { id: value.id, updatedAt: value.updatedAt, view: value.view }
+}
+
+/** Read one library preset for editing in the resource center. */
+async function readPresetLibraryEntry(id: string): Promise<LibraryPresetEditorState> {
+  return settlePresetEditor(await fetch(`${PRESET_LIBRARY_PATH}?id=${encodeURIComponent(id)}`, {
+    headers: { accept: 'application/json' },
+  }))
+}
+
+/**
+ * Apply one manager change to a library preset.
+ *
+ * The Host runs the same reducer the Session manager uses, so the dialog's whole
+ * request vocabulary works here unchanged. `expectedUpdatedAt` is the
+ * concurrency token: the library keeps no overlay, so without it two open
+ * editors would silently overwrite one another.
+ */
+async function editPresetLibraryEntry(
+  state: LibraryPresetEditorState,
+  request: PresetConfigurationRequest,
+): Promise<LibraryPresetEditorState> {
+  return settlePresetEditor(await fetch(PRESET_LIBRARY_PATH, {
+    method: 'PUT',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ format: 0, id: state.id, expectedUpdatedAt: state.updatedAt, request }),
+  }))
+}
+
 async function deletePresetLibraryEntry(id: string): Promise<void> {
   const response = await fetch(`${PRESET_LIBRARY_PATH}?id=${encodeURIComponent(id)}`, {
     method: 'DELETE', headers: { accept: 'application/json' },
@@ -2940,6 +2981,8 @@ function SidebarRoleplayDestination({
   const [launchComposerOpen, setLaunchComposerOpen] = useState(false)
   const [migrationOpen, setMigrationOpen] = useState(false)
   const [resourceCenterOpen, setResourceCenterOpen] = useState(false)
+  const [presetEditor, setPresetEditor] = useState<LibraryPresetEditorState>()
+  const [presetEditorError, setPresetEditorError] = useState<string>()
   const [storyWorkspaceOpen, setStoryWorkspaceOpen] = useState(false)
   const [resourceCenterSection, setResourceCenterSection] = useState<'characters' | 'world-info' | 'regex-packs' | 'state-schemes'>('characters')
   const [worldInfoLaunch, setWorldInfoLaunch] = useState<WorldInfoLibraryUpload>()
@@ -3242,7 +3285,28 @@ function SidebarRoleplayDestination({
           setWorldInfoLaunch(worldInfo)
         },
       })}
+      onEditPreset={(entry) => {
+        setPresetEditorError(undefined)
+        void readPresetLibraryEntry(entry.id).then(setPresetEditor, (reason: unknown) => {
+          setPresetEditorError(reason instanceof Error ? reason.message : String(reason))
+        })
+      }}
       onClose={() => { setWorldInfoLaunch(undefined); setResourceCenterOpen(false) }}
+    />, document.body)}
+    {presetEditorError !== undefined && createPortal(<div role="alert" style={{
+      background: 'var(--dsw-alias-bg-base, #171719)', border: '1px solid var(--dsw-alias-state-danger, #e06470)',
+      borderRadius: '10px', bottom: '18px', color: 'inherit', fontSize: '12px', left: '50%', padding: '10px 14px',
+      position: 'fixed', transform: 'translateX(-50%)', zIndex: 1300,
+    }} onClick={() => { setPresetEditorError(undefined) }}>{presetEditorError}</div>, document.body)}
+    {presetEditor !== undefined && createPortal(<PresetManagerDialog
+      preset={presetEditor.view}
+      entries={[]}
+      onClose={() => { setPresetEditor(undefined) }}
+      onImport={async () => { throw new Error('请在资源中心导入预设') }}
+      onSave={async (request) => {
+        setPresetEditor(await editPresetLibraryEntry(presetEditor, request))
+      }}
+      onLibrary={async () => { throw new Error('这里编辑的就是资源中心的预设') }}
     />, document.body)}
     {storyWorkspaceOpen && createPortal(<StoryWorkspaceEditor
       accent={color}
@@ -8294,12 +8358,18 @@ function roleLabel(role: PresetPromptProjection['role']): string {
 function PresetManagerDialog({
   sessionId, preset, lastRequest, promptRegex, entries, loadModelCapabilities, onClose, onImport, onSave, onLibrary,
 }: {
-  readonly sessionId: SessionId
+  /**
+   * The Session this preset belongs to, absent when the resource center is
+   * editing a library preset instead. Everything that needs one — the model's
+   * reasoning catalogue, the last request, the prompt-regex trace — is a view
+   * of a running Session, so it is simply left out there.
+   */
+  readonly sessionId?: SessionId
   readonly preset: PresetProjection
   readonly lastRequest?: AgentRpProjection['lastRequest']
   readonly promptRegex?: AgentRpProjection['promptRegex']
   readonly entries: AgentRpProjection['presetLibrary']
-  readonly loadModelCapabilities: (sessionId: SessionId) => Promise<CurrentModelCapabilities>
+  readonly loadModelCapabilities?: (sessionId: SessionId) => Promise<CurrentModelCapabilities>
   readonly onClose: () => void
   readonly onImport: (file: File) => Promise<void>
   readonly onSave: (request: PresetConfigurationRequest) => Promise<void>
@@ -8329,6 +8399,12 @@ function PresetManagerDialog({
   }>({ status: 'loading' })
   const importInputRef = useRef<HTMLInputElement | null>(null)
   useEffect(() => {
+    if (sessionId === undefined || loadModelCapabilities === undefined) {
+      // A library preset has no model behind it; the generation section still
+      // edits its stored values, it just cannot say what the model supports.
+      setModelCapabilities({ status: 'ready' })
+      return
+    }
     let cancelled = false
     void loadModelCapabilities(sessionId).then(value => {
       if (!cancelled) setModelCapabilities({ status: 'ready', value })
@@ -8752,7 +8828,9 @@ function PresetManagerDialog({
             暂未映射：{preservedSampling.join('、')}；导出副本时仍会保留
           </p>}
           <p style={{ fontSize: '11px', lineHeight: 1.55, margin: '16px 1px 0', opacity: 0.46 }}>
-            “保存到此会话”只影响当前角色会话；“保存为可复用预设”会在预设库中新建副本，供之后的会话选择。未填写的参数跟随会话与模型设置
+            {sessionId === undefined
+              ? '这里改的是资源中心里的这份预设本身；已经开始的会话用的是自己那份快照，不会被改动'
+              : '“保存到此会话”只影响当前角色会话；“保存为可复用预设”会在预设库中新建副本，供之后的会话选择。未填写的参数跟随会话与模型设置'}
           </p>
           {preset.extensionStatus.length > 0 && <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', margin: '12px 1px 0' }}>
             {preset.extensionStatus.map(item => <div key={item.name} style={{ fontSize: '10px', lineHeight: 1.45, opacity: item.state === 'unsupported' ? 0.72 : 0.44 }}>
@@ -8775,13 +8853,22 @@ function PresetManagerDialog({
             setSaving(false)
           })
         }} />
-        <button type="button" disabled={saving} onClick={() => { importInputRef.current?.click() }} style={secondaryButtonStyle}>替换预设</button>
-        <button type="button" disabled={saving} onClick={() => { setLibraryOpen(true); void onLibrary({ operation: 'list' }) }} style={secondaryButtonStyle}>预设库</button>
-        <button type="button" disabled={saving} onClick={() => { setInspectionOpen(true) }} style={secondaryButtonStyle}>运行检查</button>
+        {/*
+          Replacing the preset, switching to another library entry, and the run
+          inspection are all things you do *to a Session*. Editing the library
+          entry itself has no Session behind it, so they are simply absent.
+        */}
+        {sessionId !== undefined && <>
+          <button type="button" disabled={saving} onClick={() => { importInputRef.current?.click() }} style={secondaryButtonStyle}>替换预设</button>
+          <button type="button" disabled={saving} onClick={() => { setLibraryOpen(true); void onLibrary({ operation: 'list' }) }} style={secondaryButtonStyle}>预设库</button>
+          <button type="button" disabled={saving} onClick={() => { setInspectionOpen(true) }} style={secondaryButtonStyle}>运行检查</button>
+        </>}
         <button type="button" disabled={saving} onClick={exportCopy} title={preset.omittedExtensions.length === 0 ? '导出当前配置' : `不包含未执行扩展：${preset.omittedExtensions.join('、')}`} style={secondaryButtonStyle}>导出副本</button>
-        <button type="button" disabled={saving} onClick={() => { void saveToLibrary() }} style={secondaryButtonStyle}>保存到预设库</button>
+        {sessionId !== undefined && <button type="button" disabled={saving} onClick={() => { void saveToLibrary() }} style={secondaryButtonStyle}>保存到预设库</button>}
         <button type="button" disabled={saving} onClick={onClose} style={secondaryButtonStyle}>取消</button>
-        <button type="button" disabled={saving} onClick={() => { void save() }} style={primaryButtonStyle}>{saving ? '保存中…' : '保存到此会话'}</button>
+        <button type="button" disabled={saving} onClick={() => { void save() }} style={primaryButtonStyle}>
+          {saving ? '保存中…' : sessionId === undefined ? '保存到资源中心' : '保存到此会话'}
+        </button>
       </footer>
     </section>
     {editingPrompt !== undefined && <PresetPromptEditorDialog

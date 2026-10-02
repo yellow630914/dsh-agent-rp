@@ -12,6 +12,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { AgentRpHttpServer } from '../src/host-http.ts'
 import { RegexPackLibrary } from '../src/regex-pack-library.ts'
+import { readSessionRegexSourcesFromEvents } from '../src/regex-configuration.ts'
 import { installSessionRegexPackHttp } from '../src/session-regex-pack-http.ts'
 import { SESSION_REGEX_PACK_PATH } from '../src/session-regex-pack-protocol.ts'
 import { readSessionRegexPacks } from '../src/session-regex-pack.ts'
@@ -39,6 +40,7 @@ const packFile = JSON.stringify([{
 function fixture(context: { after: (fn: () => void) => void }): {
   readonly route: RegisteredRoute
   readonly agent: Agent
+  readonly library: RegexPackLibrary
   readonly packId: string
 } {
   const root = mkdtempSync(join(tmpdir(), 'agent-rp-session-regex-pack-'))
@@ -63,7 +65,7 @@ function fixture(context: { after: (fn: () => void) => void }): {
   installSessionRegexPackHttp(routeCtx, hostCtx, server, library)
   assert.ok(route)
   assert.equal(route.path, SESSION_REGEX_PACK_PATH)
-  return { route, agent, packId: entry.id }
+  return { route, agent, library, packId: entry.id }
 }
 
 async function invoke(route: RegisteredRoute, body: unknown, options: {
@@ -145,4 +147,37 @@ test('refuses a malformed body rather than writing a partial decision', async co
     assert.equal(result.status, 400, JSON.stringify(body))
   }
   assert.deepEqual(readSessionRegexPacks(agent.session.snapshotEvents()), [])
+})
+
+test('the Session keeps its own copy once the pack is taken', async context => {
+  const { route, agent, library, packId } = fixture(context)
+  await invoke(route, { format: 0, sessionId: String(agent.session.id), packId })
+
+  // The resource center offers no edit at all — a pack changes by being
+  // re-imported, and ids are content addressed, so the id the Session holds
+  // always names the bytes the Session holds.
+  const rewritten = library.importFile({
+    data: new TextEncoder().encode(packFile.replace('<b>钟楼</b>', '<i>钟楼</i>')),
+    filename: '文风.json',
+  })
+  assert.notEqual(rewritten.id, packId, 'different content is a different library entry')
+
+  // Deleting the original from the library is the strongest case: nothing
+  // resolves a Session pack back to the library after it was taken.
+  library.delete(packId)
+  assert.throws(() => library.get(packId))
+
+  const packs = readSessionRegexPacks(agent.session.snapshotEvents())
+  assert.deepEqual(packs.map(pack => pack.id), [packId])
+  assert.deepEqual(packs[0]?.scripts.map(script => script.replaceString), ['<b>钟楼</b>'])
+  assert.deepEqual(readSessionRegexSourcesFromEvents(agent.session.snapshotEvents())
+    .find(source => source.owner === 'regex')?.scripts.map(script => script.replaceString), ['<b>钟楼</b>'])
+
+  // The re-imported pack is a separate resource, so the Session may also take
+  // it, and then runs both.
+  const second = await invoke(route, { format: 0, sessionId: String(agent.session.id), packId: rewritten.id })
+  assert.equal(second.status, 200)
+  assert.deepEqual(readSessionRegexSourcesFromEvents(agent.session.snapshotEvents())
+    .find(source => source.owner === 'regex')?.scripts.map(script => script.replaceString),
+  ['<b>钟楼</b>', '<i>钟楼</i>'])
 })

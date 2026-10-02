@@ -20,13 +20,33 @@ export interface WorkerReasoningEffort {
   readonly reasoningOff: boolean
 }
 
+/** The ladder a provider profile may declare, least thinking first. */
+const EFFORT_ESCALATION = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+/** Order declared efforts by how little the model will think, declared order breaking ties. */
+function leastThinking(declared: readonly string[]): string | undefined {
+  const rank = (effort: string): number => {
+    const known = EFFORT_ESCALATION.indexOf(effort)
+    return known < 0 ? EFFORT_ESCALATION.length + declared.indexOf(effort) : known
+  }
+  return [...declared].sort((left, right) => rank(left) - rank(right))[0]
+}
+
 /**
  * Decide what one Worker may send, from the exact model's declared capability.
  *
- * The LLM layer rejects an effort the model does not declare, and a model that
- * declares no reasoning at all rejects *every* effort — including `off`. So a
- * Worker that wants reasoning off cannot simply ask for it: against such a
- * model the only acceptable request is one that omits the field entirely.
+ * The LLM layer rejects an effort the model does not declare, so a Worker that
+ * wants reasoning off cannot simply ask for it. Nor can it just leave the field
+ * out: a provider may reject a request that names no effort exactly as firmly —
+ * Z.ai answers `this model always engages in thinking and cannot be disabled;
+ * please use low, high, or max`. So the fallback is the least thinking the
+ * model does accept, and omitting is reserved for a model that declares no
+ * reasoning controls at all, where there is no level to name.
+ *
+ * The fallback only ever goes down the ladder. A Worker's budget is sized for
+ * little or no thinking, so silently raising the effort would spend the whole
+ * completion on reasoning and return no answer at all; losing some depth is
+ * both visible and recoverable, and a stalled turn is neither.
  * @param reasoning - the model's declared reasoning controls, if it has any.
  * @param requested - the effort this Worker would prefer.
  * @returns the request fragment, and whether reasoning is actually off.
@@ -35,10 +55,11 @@ export function acceptWorkerReasoningEffort(
   reasoning: LlmModelReasoningInfo | undefined,
   requested: string,
 ): WorkerReasoningEffort {
-  if (reasoning?.efforts.some(effort => String(effort.id) === requested) !== true) {
-    return { config: {}, reasoningOff: false }
-  }
-  return { config: { reasoningEffort: ReasoningEffortId(requested) }, reasoningOff: requested === 'off' }
+  const declared = reasoning?.efforts.map(effort => String(effort.id)) ?? []
+  const effort = declared.includes(requested) ? requested : leastThinking(declared)
+  return effort === undefined
+    ? { config: {}, reasoningOff: false }
+    : { config: { reasoningEffort: ReasoningEffortId(effort) }, reasoningOff: effort === 'off' }
 }
 
 /**

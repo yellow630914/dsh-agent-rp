@@ -3917,7 +3917,7 @@ function TurnWorkerSettingsPanel({ settings, writable, onSave, loadModelCatalog 
       </select>
     </label>
     <p style={{ fontSize: '11px', lineHeight: 1.55, margin: '7px 0 0', opacity: .56 }}>
-      可选强度来自当前生效的状态核验模型。未显式选择状态核验模型时，当前会话模型生效。选择“模型默认”时，独立核验请求不发送 reasoningEffort；已保存的强度如果不被当前生效的状态核验模型接受，这次请求也会改为不发送，而不是让整轮结算失败。玩家修改状态核验模型选择，并且修改前后的生效提供方或模型不同时，推理强度会重置为模型默认；跟随当前会话模型时，会话模型变化不会改写这里保存的推理强度。
+      可选强度来自当前生效的状态核验模型。未显式选择状态核验模型时，当前会话模型生效。选择“模型默认”时，独立核验请求不发送 reasoningEffort。已保存的强度如果不被当前生效的状态核验模型接受，这次请求会自动降到该模型愿意接受的最低强度，而不是让整轮结算失败；只有模型完全没有推理档位时才改为不发送。玩家修改状态核验模型选择，并且修改前后的生效提供方或模型不同时，推理强度会重置为模型默认；跟随当前会话模型时，会话模型变化不会改写这里保存的推理强度。
     </p>
     {modelCatalog === undefined && modelCatalogError === undefined && <p role="status" style={{ fontSize: '11px', margin: '7px 0 0', opacity: .5 }}>正在读取当前会话可用模型…</p>}
     {modelCatalogError !== undefined && <p role="alert" style={{ color: 'var(--dsw-alias-state-warning, #d6a955)', fontSize: '11px', margin: '7px 0 0' }}>

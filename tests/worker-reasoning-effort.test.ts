@@ -20,24 +20,43 @@ test('sends the requested effort only when the model declares it', () => {
 })
 
 test('a model that declares no reasoning at all gets no field', () => {
-  // This is the GLM-through-pi-ai case: the LLM layer rejects *every* effort
-  // against such a model, `off` included, so asking for it fails the turn.
+  // Nothing to name: the LLM layer rejects *every* effort against such a model,
+  // `off` included, so omitting is the only request it can accept.
   const accepted = acceptWorkerReasoningEffort(undefined, 'off')
   assert.deepEqual(accepted.config, {})
   assert.equal(accepted.reasoningOff, false, 'the model will think, so the budget must allow for it')
 })
 
-test('a model that reasons but cannot turn it off gets no field either', () => {
-  const accepted = acceptWorkerReasoningEffort(efforts('low', 'medium', 'high'), 'off')
-  assert.deepEqual(accepted.config, {})
-  assert.equal(accepted.reasoningOff, false)
+test('a model that reasons but cannot turn it off gets the least it accepts', () => {
+  // The live case: Z.ai answers 400 `this model always engages in thinking and
+  // cannot be disabled; please use low, high, or max` — and it answers that to
+  // a request naming no effort just as readily as to one naming `off`.
+  const accepted = acceptWorkerReasoningEffort(efforts('high', 'low', 'max'), 'off')
+  assert.deepEqual(accepted.config, { reasoningEffort: 'low' }, 'declared display order must not pick the level')
+  assert.equal(accepted.reasoningOff, false, 'it will think, so the budget must allow for it')
 })
 
-test('a stale persisted effort is dropped rather than sent', () => {
+test('falls back down the ladder, never up', () => {
+  // Raising the effort would spend a Worker's whole budget on reasoning and
+  // return no answer, which surfaces as "no JSON object" rather than a refusal.
+  assert.deepEqual(acceptWorkerReasoningEffort(efforts('medium', 'max'), 'off').config,
+    { reasoningEffort: 'medium' })
+  assert.deepEqual(acceptWorkerReasoningEffort(efforts('xhigh', 'minimal'), 'low').config,
+    { reasoningEffort: 'minimal' })
+})
+
+test('an effort outside the known ladder keeps its declared order', () => {
+  assert.deepEqual(acceptWorkerReasoningEffort(efforts('thorough', 'brief'), 'off').config,
+    { reasoningEffort: 'thorough' }, 'unknown ids rank after known ones, in declared order')
+  assert.deepEqual(acceptWorkerReasoningEffort(efforts('thorough', 'high'), 'off').config,
+    { reasoningEffort: 'high' }, 'a known level still wins over an unknown one')
+})
+
+test('a stale persisted effort is replaced rather than sent', () => {
   // The verification pass carries whatever the player chose against an earlier
   // model; the route may since have moved to one that never accepts it.
   const accepted = acceptWorkerReasoningEffort(efforts('low', 'high'), 'minimal')
-  assert.deepEqual(accepted.config, {})
+  assert.deepEqual(accepted.config, { reasoningEffort: 'low' })
   assert.equal(accepted.reasoningOff, false)
 })
 

@@ -17,3 +17,6 @@ node_modules/
 .runtime-*
 .runtime-web-*.log
 *.tgz
+
+# 第三方预设/世界书的分析报告：内容受原作者授权约束，不进公开仓库
+reports/

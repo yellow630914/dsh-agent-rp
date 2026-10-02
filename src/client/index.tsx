@@ -292,6 +292,7 @@ import {
 import { fetchTavernPreflight } from './tavern-preflight.ts'
 import { RoleplayResourceCenter } from './resource-center.tsx'
 import {
+  attachSessionRegexPack,
   deleteRegexPack,
   importRegexPackFile,
   listRegexPacks,
@@ -4863,6 +4864,9 @@ function RoleplayHeader({
         />)}
     {regexOpen && <RegexManagerDialog
       regex={projection.regex}
+      packs={projection.regexPacks}
+      listRegexPacks={listRegexPacks}
+      onAttachPack={packId => attachSessionRegexPack(String(sessionId), packId).then(() => undefined)}
       onSave={request => configureRegex(sessionId, request)}
       onClose={() => { setRegexOpen(false) }}
     />}

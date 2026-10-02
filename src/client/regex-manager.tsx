@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import type { AgentRpProjection } from '../projection-types.ts'
+import type { RegexPackLibrarySummary } from '../regex-pack-library-protocol.ts'
 import type {
   RegexConfigurationRequest,
   RegexEditableScript,
@@ -139,8 +140,12 @@ const buttonStyle = {
  * the prompt view and the display view both resolve, so one edit reaches both.
  * Nothing here touches the resource library, so another Session is unaffected.
  */
-export function RegexManagerDialog({ regex, onSave, onClose }: {
+export function RegexManagerDialog({ regex, packs, listRegexPacks, onAttachPack, onSave, onClose }: {
   readonly regex: AgentRpProjection['regex']
+  /** Packs this Session already took, so the picker cannot offer them twice. */
+  readonly packs: AgentRpProjection['regexPacks']
+  readonly listRegexPacks: () => Promise<readonly RegexPackLibrarySummary[]>
+  readonly onAttachPack: (packId: string) => Promise<void>
   readonly onSave: SaveRegexConfiguration
   readonly onClose: () => void
 }) {
@@ -148,6 +153,33 @@ export function RegexManagerDialog({ regex, onSave, onClose }: {
   const [draft, setDraft] = useState<RegexEditableScript>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  const [library, setLibrary] = useState<readonly RegexPackLibrarySummary[]>()
+  const [pick, setPick] = useState('')
+
+  useEffect(() => {
+    let current = true
+    void listRegexPacks().then(value => { if (current) setLibrary(value) }, () => {
+      // A library that cannot be listed just leaves the picker out; the
+      // Session's own rules are still perfectly editable.
+      if (current) setLibrary([])
+    })
+    return () => { current = false }
+  }, [listRegexPacks])
+
+  const taken = new Set(packs.map(pack => pack.id))
+  const available = (library ?? []).filter(entry => !taken.has(entry.id))
+  const attach = (): void => {
+    if (pick === '' || busy) return
+    setBusy(true)
+    setError(undefined)
+    void onAttachPack(pick).then(() => {
+      setBusy(false)
+      setPick('')
+    }, (reason: unknown) => {
+      setBusy(false)
+      setError(reason instanceof Error ? reason.message : '无法引入正则包')
+    })
+  }
 
   const key = (entry: ProjectedScript): string => `${entry.owner}:${String(entry.index)}`
   const current = regex.scripts.find(entry => key(entry) === selected)
@@ -223,6 +255,22 @@ export function RegexManagerDialog({ regex, onSave, onClose }: {
                 setSelected(`session:${String(regex.scripts.filter(entry => entry.owner === 'session').length)}`)
               })
             }}>新增本会话规则</button>
+          {available.length > 0 && <div style={{ display: 'flex', gap: '6px' }}>
+            <select aria-label="从资源中心引入正则包" value={pick} disabled={busy}
+              onChange={event => { setPick(event.target.value) }} style={{
+                background: 'var(--dsw-alias-bg-elevated, #202126)',
+                border: '1px solid var(--dsw-alias-border-l2, #3b3b41)', borderRadius: '8px',
+                color: 'inherit', flex: 1, font: 'inherit', fontSize: '12px', minWidth: 0, padding: '6px 8px',
+              }}>
+              <option value="">从资源中心引入正则包…</option>
+              {available.map(entry => <option key={entry.id} value={entry.id}>
+                {entry.name}（{entry.scriptCount} 条）
+              </option>)}
+            </select>
+            <button type="button" data-agent-rp-action="attach-session-regex-pack"
+              disabled={busy || pick === ''} onClick={attach}
+              style={{ ...buttonStyle, opacity: busy || pick === '' ? .5 : 1 }}>引入</button>
+          </div>}
           <div style={{
             border: '1px solid var(--dsw-alias-border-l2, #3b3b41)', borderRadius: '9px',
             flex: 1, minHeight: 0, overflowY: 'auto',

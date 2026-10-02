@@ -1,6 +1,7 @@
 /** Durable standalone regex-pack snapshots selected for one Roleplay Session. */
 
-import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionSeq, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { appendAgentRpSessionEvent } from './session-event-compat.ts'
 import type { ImportedRegexScript } from './import/types.ts'
 import { parseRegexPackValue } from './regex-pack.ts'
 
@@ -50,6 +51,31 @@ export function appendSessionRegexPack(
     data: snapshot,
     ignorable: true,
   }])
+}
+
+/**
+ * Attach one pack to a Session that is already running.
+ *
+ * `appendSessionRegexPack` builds a launch seed — an event array before any
+ * Session exists. This is the same decision taken later: the pack becomes an
+ * ordinary `regex`-owned source, so the manager renders, toggles and overrides
+ * its rules exactly like a pack chosen at launch. The library is read once and
+ * frozen into the log, so editing or deleting the pack afterwards never changes
+ * what this Session runs.
+ * @param session - live Session receiving the pack.
+ * @param value - the pack snapshot, already read from the library.
+ * @returns the appended snapshot.
+ */
+export function attachSessionRegexPack(
+  session: Session,
+  value: SessionRegexPackSnapshot,
+): SessionRegexPackSnapshot {
+  const snapshot = parseSessionRegexPack(value)
+  if (readSessionRegexPacks(session.snapshotEvents()).some(pack => pack.id === snapshot.id)) {
+    throw new Error('这个正则包已经在本会话里了')
+  }
+  appendAgentRpSessionEvent(session, 'agent-rp/regex-pack-seed', snapshot)
+  return snapshot
 }
 
 /** Reconstruct selected packs in stable materialization order. */

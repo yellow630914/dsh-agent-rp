@@ -9,6 +9,7 @@ import type {
   SillyTavernPresetPrompt,
 } from './import/sillytavern-preset.ts'
 import type { RoleplayPromptOrigin } from './prompt-origin.ts'
+import type { RoleplayWorldInfoPlacement } from './world-info-placement.ts'
 import { roleplayModelHistory } from './roleplay-surface-overlay.ts'
 import type { EjsTemplateResult } from './ejs-template.ts'
 import {
@@ -35,6 +36,8 @@ export interface PresetPromptInputs {
    */
   readonly worldInfoBeforeOrigins?: readonly RoleplayPromptOrigin[]
   readonly worldInfoAfterOrigins?: readonly RoleplayPromptOrigin[]
+  /** Where this turn puts World Info; omitted keeps the historical order. */
+  readonly worldInfoPlacement?: RoleplayWorldInfoPlacement
   readonly session: Session
   readonly pendingMessages?: readonly UserMessage[]
   /** Prepared turn context shared with native card and world adapters. */
@@ -53,6 +56,16 @@ export interface RoleplayOrderedPrompt {
   readonly content: string
   /** Authorship, carried for the prompt preview; never read on the send path. */
   readonly origin?: RoleplayPromptOrigin
+  /**
+   * Keep this out of the provider system field, as its own message.
+   *
+   * A route declaring `systemPromptUpdate: 'in-history'` re-sends changed
+   * system text after the cached history instead of rewriting the head, so
+   * content that changes between turns accumulates there and never reuses
+   * the prefix. World Info placed before the history is exactly that, so it
+   * stops the leading system run rather than joining it.
+   */
+  readonly ownMessage?: true
 }
 
 /** Host-compatible prompt split around the conversation history. */
@@ -112,7 +125,10 @@ export function splitRoleplaySystemPrompt(
   plan: RoleplayProviderPromptPlan,
 ): RoleplaySystemPromptSplit {
   if (!plan.includeHistory) return { systemPromptText: '', beforeHistory: plan.beforeHistory }
-  const firstNonSystem = plan.beforeHistory.findIndex(prompt => prompt.role !== 'system')
+  // `ownMessage` ends the run as surely as a non-system role: World Info before
+  // the history must not be folded into the system field.
+  const firstNonSystem = plan.beforeHistory
+    .findIndex(prompt => prompt.role !== 'system' || prompt.ownMessage === true)
   const prefixLength = firstNonSystem < 0 ? plan.beforeHistory.length : firstNonSystem
   if (prefixLength === 0) return { systemPromptText: '', beforeHistory: plan.beforeHistory }
   return {
@@ -202,7 +218,13 @@ function promptHasTurnVariantSyntax(
   inputs: PresetPromptInputs,
 ): boolean {
   const card = inputs.card
-  if (prompt.identifier === 'worldInfoBefore' || prompt.identifier === 'worldInfoAfter') return true
+  if (prompt.identifier === 'worldInfoBefore' || prompt.identifier === 'worldInfoAfter') {
+    // Treating these as turn-variant is what defers an authored-before-history
+    // marker to the end, which is the whole cost this setting removes. Placed
+    // before the history they stay where the preset put them; the entries they
+    // expand to still change between turns, but only from that point onward.
+    return inputs.worldInfoPlacement !== 'before-history'
+  }
   const sources = [prompt.content]
   switch (prompt.identifier) {
     case 'charDescription':
@@ -594,7 +616,18 @@ export function assembleSillyTavernPreset(
       })
       continue
     }
-    const ordered = { role: prompt.role, content: expanded.text, origin }
+    // The joined World Info module placed before the history is the one
+    // thing that must not be folded into the provider system field.
+    const worldInfoModule = prompt.identifier === 'worldInfoBefore'
+      || prompt.identifier === 'worldInfoAfter'
+    const ordered = {
+      role: prompt.role,
+      content: expanded.text,
+      origin,
+      ...(worldInfoModule && inputs.worldInfoPlacement === 'before-history'
+        ? { ownMessage: true as const }
+        : {}),
+    }
     if (hasHistory && !pastHistory && expanded.turnVariant) {
       deferred.push(ordered)
       continue

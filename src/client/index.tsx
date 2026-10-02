@@ -4254,6 +4254,33 @@ function WorkspaceSettingsSection({
       border: '1px solid var(--dsw-alias-border-l2, #3d3d43)', borderRadius: '12px', marginBottom: '22px',
       padding: '14px',
     }}>
+      <h3 style={{ fontSize: '13px', margin: '0 0 7px' }}>世界书位置</h3>
+      <label style={{ display: 'grid', fontSize: '12px', gap: '7px', lineHeight: 1.55 }}>
+        <span>世界书相对聊天记录的位置</span>
+        <select value={settings.worldInfoPlacement} disabled={!writable} onChange={event => {
+          write({
+            ...settings,
+            worldInfoPlacement: event.target.value === 'before-history' ? 'before-history' : 'after-history',
+          })
+        }} style={{ ...settingsFieldStyle, maxWidth: '260px' }}>
+          <option value="after-history">聊天记录之后（默认）</option>
+          <option value="before-history">聊天记录之前（提高缓存命中）</option>
+        </select>
+        <span style={{ opacity: .56 }}>
+          提供方的前缀缓存只复用从开头起完全相同的部分，而每回合的新输入必然让它在聊天记录末尾断开，
+          所以排在聊天记录之后的世界书每回合都要全价重算。放到聊天记录之前后，触发集合没有变化的回合就能命中；
+          常驻条目会排在关键词条目之前，这样触发集合变动时，常驻那一段仍然保留。
+        </span>
+        <span style={{ opacity: .56 }}>
+          这会改变模型读到的顺序，因此默认保持「聊天记录之后」。@深度条目不受影响，仍然插在聊天记录内部。
+          使用预设时，World Info 标记要排在 chatHistory 之前才会生效。
+        </span>
+      </label>
+    </section>
+    <section style={{
+      border: '1px solid var(--dsw-alias-border-l2, #3d3d43)', borderRadius: '12px', marginBottom: '22px',
+      padding: '14px',
+    }}>
       <h3 style={{ fontSize: '13px', margin: '0 0 7px' }}>轻前端资源</h3>
       <label style={{ display: 'grid', fontSize: '12px', gap: '7px', lineHeight: 1.55 }}>
         <span>保持交互的最近消息数</span>

@@ -86,16 +86,17 @@ export interface RoleplayTurnPlanReceipt {
  * 3 adds the independent turn strategy plus semantic state actions, 4 adds
  * the exact tool policy prepared for the model request and runtime gates,
  * 5 moves imported state rules into the post-narrative settlement program,
- * 6 adds native state schemes plus the settlement cadence that gates them, and
- * 7 adds whether narrative requests may leave their tool schemas off.
+ * 6 adds native state schemes plus the settlement cadence that gates them,
+ * 7 adds whether narrative requests may leave their tool schemas off, and
+ * 8 records where the turn placed World Info relative to the chat history.
  */
-export type RoleplayTurnPlanSchema = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
+export type RoleplayTurnPlanSchema = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
 
 /** Every published schema, newest first. */
-const ROLEPLAY_TURN_PLAN_SCHEMAS: readonly RoleplayTurnPlanSchema[] = [7, 6, 5, 4, 3, 2, 1, 0]
+const ROLEPLAY_TURN_PLAN_SCHEMAS: readonly RoleplayTurnPlanSchema[] = [8, 7, 6, 5, 4, 3, 2, 1, 0]
 
 /** Current structural projection written into every new plan receipt. */
-export const CURRENT_ROLEPLAY_TURN_PLAN_SCHEMA: RoleplayTurnPlanSchema = 7
+export const CURRENT_ROLEPLAY_TURN_PLAN_SCHEMA: RoleplayTurnPlanSchema = 8
 
 /** Whether a durable receipt declared one of the published schemas. */
 export function isRoleplayTurnPlanSchema(value: unknown): value is RoleplayTurnPlanSchema {
@@ -217,10 +218,23 @@ function planWithoutRequestToolsMode(plan: RoleplayTurnPlan): RoleplayTurnPlan {
   return { ...plan, tools: { ...plan.tools, source, behavior } as RoleplayTurnPlan['tools'] }
 }
 
+/**
+ * Reconstruct the schema-7 plan, whose turns all sent World Info after the
+ * chat history and so recorded no choice about it.
+ * @param plan - the current plan.
+ * @returns the plan as schema 7 published it.
+ */
+function planWithoutWorldInfoPlacement(plan: RoleplayTurnPlan): RoleplayTurnPlan {
+  const { worldInfoPlacement: _placement, ...prompt } = plan.prompt
+  return { ...plan, prompt }
+}
+
 /** Project a current plan into one historically published structural schema. */
 export function projectRoleplayTurnPlan(plan: RoleplayTurnPlan, schema: RoleplayTurnPlanSchema): unknown {
-  if (schema === 7) return plan
-  const beforeRequestTools = planWithoutRequestToolsMode(plan)
+  if (schema === 8) return plan
+  const beforeWorldInfoPlacement = planWithoutWorldInfoPlacement(plan)
+  if (schema === 7) return beforeWorldInfoPlacement
+  const beforeRequestTools = planWithoutRequestToolsMode(beforeWorldInfoPlacement)
   if (schema === 6) return beforeRequestTools
   const beforeNativeSchemes = planWithoutNativeStateSchemes(beforeRequestTools)
   if (schema === 5) return beforeNativeSchemes

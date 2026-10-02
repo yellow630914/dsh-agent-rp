@@ -19,6 +19,7 @@ import { resolveSessionRoleplayRuntime } from './session-roleplay-runtime.ts'
 import type { RoleplayRuntimeExtensionRegistry } from './roleplay-runtime-extension.ts'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
 import type { ResolvedToolGuidanceConfig } from './roleplay-tool-guidance.ts'
+import type { RoleplayWorldInfoPlacement } from './world-info-placement.ts'
 
 function replayBoundary(session: Session, events: readonly SessionEvent[]): Session {
   const constructor = session.constructor as typeof Session
@@ -32,6 +33,14 @@ export interface SessionRoleplayTurnPlanRecord {
   readonly turn: number
   /** Exact workspace-derived tool input; absent only on receipts written before schema 4. */
   readonly toolGuidance?: ResolvedToolGuidanceConfig
+  /**
+   * Where this turn put World Info; absent on receipts written before schema 8.
+   *
+   * Replayed rather than re-read, like `toolGuidance`: rebuilding the plan from
+   * the current workspace setting would produce a different prompt than the one
+   * the turn actually sent, and its digest would stop matching.
+   */
+  readonly worldInfoPlacement?: RoleplayWorldInfoPlacement
   readonly reference: RoleplayTurnPlanReference & { readonly receipt: NonNullable<RoleplayTurnPlanReference['receipt']> }
 }
 
@@ -79,6 +88,9 @@ export function appendSessionRoleplayTurnPlan(
     sessionId: String(session.id),
     turn,
     toolGuidance: plan.tools.source,
+    ...(plan.prompt.worldInfoPlacement === undefined
+      ? {}
+      : { worldInfoPlacement: plan.prompt.worldInfoPlacement }),
     reference: { ...reference, receipt: reference.receipt },
   }
   const existing = session.snapshotEvents().find(event => event.type === 'agent-rp/turn-plan'
@@ -160,6 +172,9 @@ export function replaySessionRoleplayTurnPlan(input: {
     deployment: input.deployment,
     resolved,
     ...(record.data.toolGuidance === undefined ? {} : { toolGuidance: record.data.toolGuidance }),
+    ...(record.data.worldInfoPlacement === undefined
+      ? {}
+      : { worldInfoPlacement: record.data.worldInfoPlacement }),
     ...(input.templateEngine === undefined ? {} : { templateEngine: input.templateEngine }),
   })
   const replayed = bindRoleplayExternalContext({

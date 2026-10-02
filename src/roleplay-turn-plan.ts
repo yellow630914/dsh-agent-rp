@@ -35,6 +35,7 @@ import {
   assembleSillyTavernPreset,
   splitRoleplaySystemPrompt,
   type RoleplayInChatPrompt,
+  type RoleplayOrderedPrompt,
   type RoleplayProviderPromptPlan,
 } from './preset-prompt.ts'
 import {
@@ -77,6 +78,13 @@ import {
   type ResolvedToolGuidanceConfig,
   type RoleplayToolPolicyPlan,
 } from './roleplay-tool-guidance.ts'
+import {
+  DEFAULT_WORLD_INFO_PLACEMENT,
+  placedWorldInfoEntries,
+  residentFirstWorldInfo,
+  type PlacedWorldInfoEntry,
+  type RoleplayWorldInfoPlacement,
+} from './world-info-placement.ts'
 
 /** Exact replay key for the Session surface and newly claimed messages used by preparation. */
 export interface RoleplayTurnInputKey {
@@ -122,6 +130,10 @@ export interface RoleplayWorldResourcePlan {
   readonly beforeActorOrigins?: readonly RoleplayPromptOrigin[]
   /** Authorship paired positionally with `afterActor`, for the prompt preview. */
   readonly afterActorOrigins?: readonly RoleplayPromptOrigin[]
+  /** Whether each `beforeActor` entry is always-on, paired positionally. */
+  readonly beforeActorResidency?: readonly boolean[]
+  /** Whether each `afterActor` entry is always-on, paired positionally. */
+  readonly afterActorResidency?: readonly boolean[]
 }
 
 /** World preparation result in semantic experience/actor order. */
@@ -141,6 +153,18 @@ export interface RoleplayWorldPlan {
     readonly actorBefore: readonly RoleplayPromptOrigin[]
     readonly actorAfter: readonly RoleplayPromptOrigin[]
     readonly experienceAfterActor: readonly RoleplayPromptOrigin[]
+  }
+  /**
+   * Whether each entry is always-on, paired positionally with the same arrays.
+   *
+   * Only read when World Info is placed before the history, where the resident
+   * run is ordered first so a change in the triggered set cannot invalidate it.
+   */
+  readonly residency?: {
+    readonly experienceBeforeActor: readonly boolean[]
+    readonly actorBefore: readonly boolean[]
+    readonly actorAfter: readonly boolean[]
+    readonly experienceAfterActor: readonly boolean[]
   }
 }
 
@@ -190,6 +214,14 @@ export interface RoleplayPromptTransformPlan {
 /** Final prompt plus adapter expansion diagnostics. */
 export interface RoleplayTurnPromptPlan extends RoleplayProviderPromptPlan {
   readonly systemPromptText: string
+  /**
+   * Where this turn put World Info, frozen at prepare time.
+   *
+   * Recorded rather than re-read so a replay reproduces the order the turn
+   * actually ran at, even after the workspace setting changes. Absent on
+   * plans written before the setting existed, which all ran after-history.
+   */
+  readonly worldInfoPlacement?: RoleplayWorldInfoPlacement
   readonly transforms: RoleplayPromptTransformPlan
   readonly diagnostics: {
     readonly enabledModules: number
@@ -265,6 +297,8 @@ export interface PrepareRoleplayTurnInput {
   readonly resolved: ResolvedSessionRoleplayRuntime
   /** Workspace tool settings captured at the same boundary as every other turn input. */
   readonly toolGuidance?: ResolvedToolGuidanceConfig
+  /** Where to put World Info this turn; omitted keeps the historical order. */
+  readonly worldInfoPlacement?: RoleplayWorldInfoPlacement
   readonly templateEngine?: EjsTemplateEngine
 }
 
@@ -380,8 +414,19 @@ function worldPlan(
         constant: item.source.constant,
       }))
     }
+    // Same walk again, so residency lands at the same index as the string it
+    // describes; a pairing that failed contributes nothing rather than guessing.
+    const residencyFor = (
+      position: 'before_char' | 'after_char',
+      emitted: readonly string[],
+    ): readonly boolean[] | undefined => {
+      const matching = activeSorted.filter(item => item.source.position === position)
+      return matching.length === emitted.length ? matching.map(item => item.source.constant) : undefined
+    }
     const beforeActorOrigins = originsFor('before_char', book.inspected.beforeCharacter)
     const afterActorOrigins = originsFor('after_char', book.inspected.afterCharacter)
+    const beforeActorResidency = residencyFor('before_char', book.inspected.beforeCharacter)
+    const afterActorResidency = residencyFor('after_char', book.inspected.afterCharacter)
     inChatOriginsByBook.push(originsFor('at_depth', book.inspected.inChat.map(entry => entry.content)))
     return {
       resource,
@@ -389,6 +434,8 @@ function worldPlan(
       afterActor: book.inspected.afterCharacter,
       ...(beforeActorOrigins === undefined ? {} : { beforeActorOrigins }),
       ...(afterActorOrigins === undefined ? {} : { afterActorOrigins }),
+      ...(beforeActorResidency === undefined ? {} : { beforeActorResidency }),
+      ...(afterActorResidency === undefined ? {} : { afterActorResidency }),
       entries: decided.map(({ decision, source }) => ({
         entryId: source.sourceId,
         index: decision.index,
@@ -418,6 +465,13 @@ function worldPlan(
     allResources.filter(item => item.resource.placement === placement).flatMap(item =>
       item[side === 'beforeActor' ? 'beforeActorOrigins' : 'afterActorOrigins']
         ?? item[side].map(() => UNATTRIBUTED_WORLD_ORIGIN))
+  const residencyContributions = (
+    placement: RoleplayWorldBinding['placement'],
+    side: 'beforeActor' | 'afterActor',
+  ): readonly boolean[] =>
+    allResources.filter(item => item.resource.placement === placement).flatMap(item =>
+      item[side === 'beforeActor' ? 'beforeActorResidency' : 'afterActorResidency']
+        ?? item[side].map(() => false))
   const inChatOrigins = rendered.books.flatMap((book, index) =>
     inChatOriginsByBook[index] ?? book.inspected.inChat.map(() => UNATTRIBUTED_WORLD_ORIGIN))
   return {
@@ -435,6 +489,12 @@ function worldPlan(
       actorBefore: originContributions('actor', 'beforeActor'),
       actorAfter: originContributions('actor', 'afterActor'),
       experienceAfterActor: originContributions('experience', 'afterActor'),
+    },
+    residency: {
+      experienceBeforeActor: residencyContributions('experience', 'beforeActor'),
+      actorBefore: residencyContributions('actor', 'beforeActor'),
+      actorAfter: residencyContributions('actor', 'afterActor'),
+      experienceAfterActor: residencyContributions('experience', 'afterActor'),
     },
     approximateTokens: rendered.approximateTokens,
     ...(rendered.tokenBudget === undefined ? {} : { tokenBudget: rendered.tokenBudget }),
@@ -558,6 +618,43 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
   // keeps the index of the entry text it describes.
   const loreBeforeOrigins = [...world.origins?.experienceBeforeActor ?? [], ...world.origins?.actorBefore ?? []]
   const loreAfterOrigins = [...world.origins?.actorAfter ?? [], ...world.origins?.experienceAfterActor ?? []]
+  const loreBeforeResidency = [
+    ...world.residency?.experienceBeforeActor ?? [], ...world.residency?.actorBefore ?? [],
+  ]
+  const loreAfterResidency = [
+    ...world.residency?.actorAfter ?? [], ...world.residency?.experienceAfterActor ?? [],
+  ]
+  const worldInfoPlacement = input.worldInfoPlacement ?? DEFAULT_WORLD_INFO_PLACEMENT
+  /**
+   * Resolve one World Info run into the order this turn will send it in.
+   *
+   * Done here, before either prompt strategy reads it, so the content, the
+   * origins and the modules strategy's `origin.parts` are all the same walk —
+   * reordering the strings alone would relabel entries in the preview.
+   */
+  const orderedWorld = (
+    contents: readonly string[],
+    origins: readonly RoleplayPromptOrigin[],
+    residency: readonly boolean[],
+  ): {
+    readonly contents: readonly string[]
+    readonly origins: readonly RoleplayPromptOrigin[]
+    readonly entries: readonly PlacedWorldInfoEntry[]
+  } => {
+    const placed = placedWorldInfoEntries(contents, origins, residency)
+    const entries = worldInfoPlacement === 'before-history' ? residentFirstWorldInfo(placed) : placed
+    return {
+      contents: entries.map(entry => entry.content),
+      // A run whose origins never paired up keeps the array it had; reordering
+      // a mismatched list would attach names to the wrong entries.
+      origins: origins.length === contents.length
+        ? entries.map(entry => entry.origin ?? UNATTRIBUTED_WORLD_ORIGIN)
+        : origins,
+      entries,
+    }
+  }
+  const worldBefore = orderedWorld(loreBefore, loreBeforeOrigins, loreBeforeResidency)
+  const worldAfter = orderedWorld(loreAfter, loreAfterOrigins, loreAfterResidency)
   const tavernOrigin = (label: string): RoleplayPromptOrigin => ({ kind: 'tavern-helper', label })
   const injectedPrompts = {
     beforeHistory: tavernInjectedOrderedPrompts(tavern, 'before')
@@ -619,10 +716,11 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
       ...(userName === undefined ? {} : { userName }),
       ...(snapshot.participant?.description === undefined
         ? {} : { userPersona: snapshot.participant.description }),
-      worldInfoBefore: loreBefore,
-      worldInfoAfter: loreAfter,
-      worldInfoBeforeOrigins: loreBeforeOrigins,
-      worldInfoAfterOrigins: loreAfterOrigins,
+      worldInfoBefore: worldBefore.contents,
+      worldInfoAfter: worldAfter.contents,
+      worldInfoBeforeOrigins: worldBefore.origins,
+      worldInfoAfterOrigins: worldAfter.origins,
+      worldInfoPlacement,
       session: input.session,
       pendingMessages,
       macroContext,
@@ -704,30 +802,35 @@ export function prepareRoleplayTurn(input: PrepareRoleplayTurnInput): RoleplayTu
   const transforms = promptTransforms(resolved, characterName, userName)
   // Outside the modules strategy each World Info entry is its own message, so
   // the origin computed above lands one-to-one rather than as module parts.
-  const nativeWorldBefore = snapshot.prompt.strategy === 'modules'
-    ? [] : loreBefore.map((content, index) => ({
-        role: 'system' as const,
-        content,
-        ...(loreBeforeOrigins[index] === undefined ? {} : { origin: loreBeforeOrigins[index]! }),
-      }))
-  const nativeWorldAfter = snapshot.prompt.strategy === 'modules'
-    ? [] : loreAfter.map((content, index) => ({
-        role: 'system' as const,
-        content,
-        ...(loreAfterOrigins[index] === undefined ? {} : { origin: loreAfterOrigins[index]! }),
-      }))
+  const nativeWorldMessages = (
+    run: { readonly entries: readonly PlacedWorldInfoEntry[] },
+  ): readonly RoleplayOrderedPrompt[] => snapshot.prompt.strategy === 'modules' ? [] : run.entries
+    .map(entry => ({
+      role: 'system' as const,
+      content: entry.content,
+      ...(entry.origin === undefined ? {} : { origin: entry.origin }),
+      // World Info must stay its own message: folded into the system field it
+      // would be re-sent after the history on every change, which both breaks
+      // the prefix and accumulates tokens.
+      ...(worldInfoPlacement === 'before-history' ? { ownMessage: true as const } : {}),
+    }))
+  const nativeWorldBefore = nativeWorldMessages(worldBefore)
+  const nativeWorldAfter = nativeWorldMessages(worldAfter)
+  const worldBeforeHistory = worldInfoPlacement === 'before-history'
   const deferredInjectedBefore = providerPrompt.includeHistory ? injectedPrompts.beforeHistory : []
   let prompt: RoleplayTurnPromptPlan = {
     ...providerPrompt,
+    worldInfoPlacement,
     beforeHistory: [
       ...(providerPrompt.includeHistory ? [] : injectedPrompts.beforeHistory),
       ...providerPrompt.beforeHistory,
+      ...(worldBeforeHistory ? [...nativeWorldBefore, ...nativeWorldAfter] : []),
     ],
     afterHistory: [
       ...deferredInjectedBefore,
-      ...nativeWorldBefore,
+      ...(worldBeforeHistory ? [] : nativeWorldBefore),
       ...nativeActorTail,
-      ...nativeWorldAfter,
+      ...(worldBeforeHistory ? [] : nativeWorldAfter),
       ...providerPrompt.afterHistory,
       ...injectedPrompts.afterHistory,
     ],

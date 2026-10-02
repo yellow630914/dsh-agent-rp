@@ -365,6 +365,20 @@ interface ImportedSillyTavernPreset {
   };
   readonly extensionCompatibility?: SillyTavernPresetExtensionCompatibility;
 }
+/**
+ * Whether World Info is sent before or after the chat history.
+ *
+ * A provider's prefix cache only reuses the identical leading run of a request,
+ * and each turn's new player input necessarily breaks that run at the end of the
+ * history. Everything ordered after the history is therefore recomputed at full
+ * price every turn. Moving World Info ahead of the history keeps it inside the
+ * reusable prefix on every turn whose triggered set is unchanged — which, in a
+ * long roleplay, is most of them.
+ *
+ * `after-history` stays the default: it is the order every existing Session was
+ * played at, and changing where text sits changes what the model reads.
+ */
+type RoleplayWorldInfoPlacement = 'after-history' | 'before-history';
 /** Provider-neutral role retained by one ordered prompt contribution. */
 type RoleplayPromptRole = 'system' | 'user' | 'assistant';
 /** One ordered prompt module after adapter expansion. */
@@ -373,6 +387,16 @@ interface RoleplayOrderedPrompt {
   readonly content: string;
   /** Authorship, carried for the prompt preview; never read on the send path. */
   readonly origin?: RoleplayPromptOrigin;
+  /**
+   * Keep this out of the provider system field, as its own message.
+   *
+   * A route declaring `systemPromptUpdate: 'in-history'` re-sends changed
+   * system text after the cached history instead of rewriting the head, so
+   * content that changes between turns accumulates there and never reuses
+   * the prefix. World Info placed before the history is exactly that, so it
+   * stops the leading system run rather than joining it.
+   */
+  readonly ownMessage?: true;
 }
 /** Host-compatible prompt split around the conversation history. */
 interface RoleplayAssembledPrompt {
@@ -905,10 +929,11 @@ interface RoleplayTurnPlanReceipt {
  * 3 adds the independent turn strategy plus semantic state actions, 4 adds
  * the exact tool policy prepared for the model request and runtime gates,
  * 5 moves imported state rules into the post-narrative settlement program,
- * 6 adds native state schemes plus the settlement cadence that gates them, and
- * 7 adds whether narrative requests may leave their tool schemas off.
+ * 6 adds native state schemes plus the settlement cadence that gates them,
+ * 7 adds whether narrative requests may leave their tool schemas off, and
+ * 8 records where the turn placed World Info relative to the chat history.
  */
-type RoleplayTurnPlanSchema = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+type RoleplayTurnPlanSchema = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 /** Revision change observed at the turn boundary for one runtime state namespace. */
 interface RoleplayStateSettlement {
   readonly id: string;
@@ -1126,6 +1151,10 @@ interface RoleplayWorldResourcePlan {
   readonly beforeActorOrigins?: readonly RoleplayPromptOrigin[];
   /** Authorship paired positionally with `afterActor`, for the prompt preview. */
   readonly afterActorOrigins?: readonly RoleplayPromptOrigin[];
+  /** Whether each `beforeActor` entry is always-on, paired positionally. */
+  readonly beforeActorResidency?: readonly boolean[];
+  /** Whether each `afterActor` entry is always-on, paired positionally. */
+  readonly afterActorResidency?: readonly boolean[];
 }
 /** World preparation result in semantic experience/actor order. */
 interface RoleplayWorldPlan {
@@ -1144,6 +1173,18 @@ interface RoleplayWorldPlan {
     readonly actorBefore: readonly RoleplayPromptOrigin[];
     readonly actorAfter: readonly RoleplayPromptOrigin[];
     readonly experienceAfterActor: readonly RoleplayPromptOrigin[];
+  };
+  /**
+   * Whether each entry is always-on, paired positionally with the same arrays.
+   *
+   * Only read when World Info is placed before the history, where the resident
+   * run is ordered first so a change in the triggered set cannot invalidate it.
+   */
+  readonly residency?: {
+    readonly experienceBeforeActor: readonly boolean[];
+    readonly actorBefore: readonly boolean[];
+    readonly actorAfter: readonly boolean[];
+    readonly experienceAfterActor: readonly boolean[];
   };
 }
 /** Content-free phase outcome useful for diagnostics and later orchestration. */
@@ -1186,6 +1227,14 @@ interface RoleplayPromptTransformPlan {
 /** Final prompt plus adapter expansion diagnostics. */
 interface RoleplayTurnPromptPlan extends RoleplayProviderPromptPlan {
   readonly systemPromptText: string;
+  /**
+   * Where this turn put World Info, frozen at prepare time.
+   *
+   * Recorded rather than re-read so a replay reproduces the order the turn
+   * actually ran at, even after the workspace setting changes. Absent on
+   * plans written before the setting existed, which all ran after-history.
+   */
+  readonly worldInfoPlacement?: RoleplayWorldInfoPlacement;
   readonly transforms: RoleplayPromptTransformPlan;
   readonly diagnostics: {
     readonly enabledModules: number;

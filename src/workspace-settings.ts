@@ -6,6 +6,11 @@ import {
   normalizeToolGuidanceConfig,
   type ResolvedToolGuidanceConfig,
 } from './roleplay-tool-guidance.ts'
+import {
+  DEFAULT_WORLD_INFO_PLACEMENT,
+  normalizeWorldInfoPlacement,
+  type RoleplayWorldInfoPlacement,
+} from './world-info-placement.ts'
 
 /** Same-origin Host route for Agent RP workspace preferences. */
 export const AGENT_RP_WORKSPACE_SETTINGS_PATH = '/api/agent-rp/settings'
@@ -103,6 +108,8 @@ export interface AgentRpSettings {
   readonly imageProfiles: ImageGenerationProfile[]
   /** Agent tool policy and deployment-owned MCP instructions. */
   readonly toolGuidance: ResolvedToolGuidanceConfig
+  /** Whether World Info is sent before or after the chat history. */
+  readonly worldInfoPlacement: RoleplayWorldInfoPlacement
   /** Independent model workers run after the character Agent finishes its visible reply. */
   readonly turnWorkers: RoleplayTurnWorkerSettings
   /** Browser resource limits for isolated Character Card frontends. */
@@ -210,6 +217,7 @@ export const DEFAULT_AGENT_RP_SETTINGS: AgentRpSettings = {
     settings: DEFAULT_IMAGE_GENERATION_SETTINGS,
   }],
   toolGuidance: DEFAULT_TOOL_GUIDANCE,
+  worldInfoPlacement: DEFAULT_WORLD_INFO_PLACEMENT,
   turnWorkers: {
     narrativeReview: { enabled: false },
     stateVerification: { model: null, reasoningEffort: null },
@@ -399,6 +407,7 @@ export function normalizeAgentRpSettings(value: unknown): AgentRpSettings {
   }
   const imageGeneration = normalizeImageGenerationSettings(record.imageGeneration)
   const toolGuidance = normalizeToolGuidanceConfig(record.toolGuidance)
+  const worldInfoPlacement = normalizeWorldInfoPlacement(record.worldInfoPlacement)
   const lightFrontendRecord = record.lightFrontend
   if (lightFrontendRecord !== undefined
     && (typeof lightFrontendRecord !== 'object' || lightFrontendRecord === null || Array.isArray(lightFrontendRecord))) {
@@ -515,6 +524,7 @@ export function normalizeAgentRpSettings(value: unknown): AgentRpSettings {
     activeImageProfileId,
     imageProfiles,
     toolGuidance,
+    worldInfoPlacement,
     turnWorkers: {
       narrativeReview: { enabled: narrativeReviewEnabled },
       stateVerification: {

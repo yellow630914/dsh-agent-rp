@@ -1168,6 +1168,7 @@ export function installAgentRp(
       deployment: config,
       resolved,
       toolGuidance: workspaceSettings.get().toolGuidance,
+      worldInfoPlacement: workspaceSettings.get().worldInfoPlacement,
       ...(options.ejsTemplateEngine === undefined ? {} : { templateEngine: options.ejsTemplateEngine }),
     })
     turnCoordinator.prepare(agent, plan)

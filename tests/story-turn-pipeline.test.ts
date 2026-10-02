@@ -11,6 +11,7 @@ import type { StoryWorkspaceSnapshot } from '../src/story-workspace-protocol.ts'
 import { appendAgentRpSessionEvent } from '../src/session-event-compat.ts'
 import { createStoryCharacterId, StoryWorkspaceStore } from '../src/story-workspace.ts'
 import { materializeStoryTurn, runStoryTurnPipeline } from '../src/story-turn-pipeline.ts'
+import { resolveModelInfoDouble } from './model-reasoning-double.ts'
 import { installIgnorableSessionEventFixture } from './session-event-fixture.ts'
 
 installIgnorableSessionEventFixture()
@@ -92,6 +93,7 @@ test('runs logged story stages while keeping each character request privately sc
     },
     sessions: { flush: async () => true },
     llm: {
+      resolveModelInfo: resolveModelInfoDouble(),
       stream(options: {
         readonly provider: string
         readonly model: string
@@ -237,6 +239,7 @@ test('materializes continuity from the actually visible reply instead of the pre
   const fake = {
     sessions: { flush: async () => true },
     llm: {
+      resolveModelInfo: resolveModelInfoDouble(),
       stream(options: { readonly messages: readonly unknown[] }) {
         requestBody = JSON.stringify(options.messages)
         const text = JSON.stringify({

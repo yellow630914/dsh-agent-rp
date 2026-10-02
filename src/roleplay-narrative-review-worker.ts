@@ -3,7 +3,6 @@
 import {
   BlockAssembler,
   createUserMessage,
-  ReasoningEffortId,
   type GenerateOptions,
 } from '@deepseek-ai/dsh-llm'
 import {
@@ -18,6 +17,7 @@ import {
 } from './roleplay-act-model-log.ts'
 import type { RoleplayTurnWorker, RoleplayTurnWorkerOutcome } from './roleplay-turn-worker.ts'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
+import { negotiateWorkerReasoningEffort } from './worker-reasoning-effort.ts'
 
 /** Exact lightweight request dispatched to the narrative review Worker. */
 export interface RoleplayNarrativeReviewRequestRecord {
@@ -62,18 +62,32 @@ function replyText(reply: ReturnType<typeof currentVisibleRoleplayReply>): strin
   return reply?.data.message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n').trim() ?? ''
 }
 
-function reviewRequest(
+/**
+ * Room for a model that will not stop thinking, on top of the rewrite itself.
+ *
+ * This Worker replaces the visible reply with whatever comes back and has no
+ * lower bound on it, so a rewrite truncated by reasoning would overwrite good
+ * prose with a cut-off version rather than fail.
+ */
+const NARRATIVE_REVIEW_REASONING_HEADROOM = 8_192
+
+async function reviewRequest(
   input: Parameters<RoleplayTurnWorker['run']>[0],
   source: string,
-): GenerateOptions {
+): Promise<GenerateOptions> {
   const header = input.agent.session.requestHeader()
   if (header === undefined) throw new Error('Narrative review Worker has no provider request header')
-  const requestedMaxTokens = Math.max(1_024, Math.min(8_192, Math.ceil(source.length * 1.2)))
+  const { reasoningEffort: _sessionReasoningEffort, ...headerConfig } = header.config
+  const effort = await negotiateWorkerReasoningEffort(input.ctx, header.config, 'off', input.signal)
+  const rewriteMaxTokens = Math.max(1_024, Math.min(8_192, Math.ceil(source.length * 1.2)))
+  const requestedMaxTokens = effort.reasoningOff
+    ? rewriteMaxTokens
+    : rewriteMaxTokens + NARRATIVE_REVIEW_REASONING_HEADROOM
   return {
-    ...header.config,
-    reasoningEffort: ReasoningEffortId('off'),
+    ...headerConfig,
+    ...effort.config,
     temperature: 0.2,
-    maxTokens: Math.min(header.config.maxTokens ?? requestedMaxTokens, requestedMaxTokens),
+    maxTokens: Math.min(headerConfig.maxTokens ?? requestedMaxTokens, requestedMaxTokens),
     system: [
       '你是角色扮演运行时中独立于角色 Agent 的正文审阅 Worker。角色 Agent 已经完成剧情决策；不要重新推演剧情。',
       '只修复明显的复读、病句、衔接断裂和正文外的解释性污染。保留全部事实、因果、行动、对白归属、叙事视角与既有文风。',
@@ -106,7 +120,7 @@ export function createRoleplayNarrativeReviewWorker(enabled: () => boolean): Rol
       const reply = currentVisibleRoleplayReply(input.agent, input.turn)
       const source = replyText(reply)
       if (reply === undefined || source === '') return { outcome: 'skipped' }
-      const request = reviewRequest(input, source)
+      const request = await reviewRequest(input, source)
       const requestId = crypto.randomUUID()
       const requestEvent = appendAgentRpSessionEvent(input.agent.session, 'agent-rp/narrative-review-request', {
         format: 0,

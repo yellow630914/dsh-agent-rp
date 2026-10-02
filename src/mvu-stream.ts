@@ -6,7 +6,6 @@ import {
   BlockAssembler,
   createUserMessage,
   isAgentLoopRequest,
-  ReasoningEffortId,
   type GenerateOptions,
   type StreamChunk,
   type TokenUsage,
@@ -28,6 +27,7 @@ import {
 } from './mvu.ts'
 import type { RoleplayTurnPlan } from './roleplay-turn-plan.ts'
 import { supportsAgentRpSessionEvents } from './session-event-compat.ts'
+import { negotiateWorkerReasoningEffort } from './worker-reasoning-effort.ts'
 
 export interface PreparedMvuResponseRepair {
   readonly engine: 'mvu-v0'
@@ -86,17 +86,24 @@ function addUsage(left: TokenUsage | undefined, right: TokenUsage | undefined): 
   }
 }
 
-function supplementRequest(
+/** Budget for one supplement block when the model will not spend any of it thinking. */
+const MVU_SUPPLEMENT_MAX_TOKENS = 8_192
+/** Budget when reasoning cannot be turned off and shares the same completion. */
+const MVU_SUPPLEMENT_REASONING_MAX_TOKENS = 16_384
+
+async function supplementRequest(
+  ctx: Context,
   options: GenerateOptions,
   current: JsonValue,
   mvuRules: string | undefined,
   choiceRules: string | undefined,
   assistantReply: string,
-): GenerateOptions {
+): Promise<GenerateOptions> {
+  const effort = await negotiateWorkerReasoningEffort(ctx, options, 'off', options.signal)
   return {
     provider: options.provider,
     model: options.model,
-    reasoningEffort: ReasoningEffortId('off'),
+    ...effort.config,
     messages: [createUserMessage({
       source: { kind: 'agent-rp', plugin: 'dsh-agent-rp' },
       content: [{
@@ -121,7 +128,7 @@ function supplementRequest(
         ].join('\n'),
       }],
     })],
-    maxTokens: 8192,
+    maxTokens: effort.reasoningOff ? MVU_SUPPLEMENT_MAX_TOKENS : MVU_SUPPLEMENT_REASONING_MAX_TOKENS,
     temperature: 0,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   }
@@ -192,7 +199,8 @@ export function installMvuStreamCompletion(
         if (finish !== undefined) yield finish
         return
       }
-      const request = supplementRequest(
+      const request = await supplementRequest(
+        ctx,
         options,
         current,
         missingMvu ? mvuRules : undefined,

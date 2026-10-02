@@ -31,6 +31,7 @@ import {
 import { parseRoleplayStateOperations } from './roleplay-state-operations.ts'
 import type { BoundRoleplayTurnPlan, RoleplayTurnPlanReference } from './roleplay-turn-settlement.ts'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
+import { negotiateWorkerReasoningEffort } from './worker-reasoning-effort.ts'
 import { applyMvuOperations, type MvuStateOperation } from './mvu.ts'
 import type { RoleplayTurnWorkerOutcome } from './roleplay-turn-worker.ts'
 import type {
@@ -322,19 +323,24 @@ function settlementEvidence(
   ].join('\n')
 }
 
-function settlementRequest(
+async function settlementRequest(
+  ctx: Context,
   agent: Agent,
   evidence: string,
   target: RoleplayStateActionPlan,
   signal: AbortSignal,
-): GenerateOptions {
+): Promise<GenerateOptions> {
   const header = agent.session.requestHeader()
   if (header === undefined) throw new Error('Roleplay staged settlement has no provider request header')
+  // The Session's own effort must not survive into a Worker request: dropping
+  // `off` would otherwise leave whatever the player chose for the roleplay.
+  const { reasoningEffort: _sessionReasoningEffort, ...headerConfig } = header.config
+  const effort = await negotiateWorkerReasoningEffort(ctx, header.config, 'off', signal)
   return {
-    ...header.config,
-    reasoningEffort: ReasoningEffortId('off'),
+    ...headerConfig,
+    ...effort.config,
     temperature: 0,
-    maxTokens: STATE_SETTLEMENT_MAX_TOKENS,
+    maxTokens: effort.reasoningOff ? STATE_SETTLEMENT_MAX_TOKENS : STATE_VERIFICATION_REASONING_MAX_TOKENS,
     system: [
       '你是角色扮演运行时的后台状态结算器。剧情正文已经完成；不要续写、改写、评价或解释剧情。',
       '比较本轮玩家输入、角色正文与当前状态，只计算正文已经造成的状态变化。',
@@ -352,23 +358,32 @@ function settlementRequest(
   }
 }
 
-function settlementVerificationRequest(
+async function settlementVerificationRequest(
+  ctx: Context,
   agent: Agent,
   evidence: string,
   target: RoleplayStateActionPlan,
   verification: RoleplayStateVerificationSettings,
   signal: AbortSignal,
   schemeBudget: number | undefined,
-): GenerateOptions {
+): Promise<GenerateOptions> {
   const header = agent.session.requestHeader()
   if (header === undefined) throw new Error('Roleplay staged settlement has no provider request header')
   const { reasoningEffort: _sessionReasoningEffort, ...headerConfig } = header.config
-  const config = resolveRoleplayStateVerificationConfig(header.config, verification)
+  const { reasoningEffort: persistedEffort, ...route } = resolveRoleplayStateVerificationConfig(
+    header.config, verification,
+  )
+  // The persisted effort was chosen against whichever model was selected then;
+  // the verification route may since have moved to one that never accepts it.
+  const effort = persistedEffort === undefined
+    ? { config: {}, reasoningOff: false }
+    : await negotiateWorkerReasoningEffort(ctx, route, String(persistedEffort), signal)
   // Only an explicit "off" guarantees the whole budget reaches the answer.
-  const reasoningOff = config.reasoningEffort !== undefined && String(config.reasoningEffort) === 'off'
+  const reasoningOff = effort.reasoningOff
   return {
     ...headerConfig,
-    ...config,
+    ...route,
+    ...effort.config,
     temperature: 0,
     // An explicit per-scheme budget wins: how much room the verification needs
     // scales with how large that scheme's state grows.
@@ -729,7 +744,7 @@ async function settleStagedState(
     planEventSeq: planEvent.seq,
     target,
     current: current,
-    request: settlementRequest(input.agent, evidence, target, input.signal),
+    request: await settlementRequest(input.ctx, input.agent, evidence, target, input.signal),
     stage: 'proposal',
   })
   if (proposal.outcome === 'failed') {
@@ -748,7 +763,8 @@ async function settleStagedState(
     planEventSeq: planEvent.seq,
     target,
     current: current,
-    request: settlementVerificationRequest(
+    request: await settlementVerificationRequest(
+      input.ctx,
       input.agent,
       evidence,
       target,

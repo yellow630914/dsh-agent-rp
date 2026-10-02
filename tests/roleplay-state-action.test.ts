@@ -63,6 +63,7 @@ import {
   registerStExtensionGenerationCoordinator,
   StExtensionGenerationCoordinator,
 } from '../src/st-extension-generation.ts'
+import { resolveModelInfoDouble } from './model-reasoning-double.ts'
 import { installIgnorableSessionEventFixture } from './session-event-fixture.ts'
 
 installIgnorableSessionEventFixture()
@@ -574,6 +575,7 @@ test('settles MVU after the visible reply through a replayable local-provider st
   const fake = {
     sessions: { flush: async () => true },
     llm: {
+      resolveModelInfo: resolveModelInfoDouble(),
       stream(options: {
         readonly provider: string
         readonly model: string
@@ -837,6 +839,7 @@ async function emptyStagedSettlementFixture(input: {
   const fake = {
     sessions: { flush: async () => true },
     llm: {
+      resolveModelInfo: resolveModelInfoDouble(),
       stream() {
         requestCount += 1
         return (async function* () {
@@ -883,6 +886,7 @@ async function providerFailureSettlementFixture(input: {
   const fake = {
     sessions: { flush: async () => true },
     llm: {
+      resolveModelInfo: resolveModelInfoDouble(),
       providerRetryPolicy() {
         return {
           mode: 'normal' as const,
@@ -1110,12 +1114,16 @@ test('refuses a second state settlement while one is already running for the Ses
   const { session, plan } = preparedEmptyStagedSettlement({ id: 'staged-state-concurrent' })
   let admit = (): void => {}
   const held = new Promise<void>((resolve) => { admit = resolve })
+  let started = (): void => {}
+  const firstRequestStarted = new Promise<void>((resolve) => { started = resolve })
   let requestCount = 0
   const fake = {
     sessions: { flush: async () => true },
     llm: {
+      resolveModelInfo: resolveModelInfoDouble(),
       stream() {
         requestCount += 1
+        started()
         return (async function* () {
           if (requestCount === 1) await held
           const text = '{"operations":[]}'
@@ -1138,6 +1146,9 @@ test('refuses a second state settlement while one is already running for the Ses
   })
 
   const first = settle()
+  // Building a request now asks the model which efforts it declares, so wait
+  // for the first dispatch instead of assuming it lands within one tick.
+  await firstRequestStarted
   assert.deepEqual(await settle(), { outcome: 'skipped' })
   assert.equal(requestCount, 1)
   admit()

@@ -9,6 +9,7 @@ import { readGenerationGroups } from '../src/generation.ts'
 import { createRoleplayNarrativeReviewWorker } from '../src/roleplay-narrative-review-worker.ts'
 import { RoleplayTurnWorkerRegistry, type RoleplayTurnWorkerInput } from '../src/roleplay-turn-worker.ts'
 import type { BoundRoleplayTurnPlan } from '../src/roleplay-turn-settlement.ts'
+import { resolveModelInfoDouble } from './model-reasoning-double.ts'
 import { installIgnorableSessionEventFixture } from './session-event-fixture.ts'
 
 installIgnorableSessionEventFixture()
@@ -72,6 +73,7 @@ test('reviews one reply through an isolated request and preserves the original a
   const fake = {
     sessions: { flush: async () => true },
     llm: {
+      resolveModelInfo: resolveModelInfoDouble(),
       stream(options: { readonly system?: string; readonly messages: readonly unknown[] }) {
         system = options.system ?? ''
         messages = JSON.stringify(options.messages)

@@ -5,13 +5,13 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import {
   BlockAssembler,
   createUserMessage,
-  ReasoningEffortId,
   type GenerateOptions,
 } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
 import { roleplayDialogueHistory } from './roleplay-surface-overlay.ts'
 import { roleplayActModelDispatch, roleplayActModelFailure, type RoleplayActModelDispatch, type RoleplayActModelFailureKind } from './roleplay-act-model-log.ts'
 import { appendAgentRpSessionEvent } from './session-event-compat.ts'
+import { negotiateWorkerReasoningEffort } from './worker-reasoning-effort.ts'
 import { compileStoryCharacterContext, StoryWorkspaceStore } from './story-workspace.ts'
 import type { StoryWorkspaceSnapshot } from './story-workspace-protocol.ts'
 import { searchStoryWorkspaceSources } from './story-research.ts'
@@ -373,19 +373,24 @@ async function mapStoryPeers<T, R>(
   })
 }
 
-function generateOptions(
+/** Room for a model that will not stop thinking, on top of a stage's own output. */
+const STORY_STAGE_REASONING_HEADROOM = 8_192
+
+async function generateOptions(
   input: RunStoryTurnPipelineInput,
   system: string,
   body: string,
   maxTokens: number,
   temperature: number,
-): GenerateOptions {
+): Promise<GenerateOptions> {
   const base = baseGenerateOptions(input)
+  const effort = await negotiateWorkerReasoningEffort(input.ctx, base, 'off', input.signal)
+  const stageMaxTokens = effort.reasoningOff ? maxTokens : maxTokens + STORY_STAGE_REASONING_HEADROOM
   return {
     ...base,
-    reasoningEffort: ReasoningEffortId('off'),
+    ...effort.config,
     temperature,
-    maxTokens: Math.min(base.maxTokens ?? maxTokens, maxTokens),
+    maxTokens: Math.min(base.maxTokens ?? stageMaxTokens, stageMaxTokens),
     system,
     messages: [createUserMessage({
       source: { kind: 'agent-rp', plugin: 'dsh-agent-rp-story-engine' },
@@ -511,7 +516,7 @@ export async function runStoryTurnPipeline(input: RunStoryTurnPipelineInput): Pr
     '<web_research>', webResearch, '</web_research>',
     '<player_input>', playerInput, '</player_input>',
   ].join('\n')
-  const research = await runStage(input, 'research', generateOptions(
+  const research = await runStage(input, 'research', await generateOptions(
     input,
     '你是剧情研究 Worker。只提取与本轮输入直接相关的既有事实、原著约束和连续性信息；区分明确事实与不确定推测。不要设计剧情，不要替角色决定行动。只返回精炼的研究简报。',
     researchBody,
@@ -529,7 +534,7 @@ export async function runStoryTurnPipeline(input: RunStoryTurnPipelineInput): Pr
       const context = compileStoryCharacterContext(input.workspace, character.id, {
         playerInput,
       })
-      const decision = await runStage(input, 'character', generateOptions(
+      const decision = await runStage(input, 'character', await generateOptions(
         input,
         '你是一个只拥有指定人物认知的角色 Worker。独立判断人物此刻能观察到什么、相信什么、想做什么以及可能说什么。不能使用未出现在输入中的知识。不要写完整正文，只返回给导演的行动提案。',
         context.text,
@@ -541,7 +546,7 @@ export async function runStoryTurnPipeline(input: RunStoryTurnPipelineInput): Pr
   )).filter((value): value is string => value !== undefined)
 
   const fallback = directorFallback(input, playerInput, researchText, characterDecisions)
-  const director = await runStage(input, 'director', generateOptions(
+  const director = await runStage(input, 'director', await generateOptions(
     input,
     '你是剧情导演 Worker。依据大纲、伏笔、研究简报和各人物独立行动提案，为本轮设计具体正文方案。保证因果连续，尊重玩家输入；隐藏知识只能影响拥有者或导演安排，不能让不知情人物表现出全知。明确每个启用正文分区应写什么。不要直接向玩家解释内部资料。',
     [
@@ -575,7 +580,7 @@ export async function runStoryTurnPipeline(input: RunStoryTurnPipelineInput): Pr
       async section => {
         input.signal.throwIfAborted()
         const existing = input.workspace.documents.sections.find(document => document.id === section.id)?.content ?? ''
-        const draft = await runStage(input, 'section', generateOptions(
+        const draft = await runStage(input, 'section', await generateOptions(
           input,
           `你是“${section.name}”分区的 ${section.kind} Worker。${sectionPurpose(input, section)}保持既有文风和连续性，只返回这个分区可直接展示的内容。`,
           [
@@ -596,7 +601,7 @@ export async function runStoryTurnPipeline(input: RunStoryTurnPipelineInput): Pr
     )).filter((value): value is StorySectionDraft => value !== undefined)
   }
   const uneditedDraft = renderSectionDrafts(sectionDrafts).trim() || directorBrief
-  const edited = await runStage(input, 'editor', generateOptions(
+  const edited = await runStage(input, 'editor', await generateOptions(
     input,
     '你是最终正文编辑 Worker。删除复读、八股句式、空泛总结、机械排比和正文外解释；保留全部事实、行动、对白归属、因果、叙事视角与必要格式。不要增加事件，不要改变人物认知。输入含多个二级标题时必须保留标题、顺序与分区职责，不得合并分区。只返回可直接展示的完整正文。',
     `<ordered_sections>\n${uneditedDraft}\n</ordered_sections>`,
@@ -653,7 +658,7 @@ export async function materializeStoryTurn(input: {
     signal: input.signal,
   }
   const resultEventSeqs: number[] = []
-  const continuity = await runStage(stageInput, 'continuity', generateOptions(
+  const continuity = await runStage(stageInput, 'continuity', await generateOptions(
     stageInput,
     [
       '你是剧情连续性记录 Worker。正文已经完成；不要续写、改写或评价正文。',

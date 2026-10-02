@@ -31,6 +31,7 @@ import {
   initializeTavernHelperState,
   parseTavernHelperMutationRequest,
 } from '../src/tavern-helper.ts'
+import { resolveModelInfoDouble } from './model-reasoning-double.ts'
 import { installIgnorableSessionEventFixture } from './session-event-fixture.ts'
 
 installIgnorableSessionEventFixture()
@@ -226,6 +227,7 @@ test('repairs a missing MVU block from only the frozen act plan in a cardless Se
   const ctx = {
     on(_event: string, callback: StreamHandler) { handler = callback },
     llm: {
+      resolveModelInfo: resolveModelInfoDouble(),
       stream(options: GenerateOptions) {
         supplementalRequest = options
         return (async function* (): AsyncIterable<StreamChunk> {

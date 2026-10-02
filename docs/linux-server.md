@@ -10,7 +10,7 @@
 
 ```bash
 installer_path="$(mktemp)"
-curl -fsSL https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/my-main/scripts/install-linux.sh -o "$installer_path"
+curl -fsSL https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/main/scripts/install-linux.sh -o "$installer_path"
 bash "$installer_path"
 ```
 

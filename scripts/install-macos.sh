@@ -6,7 +6,7 @@ umask 077
 
 DSH_VERSION="${DSH_VERSION:-0.1.3-alpha.2}"
 PLUGIN_SOURCE="${PLUGIN_SOURCE:-@hewzhew/dsh-agent-rp@next}"
-RUNNER_SOURCE_BASE="${RUNNER_SOURCE_BASE:-https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/my-main/host-runner}"
+RUNNER_SOURCE_BASE="${RUNNER_SOURCE_BASE:-https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/main/host-runner}"
 REGISTRY="${REGISTRY:-}"
 AGENT_HOST_PORT="${AGENT_HOST_PORT:-3080}"
 

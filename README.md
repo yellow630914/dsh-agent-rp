@@ -39,7 +39,7 @@ dsh plugin add '@hewzhew/dsh-agent-rp@next'
 
 ```powershell
 $installerPath = Join-Path $env:TEMP 'install-dsh-agent-rp.ps1'
-Invoke-WebRequest 'https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/my-main/scripts/install-windows.ps1' -OutFile $installerPath
+Invoke-WebRequest 'https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/main/scripts/install-windows.ps1' -OutFile $installerPath
 powershell -NoProfile -ExecutionPolicy Bypass -File $installerPath -Start
 ```
 
@@ -61,7 +61,7 @@ Apple Silicon 与 Intel Mac 使用独立安装器。安装器会在 `~/.dsh/bin/
 
 ```bash
 installer_path="$(mktemp)"
-curl -fsSL https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/my-main/scripts/install-macos.sh -o "$installer_path"
+curl -fsSL https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/main/scripts/install-macos.sh -o "$installer_path"
 bash "$installer_path" --start
 ```
 
@@ -73,7 +73,7 @@ bash "$installer_path" --start
 
 ```bash
 installer_path="$(mktemp)"
-curl -fsSL https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/my-main/scripts/install-linux.sh -o "$installer_path"
+curl -fsSL https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/main/scripts/install-linux.sh -o "$installer_path"
 bash "$installer_path" --start
 ```
 

@@ -2,7 +2,7 @@
 param(
   [string]$DshVersion = '0.1.3-alpha.2',
   [string]$PluginSource = '@hewzhew/dsh-agent-rp@next',
-  [string]$RunnerSourceBase = 'https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/my-main/host-runner',
+  [string]$RunnerSourceBase = 'https://raw.githubusercontent.com/yellow630914/dsh-agent-rp/main/host-runner',
   [string]$Registry,
   [switch]$ChinaMirror,
   [switch]$Start

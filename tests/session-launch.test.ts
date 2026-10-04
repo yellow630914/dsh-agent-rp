@@ -6,7 +6,11 @@ import test from 'node:test'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SESSION_FORMAT_VERSION, Session, SessionId, type SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { CommandId } from '@deepseek-ai/dsh-commands'
 import { CharacterLibrary } from '../src/character-library.ts'
+import { executeAgentRpMemoryCommand } from '../src/memory-command.ts'
+import { readAgentRpMemoryHistory } from '../src/memory.ts'
 import { readActiveSessionCharacter } from '../src/import/session-character.ts'
 import { readActiveSessionPreset } from '../src/import/session-preset.ts'
 import { readActiveSessionWorldInfos } from '../src/import/session-world-info.ts'
@@ -545,6 +549,135 @@ test('refuses a branch past the last floor', (context) => {
   const floors = roleplayChatFloors(source).length
   assert.throws(() => prepareAgentRpBranchSession(source, floors), /不存在/u)
   assert.throws(() => prepareAgentRpBranchSession(source, -1), /起始楼层无效/u)
+})
+
+function branchSource(context: test.TestContext, id: string): Session {
+  const { characters, chats, presets, worldInfos } = libraries(context)
+  const character = characters.importFile({
+    data: new Uint8Array(readFileSync('tests/fixtures/manual-character-card.json')),
+    filename: 'character.json',
+    mediaType: 'application/json',
+  })
+  const prepared = prepareAgentRpSession(characters, chats, presets, worldInfos, {
+    format: 0,
+    sourceSessionId: 'source',
+    kind: 'character',
+    characterId: character.id,
+    greetingIndex: 0,
+  })
+  return Session.create(SessionId(id), prepared.seed)
+}
+
+function nextTurn(session: Session): number {
+  return Math.max(...session.snapshotEvents().flatMap(event => event.type === 'turn/start' ? [event.data.turn] : [])) + 1
+}
+
+function runMemoryCommand(session: Session, request: object, sequence: number): void {
+  const commandId = CommandId(`branch-memory-command-${sequence}`)
+  session.append('command/run', { commandId, name: 'rp-memory', source: { kind: 'user' } })
+  const result = executeAgentRpMemoryCommand({
+    commandId, agent: { session } as unknown as Agent, rawInput: JSON.stringify(request),
+  })
+  session.append('command/done', { commandId, ...result })
+}
+
+function memoryTopics(events: Parameters<typeof readAgentRpMemoryHistory>[0]): readonly string[] {
+  return readAgentRpMemoryHistory(events).active.map(memory => `${memory.kind}|${memory.subject}|${memory.text}`)
+}
+
+test('a branch keeps memory the player edited between turns readable, once', (context) => {
+  const source = branchSource(context, 'branch-memory-source')
+  appendConversationTurn(source, nextTurn(source), '先去港口。', '好，我们沿着潮声往前走。')
+  // A memory-manager command cites its own `command/run` by seq. The branch
+  // renumbers the events it keeps, so carrying this record verbatim would leave
+  // the citation pointing at something else and fail every later prompt.
+  runMemoryCommand(source, { format: 0, operation: 'add', kind: 'fact', subject: '港口', text: '两人去过港口。' }, 1)
+  appendConversationTurn(source, nextTurn(source), '改去钟楼。', '那就转向钟楼。')
+
+  const branched = prepareAgentRpBranchSession(source, 3, '白露')
+  assert.deepEqual(memoryTopics(branched.seed), ['fact|港口|两人去过港口。'])
+  assert.equal(branched.seed.some(event => event.type === 'command/run' && event.data.name === 'rp-memory'), false)
+
+  // Branching the branch must not apply the first seed a second time.
+  const child = Session.create(SessionId('branch-memory-child'), branched.seed)
+  appendConversationTurn(child, nextTurn(child), '继续。', '好的。')
+  const second = prepareAgentRpBranchSession(child, 1, '白露')
+  assert.deepEqual(memoryTopics(second.seed), ['fact|港口|两人去过港口。'])
+  assert.equal(second.seed.filter(event => event.type === 'agent-rp/memory-seed').length, 1)
+  // The source keeps its own record untouched.
+  assert.deepEqual(memoryTopics(source.snapshotEvents()), ['fact|港口|两人去过港口。'])
+})
+
+test('a branch folds completed memory into the carried set by topic', (context) => {
+  const source = branchSource(context, 'branch-completed-memory')
+  appendConversationTurn(source, nextTurn(source), '先去港口。', '好，我们沿着潮声往前走。')
+  runMemoryCommand(source, { format: 0, operation: 'add', kind: 'fact', subject: '港口', text: '两人去过港口。' }, 1)
+  runMemoryCommand(source, { format: 0, operation: 'add', kind: 'relationship', subject: '称呼', text: '白露叫旅人“客人”。' }, 2)
+  appendConversationTurn(source, nextTurn(source), '改去钟楼。', '那就转向钟楼。')
+  const before = source.snapshotEvents().length
+
+  const branched = prepareAgentRpBranchSession(source, 3, '白露', [
+    // Same topic as an active memory, however it is cased or padded: replaced in place.
+    { kind: 'relationship', subject: '称呼', text: '白露改口叫旅人的名字。' },
+    { kind: 'promise', subject: '钟楼之约', text: '白露答应下次带旅人去钟楼。' },
+  ])
+  assert.deepEqual(memoryTopics(branched.seed), [
+    'fact|港口|两人去过港口。',
+    'relationship|称呼|白露改口叫旅人的名字。',
+    'promise|钟楼之约|白露答应下次带旅人去钟楼。',
+  ])
+  // A timeline entry is titled by its span, so extending a day renames it: the
+  // entry lands on the memory it names, in that memory's place.
+  runMemoryCommand(source, {
+    format: 0, operation: 'add', kind: 'event', subject: '【第2天 清晨 ~ 第2天 午后】', text: '[清晨] 两人离开旅店。',
+  }, 9)
+  const extended = prepareAgentRpBranchSession(source, 3, '白露', [
+    {
+      kind: 'event', subject: '【第2天 清晨 ~ 第2天 深夜】', text: '[清晨] 两人离开旅店。\n[深夜] 白露第一次叫了旅人的名字。',
+      replaces: '【第2天 清晨 ~ 第2天 午后】',
+    },
+    { kind: 'event', subject: '【第3天 清晨 ~ 第3天 傍晚】', text: '[清晨] 两人抵达王都东门。' },
+  ])
+  assert.deepEqual(memoryTopics(extended.seed), [
+    'fact|港口|两人去过港口。',
+    'relationship|称呼|白露叫旅人“客人”。',
+    'event|【第2天 清晨 ~ 第2天 深夜】|[清晨] 两人离开旅店。\n[深夜] 白露第一次叫了旅人的名字。',
+    'event|【第3天 清晨 ~ 第3天 傍晚】|[清晨] 两人抵达王都东门。',
+  ])
+  // The proposal becomes durable only in the branch; the source is not written.
+  assert.equal(source.snapshotEvents().length, before + 2)
+  assert.equal(memoryTopics(source.snapshotEvents()).length, 3)
+  // The branch replays as a Session and its memory stays editable there.
+  const replay = Session.create(SessionId('branch-completed-memory-child'), branched.seed)
+  runMemoryCommand(replay, { format: 0, operation: 'add', kind: 'event', subject: '雨', text: '两人在钟楼躲过雨。' }, 3)
+  assert.equal(memoryTopics(replay.snapshotEvents()).length, 4)
+})
+
+test('validates the memory a branch request carries', () => {
+  const base = { format: 0, sourceSessionId: 'source', kind: 'branch', fromFloor: 2 }
+  assert.deepEqual(parseAgentRpSessionLaunchRequest(base), base)
+  assert.deepEqual(parseAgentRpSessionLaunchRequest({ ...base, memory: [] }), base)
+  assert.deepEqual(parseAgentRpSessionLaunchRequest({
+    ...base, memory: [{ kind: 'fact', subject: ' 港口 ', text: ' 两人去过港口。 ' }],
+  }), { ...base, memory: [{ kind: 'fact', subject: '港口', text: '两人去过港口。' }] })
+  assert.deepEqual(parseAgentRpSessionLaunchRequest({
+    ...base, memory: [{ kind: 'event', subject: '【第2天】', text: '[清晨] 出发。', replaces: ' 【第2天 清晨】 ' }],
+  }), { ...base, memory: [{ kind: 'event', subject: '【第2天】', text: '[清晨] 出发。', replaces: '【第2天 清晨】' }] })
+  assert.throws(() => parseAgentRpSessionLaunchRequest({
+    ...base, memory: [{ kind: 'event', subject: '【第2天】', text: '[清晨] 出发。', replaces: 7 }],
+  }), /字段无效/u)
+  assert.throws(() => parseAgentRpSessionLaunchRequest({ ...base, memory: 'all' }), /带入的记忆无效/u)
+  assert.throws(() => parseAgentRpSessionLaunchRequest({
+    ...base, memory: [{ kind: 'rumor', subject: '流言', text: '不存在的类型。' }],
+  }), /字段无效/u)
+  assert.throws(() => parseAgentRpSessionLaunchRequest({
+    ...base,
+    memory: [{ kind: 'fact', subject: '港口', text: '一。' }, { kind: 'fact', subject: '港口 ', text: '二。' }],
+  }), /出现多次/u)
+  assert.throws(() => parseAgentRpSessionLaunchRequest({
+    ...base,
+    memory: Array.from({ length: 41 }, (_, index) => ({ kind: 'fact', subject: `主题${index}`, text: '内容。' })),
+  }), /最多带入 40 条/u)
 })
 
 test('rejects an absent, unfinished, or assistant-only rewrite turn', () => {

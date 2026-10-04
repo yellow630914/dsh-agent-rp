@@ -1,5 +1,6 @@
 /** Browser-safe requests for creating a seeded Agent RP Session. */
 
+import type { AgentRpMemoryMergeEntry } from './memory.ts'
 import type { SessionPersonaSnapshot } from './persona-library-protocol.ts'
 import type { RoleplayResourceSelection } from './roleplay-resource-catalog-protocol.ts'
 
@@ -89,6 +90,12 @@ export interface BranchSessionLaunchRequest {
   readonly kind: 'branch'
   /** First visible floor to keep, as the floor panel numbers them. */
   readonly fromFloor: number
+  /**
+   * Memory the player accepted for the floors being left behind. An entry takes
+   * the place of the active memory it names in `replaces`, or of the one filed
+   * under its own topic; any other entry is added.
+   */
+  readonly memory?: readonly AgentRpMemoryMergeEntry[]
 }
 
 /** Complete model-free Session launch accepted by the Agent RP Host. */

@@ -12,7 +12,7 @@ import { cardFromImportMeta, readActiveSessionCharacter } from './import/session
 import { readActiveSessionPreset } from './import/session-preset.ts'
 import { presetTavernHelperScripts } from './import/sillytavern-preset.ts'
 import { roleplaySurfaceNodes } from './roleplay-surface-overlay.ts'
-import { executeTavernChatMutation, type EstimateMessage } from './tavern-chat.ts'
+import { executeTavernChatMutation } from './tavern-chat.ts'
 import { tavernChatMessageSeqs } from './tavern-chat.ts'
 import {
   applyTavernHelperMutation,
@@ -92,14 +92,17 @@ export function prepareTavernHelperState(agent: Agent, previous = readTavernHelp
 export function executeTavernHelperMutation(invocation: {
   readonly agent: Agent
   readonly rawInput: string
-  /**
-   * The Host token meter's estimator. Hiding floors prices the range it
-   * shadows for the meter, and that price has to come from the meter's own
-   * estimator or its running total drifts from the surface it describes.
-   */
-  readonly estimateMessage?: EstimateMessage
 }): { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: SessionSeq } {
   const request = parseTavernHelperMutationRequest(invocation.rawInput)
+  // TAVERN-COMPAT(set-chat-hidden): closed at the one boundary every caller
+  // crosses — the floor panel no longer offers it and a script's `/hide` lands
+  // here. Hiding rewrote the Session with a `replace` nothing can undo; the
+  // floor panel's branch does the same job without touching this Session, and
+  // completes memory for the floors left behind. Sessions that already hid
+  // floors still replay: only new hides are refused.
+  if ('operation' in request && request.operation === 'set-chat-hidden') {
+    throw new Error('隐藏楼层已停用：它会不可还原地改写当前会话。请改用楼层面板的「另开分支」，之前的楼层可以先补全成记忆')
+  }
   validateTavernMutationCause(invocation.agent, request.cause)
   const presentation = request.cause === undefined
     ? undefined
@@ -142,12 +145,12 @@ export function executeTavernHelperMutation(invocation: {
   }
   const isChatMutation = 'operation' in request && (request.operation === 'set-chat-messages'
     || request.operation === 'create-chat-messages' || request.operation === 'delete-chat-messages'
-    || request.operation === 'rotate-chat-messages' || request.operation === 'set-chat-hidden')
+    || request.operation === 'rotate-chat-messages')
   if (isChatMutation && request.cause !== undefined && !active) {
     throw new Error('Tavern Helper chat mutation belongs to a reply that is no longer selected')
   }
   const chat = isChatMutation
-    ? executeTavernChatMutation(invocation.agent, request, initialized.hiddenPrefix, invocation.estimateMessage)
+    ? executeTavernChatMutation(invocation.agent, request, initialized.hiddenPrefix)
     : undefined
   const mutated = applyTavernHelperMutation(initialized, request)
   const next = chat === undefined ? mutated : {

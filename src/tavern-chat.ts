@@ -358,6 +358,10 @@ function rotateMessages(
  * 「从第 N 层开始新会话」（导出子范围 + 迁移聊天），它不改动当前会话，也不需要
  * 位置性 replace。玩家已改用后者，所以这一项是纯相容负担，优先移除候选。
  *
+ * 已停用：`executeTavernHelperMutation` 在命令入口拒绝新的 `set-chat-hidden`，楼层面板
+ * 也不再提供它。这个函数只剩两个用途——说明已经隐藏过楼层的旧会话是怎么写成的，以及
+ * 让锁住那种日志形状的测试继续造得出它。
+ *
  * Expressed as DSH's own shadow-price protocol rather than this plugin's
  * overlay: one `compaction/prune` naming the exact shadowed span, immediately
  * followed by one `user/message` that `replace`s it. The overlay is an

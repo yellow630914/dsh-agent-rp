@@ -478,3 +478,17 @@ test('clears every active memory with one record while the history stays readabl
   assert.throws(() => parseAgentRpMemoryCommandRequest('{"format":0,"operation":"forget-all","id":"memory-1"}'),
     /字段无效/u)
 })
+
+test('holds one memory of up to 1500 characters and refuses a longer one', () => {
+  // The cap was 1000 until timeline entries needed room for an eventful day.
+  const agent = { session: Session.create(SessionId('agent-rp-memory-length')) } as Agent
+  const request = (text: string): string => JSON.stringify({
+    format: 0, operation: 'add', kind: 'event', subject: '【第5天 清晨 ~ 第5天 深夜】', text,
+  })
+  runMemoryCommand(agent, request('字'.repeat(1_500)), 1)
+  const active = readAgentRpMemoryHistory(agent.session.snapshotEvents()).active
+  assert.equal(active[0]?.text.length, 1_500)
+  // It reaches the prompt whole, and it replays.
+  assert.equal(renderMemoryContext(agent.session.snapshotEvents()).includes('字'.repeat(1_500)), true)
+  assert.throws(() => parseAgentRpMemoryCommandRequest(request('字'.repeat(1_501))), /exceeds 1500 characters/u)
+})

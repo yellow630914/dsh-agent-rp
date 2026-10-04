@@ -3,6 +3,7 @@
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { SessionSeq, Session, SessionId, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
+import { AGENT_RP_MEMORY_TEXT_MAX_LENGTH } from './memory-protocol.ts'
 
 const PERSISTENT_MEMORY_INTENT = /(?:记住|记得|别忘|不要忘|以后|今后|下次|从现在起|remember|do(?:n['’]?t| not) forget|from now on|next time)/iu
 
@@ -115,7 +116,7 @@ export type AgentRpMemoryCommandRecord = AgentRpMemoryCommandRequest & {
 }
 
 const SUBJECT_MAX_LENGTH = 120
-const TEXT_MAX_LENGTH = 1_000
+const TEXT_MAX_LENGTH = AGENT_RP_MEMORY_TEXT_MAX_LENGTH
 /**
  * One import is a single durable record that every later replay re-parses, and
  * every active memory is rendered into the system prompt. Both costs scale with
@@ -170,6 +171,86 @@ function object(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
+/**
+ * Validate one kind/subject/text entry that did not come from this Session's log.
+ * @param value - an entry from a file, a browser request or a model reply.
+ * @param label - how to name the entry in an error message.
+ * @returns the entry with subject and text trimmed.
+ */
+export function normalizeAgentRpMemorySeedEntry(value: unknown, label: string): AgentRpMemorySeedEntry {
+  const entry = object(value, label)
+  if (typeof entry.kind !== 'string' || !AGENT_RP_MEMORY_KINDS.includes(entry.kind as AgentRpMemoryKind)
+    || typeof entry.subject !== 'string' || typeof entry.text !== 'string'
+    || Object.keys(entry).some(key => !['kind', 'subject', 'text'].includes(key))) {
+    throw new Error(`${label}字段无效`)
+  }
+  return {
+    kind: entry.kind as AgentRpMemoryKind,
+    subject: normalizeText(entry.subject, 'subject', SUBJECT_MAX_LENGTH),
+    text: normalizeText(entry.text, 'text', TEXT_MAX_LENGTH),
+  }
+}
+
+/**
+ * A seed entry that may take the place of an active memory filed under another
+ * topic. A timeline entry is titled by the time it spans, so extending it
+ * changes its title: `replaces` names the title it had.
+ */
+export interface AgentRpMemoryMergeEntry extends AgentRpMemorySeedEntry {
+  readonly replaces?: string
+}
+
+/**
+ * Validate one merge entry that did not come from this Session's log.
+ * @param value - an entry from a browser request.
+ * @param label - how to name the entry in an error message.
+ * @returns the entry with its topics and text trimmed.
+ */
+export function normalizeAgentRpMemoryMergeEntry(value: unknown, label: string): AgentRpMemoryMergeEntry {
+  const { replaces, ...entry } = object(value, label)
+  if (replaces !== undefined && typeof replaces !== 'string') throw new Error(`${label}字段无效`)
+  return {
+    ...normalizeAgentRpMemorySeedEntry(entry, label),
+    ...(replaces === undefined ? {} : { replaces: normalizeText(replaces, 'subject', SUBJECT_MAX_LENGTH) }),
+  }
+}
+
+/**
+ * Fold a batch of entries into an active set, one entry per topic.
+ *
+ * An entry takes the place of the active memory it `replaces`, or failing that
+ * of the one filed under its own topic, so the set keeps its order; anything
+ * else goes on the end. Topics fold the way the active-memory conflict check
+ * folds them. A rename onto a topic another memory already holds takes that
+ * one's place too, since two memories on one topic cannot both be corrected.
+ * @param active - the memories currently in force.
+ * @param entries - additions and replacements, already normalized.
+ * @returns the merged set as seed entries.
+ */
+export function mergeAgentRpMemorySeedEntries(
+  active: readonly AgentRpMemorySeedEntry[],
+  entries: readonly AgentRpMemoryMergeEntry[],
+): readonly AgentRpMemorySeedEntry[] {
+  const merged = active.map(memory => ({ kind: memory.kind, subject: memory.subject, text: memory.text }))
+  const find = (subject: string): number => {
+    const key = memorySubjectKey(subject)
+    return merged.findIndex(memory => memorySubjectKey(memory.subject) === key)
+  }
+  for (const entry of entries) {
+    const next = { kind: entry.kind, subject: entry.subject, text: entry.text }
+    const renamed = entry.replaces === undefined ? -1 : find(entry.replaces)
+    const same = find(entry.subject)
+    const index = renamed >= 0 ? renamed : same
+    if (index < 0) {
+      merged.push(next)
+      continue
+    }
+    merged[index] = next
+    if (same >= 0 && same !== index) merged.splice(same, 1)
+  }
+  return merged
+}
+
 function memoryCommandRequest(value: unknown): AgentRpMemoryCommandRequest {
   const record = object(value, '记忆操作请求')
   if (record.format !== 0) throw new Error('记忆操作请求字段无效')
@@ -201,19 +282,8 @@ function memoryCommandRequest(value: unknown): AgentRpMemoryCommandRequest {
     }
     // Entry ids, source sequences and versions in the file are deliberately not
     // read: this Session mints its own. Only kind, subject and text cross over.
-    const entries = record.entries.map((value, index) => {
-      const entry = object(value, `导入记忆 ${index + 1}`)
-      if (typeof entry.kind !== 'string' || !AGENT_RP_MEMORY_KINDS.includes(entry.kind as AgentRpMemoryKind)
-        || typeof entry.subject !== 'string' || typeof entry.text !== 'string'
-        || Object.keys(entry).some(key => !['kind', 'subject', 'text'].includes(key))) {
-        throw new Error(`导入记忆 ${index + 1} 字段无效`)
-      }
-      return {
-        kind: entry.kind as AgentRpMemoryKind,
-        subject: normalizeText(entry.subject, 'subject', SUBJECT_MAX_LENGTH),
-        text: normalizeText(entry.text, 'text', TEXT_MAX_LENGTH),
-      }
-    })
+    const entries = record.entries.map((value, index) =>
+      normalizeAgentRpMemorySeedEntry(value, `导入记忆 ${index + 1} `))
     const duplicate = findAgentRpMemoryImportDuplicate(entries)
     if (duplicate !== undefined) throw new Error(`导入内容里“${duplicate}”出现多次，请先合并成一条`)
     return { format: 0, operation: 'import', entries }
@@ -282,6 +352,11 @@ export function parseAgentRpMemoryCommandRequest(source: string): AgentRpMemoryC
 /** Serialize one user memory operation into the Session command log. */
 export function encodeAgentRpMemoryCommandRecord(record: AgentRpMemoryCommandRecord): string {
   return `${COMMAND_RESULT_PREFIX}${JSON.stringify(record)}`
+}
+
+/** Whether one command result text is a memory operation, without validating it. */
+export function isAgentRpMemoryCommandResult(source: string | undefined): boolean {
+  return source?.startsWith(COMMAND_RESULT_PREFIX) === true
 }
 
 /** Decode one user memory operation while declining unrelated command output. */
@@ -581,7 +656,7 @@ export function readAgentRpMemoryHistory(events: readonly SessionEvent[]): Agent
 /** Append an opt-in active-memory snapshot to an otherwise complete new-Session seed. */
 export function appendAgentRpMemorySeed(
   seed: readonly SessionEvent[],
-  memories: readonly AgentRpMemoryRecord[],
+  memories: readonly (AgentRpMemoryRecord | AgentRpMemorySeedEntry)[],
   sourceSessionId: string,
 ): readonly SessionEvent[] {
   if (memories.length === 0) return seed

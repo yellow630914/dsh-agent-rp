@@ -9,7 +9,7 @@ import type { CommandId } from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-agent'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { ReasoningEffortId, type Message } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ScopeKey } from '@deepseek-ai/dsh-scope'
 import { SessionSeq, type SessionEvent, type UserMessage } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -57,6 +57,7 @@ import {
 } from './memory.ts'
 import { executeAgentRpMemoryCommand } from './memory-command.ts'
 import { installAgentRpMemoryHttp } from './memory-http.ts'
+import { installAgentRpMemoryCompletionHttp } from './memory-completion-http.ts'
 import { installAgentRpCommandHttp } from './agent-rp-command-http.ts'
 import { parseCharacterCardJson, parseCharacterCardJsonBytes, parseCharacterCardValue } from './import/character-card.ts'
 import { parseCharx } from './import/charx.ts'
@@ -923,18 +924,7 @@ export function installAgentRp(
     description: 'persist an isolated Tavern Helper variable namespace',
     input: { hint: '<private Tavern Helper variable payload>' },
     recordInput: false,
-    handler: invocation => {
-      // Hiding floors prices the range it shadows for the token meter. That is
-      // a first-party service but not one this plugin can require — a Host
-      // without it should still load and still hide floors, it just cannot
-      // correct the meter's own bounded running total. Resolved per call so a
-      // meter mounted after this plugin is still found.
-      const meter = ctx.get('tokenMeter') as { estimateMessage(message: Message): number } | undefined
-      return executeTavernHelperMutation({
-        ...invocation,
-        ...(meter === undefined ? {} : { estimateMessage: (message: Message) => meter.estimateMessage(message) }),
-      })
-    },
+    handler: executeTavernHelperMutation,
   })
   commands.register({
     name: 'rp-tavern-trigger',
@@ -1829,6 +1819,7 @@ export async function apply(ctx: Context, config: AgentRpConfig): Promise<void> 
         installSillyTavernChatExportHttp(webCtx, ctx, server)
         installAgentRpCommandHttp(webCtx, ctx, server)
         installAgentRpMemoryHttp(webCtx, ctx, server)
+        installAgentRpMemoryCompletionHttp(webCtx, ctx, server)
         installRoleplayTurnHealthHttp(webCtx, ctx, server)
         installSessionLaunchHttp(
           webCtx,

@@ -342,10 +342,18 @@ import {
 import { SILLYTAVERN_CHAT_EXPORT_PATH } from '../sillytavern-chat-export-protocol.ts'
 import {
   AGENT_RP_MEMORY_PATH,
+  AGENT_RP_MEMORY_TEXT_MAX_LENGTH,
   type AgentRpMemoryCommandRequest,
   type AgentRpMemoryResponse,
   type AgentRpMemoryView,
 } from '../memory-protocol.ts'
+import {
+  AGENT_RP_MEMORY_COMPLETION_PATH,
+  type AgentRpMemoryCompletionRequest,
+  type AgentRpMemoryCompletionResponse,
+} from '../memory-completion-protocol.ts'
+import type { AgentRpMemoryMergeEntry } from '../memory.ts'
+import { FloorBranchDialog, type MemoryCompletionGuidance } from './floor-branch-dialog.tsx'
 import { executeAgentRpCommand } from './agent-rp-command.ts'
 import type { RoleplayStateCommandRequest } from '../roleplay-state.ts'
 import {
@@ -640,10 +648,18 @@ type HeaderProps = PropsRuntime<'conversation.session.header.actions'> & {
   readonly exportChat: (sessionId: SessionId) => Promise<void>
   readonly listMemory: (sessionId: SessionId) => Promise<readonly AgentRpMemoryView[]>
   readonly manageMemory: (sessionId: SessionId, request: AgentRpMemoryCommandRequest) => Promise<void>
-  /** Hide exactly `hidden` leading floors, restoring first when the count shrinks. */
-  readonly manageFloors: (sessionId: SessionId, hidden: number, current: number) => Promise<void>
+  /** Propose the timeline entries this Session's transcript has not been given yet. */
+  readonly completeBranchMemory: (
+    sessionId: SessionId,
+    guidance: MemoryCompletionGuidance,
+    signal: AbortSignal,
+  ) => Promise<AgentRpMemoryCompletionResponse>
   /** Branch a new Session that keeps the transcript from one visible floor onward. */
-  readonly branchFromFloor: (sessionId: SessionId, fromVisibleFloor: number) => Promise<void>
+  readonly branchFromFloor: (
+    sessionId: SessionId,
+    fromVisibleFloor: number,
+    memory?: readonly AgentRpMemoryMergeEntry[],
+  ) => Promise<void>
   readonly manageState: (sessionId: SessionId, request: RoleplayStateCommandRequest) => Promise<void>
   readonly manageTurnMode: (sessionId: SessionId, mode: AgentRpProjection['turnMode']) => Promise<void>
   readonly startCharacterSession: (
@@ -4501,7 +4517,7 @@ function RoleplayHeader({
   listCharacters, readCharacter, setCharacterArchived, importCharacterFile, listWorldInfos,
   prepareChatMigration, prepareRpDistributionChatMigration, launchPreparedChatMigration,
   startCharacterSession, exportChat,
-  listMemory, manageMemory, manageFloors, branchFromFloor, manageState, manageTurnMode,
+  listMemory, manageMemory, completeBranchMemory, branchFromFloor, manageState, manageTurnMode,
   listPresets, listPersonas, savePersona, deletePersona, applyPersona, loadModelCapabilities, runtimeDiagnostics,
   workspaceSettings,
 }: HeaderProps) {
@@ -4770,10 +4786,10 @@ function RoleplayHeader({
       onApply={persona => applyPersona(sessionId, persona)}
       onClose={() => { setPersonaOpen(false) }}
     />}
-    {floorsOpen && <FloorVisibilityDialog
+    {floorsOpen && <FloorBranchDialog
       floors={projection?.floors ?? []}
-      onCommit={hidden => manageFloors(sessionId, hidden, (projection?.floors ?? []).filter(floor => floor.hidden).length)}
-      onBranch={fromVisibleFloor => branchFromFloor(sessionId, fromVisibleFloor)}
+      onComplete={(guidance, signal) => completeBranchMemory(sessionId, guidance, signal)}
+      onBranch={(fromVisibleFloor, memory) => branchFromFloor(sessionId, fromVisibleFloor, memory)}
       onClose={() => { setFloorsOpen(false) }} />}
     {memoryOpen && <MemoryManagerDialog
       onClose={() => { setMemoryOpen(false) }}
@@ -5149,152 +5165,6 @@ const memoryKindLabels: Record<AgentRpMemoryView['kind'], string> = {
   event: '共同经历',
 }
 
-function FloorVisibilityDialog({ floors, onCommit, onBranch, onClose }: {
-  readonly floors: AgentRpProjection['floors']
-  readonly onCommit: (hidden: number) => Promise<void>
-  readonly onBranch: (fromVisibleFloor: number) => Promise<void>
-  readonly onClose: () => void
-}) {
-  const committed = floors.filter(floor => floor.hidden).length
-  const [hidden, setHidden] = useState(committed)
-  const [busy, setBusy] = useState<'hide' | 'branch'>()
-  const [confirming, setConfirming] = useState(false)
-  const [error, setError] = useState<string>()
-  // At least one floor has to stay in context for the character to answer.
-  const maximum = Math.max(0, floors.length - 1)
-  // Hiding is one-way, so the slider cannot go back below what is already
-  // hidden: the Host has no way to put those floors back into the context.
-  const target = Math.min(Math.max(hidden, committed), maximum)
-  const dirty = target > committed
-  const confirm = (): void => {
-    if (busy !== undefined || !dirty) return
-    if (!confirming) {
-      setConfirming(true)
-      return
-    }
-    setBusy('hide')
-    setError(undefined)
-    void onCommit(target).then(onClose, (reason: unknown) => {
-      setBusy(undefined)
-      setConfirming(false)
-      setError(reason instanceof Error ? reason.message : '无法调整隐藏范围')
-    })
-  }
-  // The slider counts every floor, including the ones already hidden, but a
-  // branch can only re-state floors that are still in the transcript. The
-  // difference is exactly the visible floor the branch starts from.
-  const branch = (): void => {
-    if (busy !== undefined) return
-    setBusy('branch')
-    setError(undefined)
-    setConfirming(false)
-    void onBranch(target - committed).then(onClose, (reason: unknown) => {
-      setBusy(undefined)
-      setError(reason instanceof Error ? reason.message : '无法创建分支')
-    })
-  }
-  return <div data-agent-rp-dialog data-agent-rp-floor-panel role="dialog" aria-modal="true" aria-label="楼层" style={{
-    alignItems: 'center', background: 'rgba(0,0,0,.62)', display: 'flex', inset: 0,
-    justifyContent: 'center', padding: '18px', position: 'fixed', zIndex: 1200,
-  }} onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}>
-    <section style={{
-      background: 'var(--dsw-alias-bg-base, #171719)', border: '1px solid var(--dsw-alias-border-l2, #3e3e43)',
-      borderRadius: '14px', boxShadow: '0 18px 58px rgba(0,0,0,.42)', display: 'flex', flexDirection: 'column',
-      maxHeight: 'min(720px, 86vh)', maxWidth: '640px', padding: '20px', width: '100%',
-    }}>
-      <header style={{ alignItems: 'start', display: 'flex', gap: '16px', justifyContent: 'space-between' }}>
-        <div>
-          <h2 style={{ fontSize: '17px', margin: 0 }}>楼层</h2>
-          <p style={{ fontSize: '12px', lineHeight: 1.55, margin: '5px 0 0', opacity: .58 }}>
-            隐藏的楼层不会进入下一次回复的上下文，只能从最前面开始隐藏，而且无法还原
-          </p>
-        </div>
-        <button type="button" disabled={busy !== undefined} onClick={onClose} style={{
-          background: 'transparent', border: 0, color: 'inherit', cursor: busy === undefined ? 'pointer' : 'default',
-          font: 'inherit', fontSize: '18px', opacity: .6, padding: '0 3px',
-        }} aria-label="关闭楼层面板">×</button>
-      </header>
-
-      {floors.length === 0 && <p role="status" style={{ fontSize: '13px', margin: '22px 0 4px', opacity: .58 }}>
-        这段会话还没有楼层
-      </p>}
-
-      {floors.length > 0 && <div style={{
-        background: 'var(--dsw-alias-bg-layer-1, #222226)', border: '1px solid var(--dsw-alias-border-l2, #3e3e43)',
-        borderRadius: '11px', display: 'grid', gap: '10px', marginTop: '16px', padding: '13px',
-      }}>
-        <label htmlFor="agent-rp-floor-slider" style={{ fontSize: '12px', fontWeight: 620 }}>
-          隐藏最前面 {target} 层
-        </label>
-        <input id="agent-rp-floor-slider" data-agent-rp-floor-slider type="range"
-          min={committed} max={maximum} step={1} value={target} disabled={busy !== undefined || maximum === committed}
-          onChange={event => { setHidden(Number(event.target.value)); setConfirming(false) }} style={{ width: '100%' }} />
-        <div style={{ display: 'flex', fontSize: '11px', gap: '10px', justifyContent: 'space-between', opacity: .55 }}>
-          <span>纳入上下文 {floors.length - target} 层</span>
-          <span>{dirty ? `当前已隐藏 ${committed} 层，确定后生效` : '与当前一致'}</span>
-        </div>
-      </div>}
-
-      {floors.length > 0 && <div style={{ display: 'grid', gap: '6px', marginTop: '14px', overflowY: 'auto' }}>
-        {floors.map((floor, index) => {
-          const willHide = index < target
-          return <div key={floor.seq} data-agent-rp-floor={willHide ? 'hidden' : 'context'} style={{
-            alignItems: 'baseline', display: 'flex', fontSize: '12px', gap: '8px',
-            opacity: willHide ? .42 : 1, padding: '4px 2px',
-          }}>
-            <span style={{ minWidth: '2.2em', opacity: .5, textAlign: 'right' }}>{index}</span>
-            <span style={{ minWidth: '2.6em', opacity: .55 }}>{floor.role === 'user' ? '玩家' : '角色'}</span>
-            <span style={{
-              flex: 1, overflow: 'hidden', textDecoration: willHide ? 'line-through' : 'none',
-              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>{floor.preview || '（空楼层）'}</span>
-          </div>
-        })}
-      </div>}
-
-      {error !== undefined && <p role="alert" style={{
-        color: 'var(--dsw-alias-state-danger, #e06470)', fontSize: '12px', lineHeight: 1.5, margin: '12px 0 0',
-      }}>{error}</p>}
-
-      {confirming && <p data-agent-rp-floor-confirm role="alert" style={{
-        background: 'color-mix(in srgb, var(--dsw-alias-state-danger, #e06470) 10%, transparent)',
-        borderRadius: '9px', fontSize: '12px', lineHeight: 1.6, margin: '14px 0 0', padding: '10px 12px',
-      }}>
-        这 {target - committed} 层会离开角色的上下文，而且<strong>无法还原</strong>。
-        内容不会消失——楼层面板和「导出聊天」里仍然读得到，但角色不会再看到它们。
-      </p>}
-
-      {floors.length > 0 && !confirming && <p style={{ fontSize: '12px', lineHeight: 1.6, margin: '14px 0 0', opacity: .62 }}>
-        也可以<strong>另开分支</strong>：保留第 {target} 层之后的楼层开一个新会话，角色卡、人物、
-        世界书、记忆、正则与状态数据都跟着过去，这段会话原样留着。分支的楼层会像导入聊天那样
-        重新叙述，所以插图、标注与回复版本不会跟过去。
-      </p>}
-
-      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
-        <button type="button" disabled={busy !== undefined} onClick={() => { if (confirming) setConfirming(false); else onClose() }}
-          style={generationButtonStyle}>{confirming ? '返回' : '取消'}</button>
-        {!confirming && floors.length > 0 && <button type="button" data-agent-rp-action="branch-floors"
-          disabled={busy !== undefined} onClick={branch} style={{
-            ...generationButtonStyle,
-            background: `color-mix(in srgb, ${color} 10%, transparent)`,
-            borderColor: `color-mix(in srgb, ${color} 34%, transparent)`,
-            opacity: busy !== undefined ? .5 : 1,
-          }}>{busy === 'branch' ? '正在创建分支…' : '另开分支'}</button>}
-        <button type="button" data-agent-rp-action="confirm-floors" disabled={busy !== undefined || !dirty} onClick={confirm} style={{
-          ...generationButtonStyle,
-          background: confirming
-            ? 'color-mix(in srgb, var(--dsw-alias-state-danger, #e06470) 22%, transparent)'
-            : `color-mix(in srgb, ${color} 18%, transparent)`,
-          borderColor: confirming
-            ? 'color-mix(in srgb, var(--dsw-alias-state-danger, #e06470) 52%, transparent)'
-            : `color-mix(in srgb, ${color} 48%, transparent)`,
-          opacity: busy !== undefined || !dirty ? .5 : 1,
-        }}>{busy === 'hide' ? '正在隐藏…' : confirming ? `隐藏 ${target - committed} 层（不可还原）` : '确定'}</button>
-      </div>
-    </section>
-  </div>
-}
-
 function MemoryManagerDialog({ load, onManage, onClose }: {
   readonly load: () => Promise<readonly AgentRpMemoryView[]>
   readonly onManage: (request: AgentRpMemoryCommandRequest) => Promise<void>
@@ -5474,7 +5344,7 @@ function MemoryManagerDialog({ load, onManage, onClose }: {
           </select>
           <input value={subject} maxLength={120} placeholder="主题，例如：称呼" onChange={event => { setSubject(event.target.value) }} aria-label="新增记忆主题" style={settingsFieldStyle} />
         </div>
-        <textarea value={text} maxLength={1000} rows={4} placeholder="写下希望角色长期记住的内容" onChange={event => { setText(event.target.value) }} aria-label="新增记忆内容" style={{ ...settingsFieldStyle, lineHeight: 1.55, resize: 'vertical' }} />
+        <textarea value={text} maxLength={AGENT_RP_MEMORY_TEXT_MAX_LENGTH} rows={4} placeholder="写下希望角色长期记住的内容" onChange={event => { setText(event.target.value) }} aria-label="新增记忆内容" style={{ ...settingsFieldStyle, lineHeight: 1.55, resize: 'vertical' }} />
         <button type="button" disabled={busy || subject.trim() === '' || text.trim() === ''} onClick={() => { run({
           format: 0, operation: 'add', kind, subject: subject.trim(), text: text.trim(),
         }) }} style={{
@@ -5520,7 +5390,7 @@ function MemoryManagerDialog({ load, onManage, onClose }: {
                   </select>
                   <input value={subject} maxLength={120} onChange={event => { setSubject(event.target.value) }} aria-label="记忆主题" style={settingsFieldStyle} />
                 </div>
-                <textarea value={text} maxLength={1000} rows={4} onChange={event => { setText(event.target.value) }} aria-label="记忆内容" style={{ ...settingsFieldStyle, lineHeight: 1.55, resize: 'vertical' }} />
+                <textarea value={text} maxLength={AGENT_RP_MEMORY_TEXT_MAX_LENGTH} rows={4} onChange={event => { setText(event.target.value) }} aria-label="记忆内容" style={{ ...settingsFieldStyle, lineHeight: 1.55, resize: 'vertical' }} />
                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                   <button type="button" disabled={busy} onClick={() => { setEditing(undefined) }} style={headerMenuItemStyle}>取消</button>
                   <button type="button" disabled={busy || subject.trim() === '' || text.trim() === ''} onClick={() => { run({
@@ -13641,18 +13511,40 @@ export function apply(ctx: ClientContext): void {
     if (!response.matched) throw new Error('当前 Host 未启用记忆管理')
   }
   /**
-   * Hiding floors is one-way and therefore one request.
+   * Ask the Host which events of this Session's transcript memory still lacks.
    *
-   * The Host drops the range from the Session surface with a real `replace`, and
-   * a `replace` has no inverse — the earlier restore-then-hide pair could also
-   * leave the Session fully restored when its second half failed, silently
-   * undoing a hide the player had already committed.
+   * The answer is a proposal only. It becomes durable when the branch is
+   * launched with it, in the new Session's memory seed; this Session is read
+   * and never written.
    */
-  const manageFloors = async (sessionId: SessionId, hidden: number, current: number): Promise<void> => {
-    if (hidden <= current) return
-    await runTavernMutation(sessionId, {
-      format: 0, operation: 'set-chat-hidden', start: 0, end: hidden - 1, hidden: true,
+  const completeBranchMemory = async (
+    sessionId: SessionId,
+    guidance: MemoryCompletionGuidance,
+    signal: AbortSignal,
+  ): Promise<AgentRpMemoryCompletionResponse> => {
+    const request: AgentRpMemoryCompletionRequest = { format: 0, sessionId, ...guidance }
+    const response = await fetch(AGENT_RP_MEMORY_COMPLETION_PATH, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+      signal,
     })
+    const responseText = await response.text()
+    let value: Partial<AgentRpMemoryCompletionResponse> & { readonly error?: string }
+    try {
+      value = JSON.parse(responseText) as typeof value
+    } catch {
+      throw new Error(`记忆补全失败（${response.status}）`)
+    }
+    if (!response.ok || value.format !== 0 || !Array.isArray(value.entries)
+      || typeof value.floorCount !== 'number' || typeof value.activeCount !== 'number'
+      || typeof value.rejectedCount !== 'number'
+      || value.entries.some(entry => typeof entry !== 'object' || entry === null
+        || typeof entry.subject !== 'string' || typeof entry.text !== 'string'
+        || !['fact', 'promise', 'relationship', 'preference', 'event'].includes(entry.kind))) {
+      throw new Error(value.error ?? `记忆补全失败（${response.status}）`)
+    }
+    return value as AgentRpMemoryCompletionResponse
   }
   const manageState = async (sessionId: SessionId, request: RoleplayStateCommandRequest): Promise<void> => {
     const response = await executeAgentRpCommand(sessionId, `/rp-state ${JSON.stringify(request)}`)
@@ -13754,17 +13646,23 @@ export function apply(ctx: ClientContext): void {
     })
   }
   /**
-   * Branch the transcript from one floor on, instead of hiding earlier floors.
+   * Branch the transcript from one floor on.
    *
-   * Hiding rewrites the current Session and cannot be undone; a branch leaves the
-   * source untouched, so the floors the player cut stay readable where they are.
+   * A branch leaves the source untouched, so the floors the player cut stay
+   * readable where they are. `memory` is what the player accepted from a memory
+   * completion of the transcript; the Host folds it into the carried memory.
    */
-  const branchFromFloor = async (sourceSessionId: SessionId, fromFloor: number): Promise<void> => {
+  const branchFromFloor = async (
+    sourceSessionId: SessionId,
+    fromFloor: number,
+    memory?: readonly AgentRpMemoryMergeEntry[],
+  ): Promise<void> => {
     await launchRoleplaySession({
       format: 0,
       sourceSessionId,
       kind: 'branch',
       fromFloor,
+      ...(memory === undefined || memory.length === 0 ? {} : { memory }),
     })
   }
   const retainRpDistributionChat = async (
@@ -14342,7 +14240,7 @@ export function apply(ctx: ClientContext): void {
   }
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
     name: 'conversation.session.header.actions', id: 'agent-rp-character-header', order: -100,
-  }, props => <RoleplayHeader {...props} runtimeDiagnostics={runtimeDiagnostics} workspaceSettings={workspaceSettings} loadAvatar={loadAvatar} renameSession={renameSession} configurePreset={configurePreset} importPresetFile={importPresetFile} importPreset={importPreset} managePresetLibrary={managePresetLibrary} configureWorldInfo={configureWorldInfo} configureRegex={configureRegex} importWorldInfo={importWorldInfo} attachWorldInfo={attachWorldInfo} listWorldInfos={listWorldInfos} listCharacters={listCharacters} readCharacter={readCharacter} setCharacterArchived={setCharacterArchived} deleteCharacter={deleteCharacter} importCharacterFile={importCharacterFile} prepareChatMigration={prepareChatMigration} prepareRpDistributionChatMigration={prepareRpDistributionChatMigration} launchPreparedChatMigration={launchPreparedChatMigration} exportChat={exportChat} listMemory={listMemory} manageMemory={manageMemory} manageFloors={manageFloors} branchFromFloor={branchFromFloor} manageState={manageState} manageTurnMode={manageTurnMode} startCharacterSession={startCharacterFromCurrentSession} listPresets={listPresets} listRegexPacks={listRegexPacks} importRegexPackFile={importRegexPackFile} deleteRegexPack={deleteRegexPack} listAgentCapabilityPresets={listAgentCapabilityPresets} listPersonas={listPersonas} savePersona={savePersona} deletePersona={deletePersona} applyPersona={applyPersona} loadModelCapabilities={loadModelCapabilities} />))
+  }, props => <RoleplayHeader {...props} runtimeDiagnostics={runtimeDiagnostics} workspaceSettings={workspaceSettings} loadAvatar={loadAvatar} renameSession={renameSession} configurePreset={configurePreset} importPresetFile={importPresetFile} importPreset={importPreset} managePresetLibrary={managePresetLibrary} configureWorldInfo={configureWorldInfo} configureRegex={configureRegex} importWorldInfo={importWorldInfo} attachWorldInfo={attachWorldInfo} listWorldInfos={listWorldInfos} listCharacters={listCharacters} readCharacter={readCharacter} setCharacterArchived={setCharacterArchived} deleteCharacter={deleteCharacter} importCharacterFile={importCharacterFile} prepareChatMigration={prepareChatMigration} prepareRpDistributionChatMigration={prepareRpDistributionChatMigration} launchPreparedChatMigration={launchPreparedChatMigration} exportChat={exportChat} listMemory={listMemory} manageMemory={manageMemory} completeBranchMemory={completeBranchMemory} branchFromFloor={branchFromFloor} manageState={manageState} manageTurnMode={manageTurnMode} startCharacterSession={startCharacterFromCurrentSession} listPresets={listPresets} listRegexPacks={listRegexPacks} importRegexPackFile={importRegexPackFile} deleteRegexPack={deleteRegexPack} listAgentCapabilityPresets={listAgentCapabilityPresets} listPersonas={listPersonas} savePersona={savePersona} deletePersona={deletePersona} applyPersona={applyPersona} loadModelCapabilities={loadModelCapabilities} />))
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'agent-rp',

@@ -204,6 +204,12 @@ DOM 适配器再把计划落到页面上，`user` 和 `assistant-step` 两条循
 
 ## 隐藏楼层怎么落到第 1 层
 
+> **2026-10-03 起停用。** 新的 `set-chat-hidden` 在命令入口被拒绝，楼层面板改成
+> 「另开分支」并在分支前补全记忆，见
+> [feature/20261003_branch-memory-completion](../feature/20261003_branch-memory-completion/CHANGE.md)。
+> 本节保留，是因为已经隐藏过楼层的旧会话仍然按这个形状重放——`shadowedSeqs`
+> 和 `hiddenPrefix` 的折叠都还在。
+
 隐藏楼层是目前唯一需要「让某段历史真的离开模型视野」的功能，所以它**不走第 3 层**，
 而是走 DSH 自己的 shadow-price 协定——和官方 `dsh-compaction-tool-result-pruner`
 同一个写法：

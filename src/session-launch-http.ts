@@ -35,7 +35,8 @@ import {
 } from './agent-capability-preset.ts'
 import { AGENT_RP_PRESET_ID } from './preset.ts'
 
-const MAX_REQUEST_BYTES = 32 * 1024
+/** A branch may carry a full completed-memory batch, which is the largest launch body. */
+const MAX_REQUEST_BYTES = 256 * 1024
 
 interface LaunchWorkspace {
   readonly id: string
@@ -173,7 +174,9 @@ export async function launchAgentRpSession(
   let prepared = request.kind === 'rewrite'
     ? prepareAgentRpRewriteSession(source.session, request.turn, titles?.get(source.session)?.title)
     : request.kind === 'branch'
-      ? prepareAgentRpBranchSession(source.session, request.fromFloor, titles?.get(source.session)?.title)
+      ? prepareAgentRpBranchSession(
+          source.session, request.fromFloor, titles?.get(source.session)?.title, request.memory,
+        )
       : prepareAgentRpSession(characters, chats, presetLibrary, worldInfos, request, resources)
   if (request.kind === 'character' && request.memory === 'copy-active') {
     if (!agentHasAgentRpRuntime(agentPresets, source)) throw new Error('只能从角色会话继承记忆')

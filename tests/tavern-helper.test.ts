@@ -549,6 +549,18 @@ test('parses Tavern Helper chat mutation operations', () => {
   })), /valid non-negative range/u)
 })
 
+test('refuses a new hide at the command boundary, before anything is read or written', () => {
+  // The request still parses — a script's `/hide` has to get a real answer —
+  // but nothing may reach the Session surface: hiding was a `replace` with no
+  // inverse, and the floor panel's branch has taken its place.
+  const session = Session.create(SessionId('hide-floors-closed'))
+  assert.throws(() => executeTavernHelperMutation({
+    agent: { session } as Agent,
+    rawInput: JSON.stringify({ format: 0, operation: 'set-chat-hidden', start: 0, end: 1, hidden: true }),
+  }), /隐藏楼层已停用.*另开分支/u)
+  assert.equal(session.snapshotEvents().length, 0)
+})
+
 test('keeps chat and World Info mutations on distinct Host capability actions', () => {
   for (const operation of [
     'set-chat-messages', 'create-chat-messages', 'delete-chat-messages', 'rotate-chat-messages', 'set-chat-hidden',

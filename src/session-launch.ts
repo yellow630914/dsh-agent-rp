@@ -11,7 +11,16 @@ import { encodeRegexConfiguration, readRegexConfiguration } from './regex-config
 import { encodeWorldInfoConfiguration, readWorldInfoConfiguration } from './world-info-configuration-core.ts'
 import { encodeTavernHelperState, readTavernHelperState } from './tavern-helper.ts'
 import { readRoleplayStates } from './roleplay-state.ts'
-import { appendAgentRpMemorySeed, readAgentRpMemoryHistory } from './memory.ts'
+import {
+  appendAgentRpMemorySeed,
+  findAgentRpMemoryImportDuplicate,
+  isAgentRpMemoryCommandResult,
+  mergeAgentRpMemorySeedEntries,
+  normalizeAgentRpMemoryMergeEntry,
+  readAgentRpMemoryHistory,
+  type AgentRpMemoryMergeEntry,
+} from './memory.ts'
+import { AGENT_RP_MEMORY_COMPLETION_MAX_ENTRIES } from './memory-completion-protocol.ts'
 import { createCharacterCardSessionSeed } from './import/character-card-seed.ts'
 import { createPresetSessionSeed } from './import/session-preset.ts'
 import { protectedSystemHeadMessage } from './import/protected-system-head.ts'
@@ -62,6 +71,18 @@ function parseAdditionalWorldInfoIds(value: unknown, primaryId?: string): readon
     throw new Error('附加世界书不能重复')
   }
   return [...ids]
+}
+
+/** Validate the completed memory a branch request carries; an empty list is none. */
+function parseBranchMemory(value: unknown): readonly AgentRpMemoryMergeEntry[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.length > AGENT_RP_MEMORY_COMPLETION_MAX_ENTRIES) {
+    throw new Error(`分支带入的记忆无效；一次最多带入 ${AGENT_RP_MEMORY_COMPLETION_MAX_ENTRIES} 条`)
+  }
+  const entries = value.map((entry, index) => normalizeAgentRpMemoryMergeEntry(entry, `带入记忆 ${index + 1} `))
+  const duplicate = findAgentRpMemoryImportDuplicate(entries)
+  if (duplicate !== undefined) throw new Error(`带入的记忆里“${duplicate}”出现多次，请先合并成一条`)
+  return entries.length === 0 ? undefined : entries
 }
 
 function parseResourceSelection(
@@ -228,14 +249,16 @@ export function parseAgentRpSessionLaunchRequest(value: unknown): AgentRpSession
   }
   if (record.kind === 'branch') {
     if (typeof record.fromFloor !== 'number' || !Number.isSafeInteger(record.fromFloor) || record.fromFloor < 0
-      || Object.keys(record).some(key => !['format', 'sourceSessionId', 'kind', 'fromFloor'].includes(key))) {
+      || Object.keys(record).some(key => !['format', 'sourceSessionId', 'kind', 'fromFloor', 'memory'].includes(key))) {
       throw new Error('分支会话请求字段无效')
     }
+    const memory = parseBranchMemory(record.memory)
     return {
       format: 0,
       sourceSessionId: record.sourceSessionId as string,
       kind: 'branch',
       fromFloor: record.fromFloor,
+      ...(memory === undefined ? {} : { memory }),
     }
   }
   throw new Error('角色会话启动类型无效')
@@ -487,15 +510,47 @@ function identityFirstSeed(events: readonly SessionEvent[]): readonly SessionEve
 }
 
 function outOfTurnSeed(events: readonly SessionEvent[]): readonly SessionEvent[] {
+  const memory = memoryRecordSeqs(events)
   const kept: SessionEvent[] = []
   let depth = 0
   for (const event of events) {
     if (event.type === 'turn/start') { depth += 1; continue }
     if (event.type === 'turn/end') { depth = Math.max(0, depth - 1); continue }
-    if (depth > 0) continue
+    if (depth > 0 || memory.has(Number(event.seq))) continue
     kept.push({ ...event, seq: SessionSeq(kept.length) } as SessionEvent)
   }
   return kept
+}
+
+/**
+ * Find the out-of-turn records that establish memory.
+ *
+ * A branch re-states memory as one seed holding the whole active set, so these
+ * must not also survive verbatim. Leaving them in is not merely redundant: a
+ * memory-manager result cites its `command/run` by seq, the kept events are
+ * renumbered, and the memory reader refuses a citation that no longer lands on
+ * that command — which fails every later turn of the branch. An earlier seed
+ * has no such citation but would be applied a second time beside the new one.
+ * @param events - complete source events.
+ * @returns the seqs of every memory seed and memory-manager command event.
+ */
+function memoryRecordSeqs(events: readonly SessionEvent[]): ReadonlySet<number> {
+  const commands = new Set<string>()
+  for (const event of events) {
+    if (event.type === 'command/run' && event.data.name === 'rp-memory') commands.add(String(event.data.commandId))
+    if (event.type === 'command/done' && event.data.kind === 'success' && isAgentRpMemoryCommandResult(event.data.text)) {
+      commands.add(String(event.data.commandId))
+    }
+  }
+  const seqs = new Set<number>()
+  for (const event of events) {
+    if (event.type === 'agent-rp/memory-seed'
+      || ((event.type === 'command/run' || event.type === 'command/done')
+        && commands.has(String(event.data.commandId)))) {
+      seqs.add(Number(event.seq))
+    }
+  }
+  return seqs
 }
 
 /** Give a run of synthesized events contiguous seqs after an existing seed. */
@@ -577,6 +632,9 @@ function carriedRoleplayConfiguration(
   return carried
 }
 
+/** The most memories one seed record may hold; the memory reader refuses a larger one. */
+const BRANCH_MEMORY_MAX_ENTRIES = 1_000
+
 /** Replay one floor as its own completed turn, the shape an imported chat uses. */
 function appendFloorTurn(
   carried: CarriedEvent[],
@@ -638,12 +696,16 @@ function appendFloorTurn(
  * @param session - live source session; only read.
  * @param fromFloor - first visible floor index to keep, as the floor panel numbers them.
  * @param sourceTitle - the source Session's display title, when it has one.
+ * @param memory - memory the player accepted for the floors being dropped;
+ *   folded into the carried set by topic — or onto the entry each one names as
+ *   replaced — so the source Session stays untouched.
  * @returns the seed and title for the branch.
  */
 export function prepareAgentRpBranchSession(
   session: Session,
   fromFloor: number,
   sourceTitle?: string,
+  memory: readonly AgentRpMemoryMergeEntry[] = [],
 ): PreparedAgentRpSession {
   if (!Number.isSafeInteger(fromFloor) || fromFloor < 0) throw new Error('起始楼层无效')
   const events = session.snapshotEvents()
@@ -654,9 +716,13 @@ export function prepareAgentRpBranchSession(
   const kept = floors.slice(fromFloor)
   if (kept.length === 0) throw new Error('至少需要保留一条楼层')
   const outOfTurn = outOfTurnSeed(events)
-  // Memory carries as one seed record, so the kept events' own memory is already
-  // in the fold; passing the active set re-establishes exactly what is current.
-  const base = appendAgentRpMemorySeed(outOfTurn, readAgentRpMemoryHistory(events).active, String(session.id))
+  // Memory carries as one seed record holding the whole current set: the kept
+  // events had their own memory records taken out, so this is its only source.
+  const carriedMemory = mergeAgentRpMemorySeedEntries(readAgentRpMemoryHistory(events).active, memory)
+  if (carriedMemory.length > BRANCH_MEMORY_MAX_ENTRIES) {
+    throw new Error(`分支后的记忆会超过 ${BRANCH_MEMORY_MAX_ENTRIES} 条，请先在记忆面板里整理`)
+  }
+  const base = appendAgentRpMemorySeed(outOfTurn, carriedMemory, String(session.id))
   const carried: CarriedEvent[] = [...carriedRoleplayConfiguration(events, base)]
   kept.forEach((floor, index) => { appendFloorTurn(carried, floor, index + 1, index === 0) })
   const seed = appendCarried(base, carried)

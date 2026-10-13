@@ -67,15 +67,6 @@ export interface RoleplayExperienceSessionLaunchRequest {
   readonly agentPresetId?: string
 }
 
-/** Start a child Session immediately before one completed user turn. */
-export interface RewriteSessionLaunchRequest {
-  readonly format: 0
-  readonly sourceSessionId: string
-  readonly kind: 'rewrite'
-  readonly turn: number
-  readonly text: string
-}
-
 /**
  * Branch an existing roleplay Session, keeping the transcript from one floor on.
  *
@@ -104,7 +95,6 @@ export type AgentRpSessionLaunchRequest =
   | WorldInfoSessionLaunchRequest
   | ChatSessionLaunchRequest
   | RoleplayExperienceSessionLaunchRequest
-  | RewriteSessionLaunchRequest
   | BranchSessionLaunchRequest
 
 /** Library-backed launch request that does not depend on an existing RP transcript. */

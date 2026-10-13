@@ -6,8 +6,7 @@ import type { IncomingMessage } from 'node:http'
 import { normalize as normalizePath, win32 as win32Path } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { CharacterLibrary } from './character-library.ts'
 import {
   jsonResponse as json,
@@ -17,7 +16,6 @@ import {
 } from './host-http.ts'
 import {
   prepareAgentRpBranchSession,
-  prepareAgentRpRewriteSession,
   prepareAgentRpSession,
   parseAgentRpSessionLaunchRequest,
 } from './session-launch.ts'
@@ -159,7 +157,7 @@ export async function launchAgentRpSession(
 
   const agentPresets = ctx.get('agentPresets') as AgentPresetGateway | undefined
   if (agentPresets === undefined) throw new Error('当前 Host 无法挂载角色会话预设')
-  const carriesSourceIdentity = request.kind === 'rewrite' || request.kind === 'branch'
+  const carriesSourceIdentity = request.kind === 'branch'
   const requestedAgentPreset = carriesSourceIdentity
     ? source.session.header.agentPreset
     : request.agentPresetId ?? AGENT_RP_PRESET_ID
@@ -167,17 +165,14 @@ export async function launchAgentRpSession(
   const preset = await resolveAgentRpCapabilityPreset(agentPresets, requestedAgentPreset)
   const titles = ctx.get('sessionTitle') as SessionTitleGateway | undefined
   if (carriesSourceIdentity) {
-    const verb = request.kind === 'rewrite' ? '改写' : '分支'
-    if (!agentHasAgentRpRuntime(agentPresets, source)) throw new Error(`只能${verb} Agent RP 角色会话`)
-    if (source.status !== 'idle' || agentHasPendingInput(source)) throw new Error(`请等待当前回复完成后再${verb}`)
+    if (!agentHasAgentRpRuntime(agentPresets, source)) throw new Error('只能分支 Agent RP 角色会话')
+    if (source.status !== 'idle' || agentHasPendingInput(source)) throw new Error('请等待当前回复完成后再分支')
   }
-  let prepared = request.kind === 'rewrite'
-    ? prepareAgentRpRewriteSession(source.session, request.turn, titles?.get(source.session)?.title)
-    : request.kind === 'branch'
-      ? prepareAgentRpBranchSession(
-          source.session, request.fromFloor, titles?.get(source.session)?.title, request.memory,
-        )
-      : prepareAgentRpSession(characters, chats, presetLibrary, worldInfos, request, resources)
+  let prepared = request.kind === 'branch'
+    ? prepareAgentRpBranchSession(
+        source.session, request.fromFloor, titles?.get(source.session)?.title, request.memory,
+      )
+    : prepareAgentRpSession(characters, chats, presetLibrary, worldInfos, request, resources)
   if (request.kind === 'character' && request.memory === 'copy-active') {
     if (!agentHasAgentRpRuntime(agentPresets, source)) throw new Error('只能从角色会话继承记忆')
     if (source.status !== 'idle' || agentHasPendingInput(source)) throw new Error('请等待当前回复完成后再继承记忆')
@@ -200,18 +195,12 @@ export async function launchAgentRpSession(
     agentOptions,
     meta: {
       ...(source.session.header.cwd === undefined ? {} : { cwd: source.session.header.cwd }),
-      // A rewrite forks the source: DSH 0.1.3 marks that with `isSeeded` plus the
-      // exact inherited prefix length, replacing the retired `seedLength` field.
-      ...(request.kind === 'rewrite' ? { parentSession: source.id, isSeeded: true } : {}),
-      // A branch records the same lineage but is deliberately NOT seeded: its
+      // A branch records lineage but is deliberately NOT seeded: its
       // transcript is re-stated rather than inherited, so the seed is not a
       // prefix of the parent's log and must not claim an inherited event count.
       ...(request.kind === 'branch' ? { parentSession: source.id } : {}),
       agentPreset: preset.id,
     },
-    ...(request.kind === 'rewrite'
-      ? { inheritedEventCount: SessionLogOffset(prepared.seed.length) }
-      : {}),
     setup: async agentCtx => { await agentPresets.mount(agentCtx, preset.id) },
   })
   if (!agentHasAgentRpRuntime(agentPresets, handle.agent)) {
@@ -273,12 +262,6 @@ export async function launchAgentRpSession(
   }
   if (workspaceWarning !== undefined) {
     ctx.logger.warn(`agent-rp: Session ${JSON.stringify(sessionId)} remains ungrouped: ${workspaceWarning}`)
-  }
-  if (request.kind === 'rewrite') {
-    handle.agent.followup(createUserMessage({
-      content: [{ type: 'text', text: request.text }],
-      source: { kind: 'user' },
-    }))
   }
   return {
     sessionId,

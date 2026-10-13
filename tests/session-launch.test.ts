@@ -25,7 +25,6 @@ import {
 } from '../src/roleplay-resource-library-providers.ts'
 import {
   prepareAgentRpBranchSession,
-  prepareAgentRpRewriteSession,
   prepareAgentRpSession,
   parseAgentRpSessionLaunchRequest,
 } from '../src/session-launch.ts'
@@ -421,43 +420,6 @@ test('prepares Character Card and JSONL history as one replayable seed', (contex
   assert.equal(readActiveSessionCharacter(replay.snapshotEvents())?.result.libraryId, character.id)
 })
 
-test('rewrites a completed turn by branching immediately before its user message', (context) => {
-  const { characters, chats, presets, worldInfos } = libraries(context)
-  const character = characters.importFile({
-    data: new Uint8Array(readFileSync('tests/fixtures/manual-character-card.json')),
-    filename: 'character.json',
-    mediaType: 'application/json',
-  })
-  const preset = presets.import(parseSillyTavernPresetJson(JSON.stringify({
-    prompts: [{ identifier: 'main', name: '主提示', role: 'system', content: '保持角色语气' }],
-    prompt_order: [{ character_id: 100001, order: [{ identifier: 'main', enabled: true }] }],
-  }), '改写预设.json'))
-  const prepared = prepareAgentRpSession(characters, chats, presets, worldInfos, {
-    format: 0,
-    sourceSessionId: 'source',
-    kind: 'character',
-    characterId: character.id,
-    greetingIndex: 0,
-    persona: { id: 'persona-01234567', name: '旅人', description: '来自海边。' },
-    presetId: preset.id,
-  })
-  const source = Session.create(SessionId('rewrite-source'), prepared.seed)
-  const previousTurn = Math.max(...source.snapshotEvents().flatMap(event => event.type === 'turn/start' ? [event.data.turn] : [])) + 1
-  appendConversationTurn(source, previousTurn, '先去港口。', '好，我们沿着潮声往前走。')
-  appendConversationTurn(source, previousTurn + 1, '改去钟楼。', '那就转向钟楼。')
-
-  const rewritten = prepareAgentRpRewriteSession(source, previousTurn + 1, '白露')
-  const replay = Session.create(SessionId('rewrite-child'), rewritten.seed)
-  const transcript = replay.deriveMessages().flatMap(message => message.content.flatMap(block => block.type === 'text' ? [block.text] : []))
-  assert.equal(rewritten.title, '白露 · 改写')
-  assert.equal(transcript.includes('先去港口。'), true)
-  assert.equal(transcript.includes('好，我们沿着潮声往前走。'), true)
-  assert.equal(transcript.includes('改去钟楼。'), false)
-  assert.equal(transcript.includes('那就转向钟楼。'), false)
-  assert.equal(readActiveSessionCharacter(replay.snapshotEvents())?.result.libraryId, character.id)
-  assert.equal(readActiveSessionCharacter(replay.snapshotEvents())?.result.userName, '旅人')
-  assert.equal(readActiveSessionPreset(replay.snapshotEvents())?.libraryId, preset.id)
-})
 
 test('branches from one floor, carrying identity and state while re-stating the transcript', (context) => {
   const { characters, chats, presets, worldInfos } = libraries(context)
@@ -680,24 +642,6 @@ test('validates the memory a branch request carries', () => {
   }), /最多带入 40 条/u)
 })
 
-test('rejects an absent, unfinished, or assistant-only rewrite turn', () => {
-  const source = Session.create(SessionId('invalid-rewrite'))
-  source.append('turn/start', { turn: 1 })
-  assert.throws(() => prepareAgentRpRewriteSession(source, 2), /不存在/u)
-  assert.throws(() => prepareAgentRpRewriteSession(source, 1), /尚未完成/u)
-  source.append('assistant/message', {
-    turn: 1,
-    step: 1,
-    message: createAssistantMessage({
-      content: [{ type: 'text', text: '开场白' }],
-      source: { provider: 'fixture', model: 'fixture' },
-    }),
-    stream: [],
-  }, { surfaceOp: 'append' })
-  source.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-  assert.throws(() => prepareAgentRpRewriteSession(source, 1), /没有可改写/u)
-  assert.throws(() => prepareAgentRpRewriteSession(source, 0), /轮次无效/u)
-})
 
 test('rejects paths and extra browser-owned launch fields', () => {
   assert.throws(() => parseAgentRpSessionLaunchRequest({
@@ -766,27 +710,14 @@ test('rejects paths and extra browser-owned launch fields', () => {
     importId: 'world-info-0123456789abcdef0123456789abcdef',
     path: 'C:/private/world-info.json',
   }), /字段无效/u)
-  assert.deepEqual(parseAgentRpSessionLaunchRequest({
+  // `rewrite` was a child-Session fork; redoing a turn now happens in place.
+  assert.throws(() => parseAgentRpSessionLaunchRequest({
     format: 0,
     sourceSessionId: 'source',
     kind: 'rewrite',
     turn: 3,
     text: '换一种说法。',
-  }), { format: 0, sourceSessionId: 'source', kind: 'rewrite', turn: 3, text: '换一种说法。' })
-  assert.throws(() => parseAgentRpSessionLaunchRequest({
-    format: 0,
-    sourceSessionId: 'source',
-    kind: 'rewrite',
-    turn: 0,
-    text: '无效轮次',
-  }), /字段无效/u)
-  assert.throws(() => parseAgentRpSessionLaunchRequest({
-    format: 0,
-    sourceSessionId: 'source',
-    kind: 'rewrite',
-    turn: 1,
-    text: '   ',
-  }), /字段无效/u)
+  }), /启动类型无效/u)
 })
 
 test('accepts opt-in memory only for character launches', () => {

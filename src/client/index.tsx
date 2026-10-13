@@ -297,6 +297,7 @@ import {
   importRegexPackFile,
   listRegexPacks,
 } from './regex-pack-library-client.ts'
+import { redoRoleplayTurn } from './roleplay-turn-redo-client.ts'
 import { listArchivedSessions } from './archived-session-client.ts'
 import type { RegexPackLibrarySummary } from '../regex-pack-library-protocol.ts'
 import { fetchRoleplayResourceDetail } from './roleplay-resource-detail.ts'
@@ -716,7 +717,7 @@ function composerCardSeat(dock: HTMLElement): {
 
 type GenerationTailProps = TurnTailOwnerProps & {
   readonly sessionId: SessionId
-  readonly rewriteTurn: (sessionId: SessionId, turn: number, draft: string) => Promise<void>
+  readonly redoTurn: (sessionId: SessionId, draft: string) => Promise<void>
   readonly runImageGeneration: RunImageGeneration
   readonly useChat: PropsRuntime<'conversation.composer.dock'>['useChat']
   readonly useProjection: PropsRuntime<'conversation.composer.dock'>['useProjection']
@@ -1309,7 +1310,7 @@ function RewriteTurnDialog({ initialText, mode, busy, error, onClose, onRewrite 
       <p style={{ fontSize: '12px', lineHeight: 1.6, margin: '7px 0 12px', opacity: .62 }}>
         {mode === 'branch'
           ? '会保留当前对话，并从修改后的输入创建一个新分支。'
-          : '会在当前对话里直接替换这一轮的输入，并丢弃现有回复重新生成。旧回复不会保留为可切换的版本；本轮已经沉淀的状态与插图不会跟着回退。'}
+          : '会在当前对话里直接重做这一轮：旧的输入与回复一起退出对话，模型也不再读到它们，本轮结算的状态会退回这一轮开始前的值。旧内容不保留为可切换的版本，插图不会跟着回退。想保留原样请改用「从这一楼分支」。'}
       </p>
       <textarea autoFocus aria-label="修改后的输入" disabled={busy} maxLength={8_000} value={text} onChange={event => { setText(event.target.value) }}
         onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submit() }} style={{
@@ -1324,15 +1325,15 @@ function RewriteTurnDialog({ initialText, mode, busy, error, onClose, onRewrite 
           ...generationButtonStyle, background: `color-mix(in srgb, ${color} 18%, transparent)`,
           borderColor: `color-mix(in srgb, ${color} 48%, transparent)`, fontSize: '12px', minHeight: '30px', opacity: 1,
         }}>{busy
-          ? (mode === 'branch' ? '正在创建…' : '正在重新生成…')
-          : (mode === 'branch' ? '创建新分支' : '重新生成')}</button>
+          ? (mode === 'branch' ? '正在创建…' : '正在重做…')
+          : (mode === 'branch' ? '创建新分支' : '重做本轮')}</button>
       </div>
     </section>
   </div>
 }
 
 function GenerationTail({
-  rewriteTurn, runImageGeneration, seq: replySeq,
+  redoTurn, runImageGeneration, seq: replySeq,
   sessionId, turn, useChat, useProjection, useSession,
 }: GenerationTailProps) {
   const projection = useProjection('agentRp') as AgentRpProjection | undefined
@@ -1365,7 +1366,7 @@ function GenerationTail({
   const sceneNote = replySceneNote(replyText)
   const disabled = running || busy !== undefined
   const unavailableReason = running ? '回复生成期间暂不可用' : busy !== undefined ? '正在处理回复' : undefined
-  const rewriteUnavailable = disabled || editableUserText === undefined
+  const rewriteUnavailable = disabled || editableUserText === undefined || !currentReply
   return <span data-agent-rp-generation-actions>
     {currentReply && <Tooltip label={sceneNote === '' ? '当前回复没有可绘制的场景' : disabled ? unavailableReason ?? '生成插图' : '生成插图'} side="bottom">
       <button type="button" data-agent-rp-generation-action aria-label="生成插图"
@@ -1374,8 +1375,10 @@ function GenerationTail({
         <IconSparkleMedium />
       </button>
     </Tooltip>}
-    <Tooltip label={editableUserText === undefined ? '这一轮含附件或没有可修改的用户消息' : disabled ? unavailableReason ?? '修改输入并另开分支' : '修改输入并另开分支'} side="bottom">
-      <button type="button" data-agent-rp-generation-action aria-label={busy === 'rewrite' ? '正在修改输入' : '修改输入并另开分支'}
+    <Tooltip label={editableUserText === undefined ? '这一轮含附件或没有可修改的用户消息'
+      : !currentReply ? '只能重做最后一轮；更早的楼层请用「从这一楼分支」'
+        : disabled ? unavailableReason ?? '修改输入并重做本轮' : '修改输入并重做本轮'} side="bottom">
+      <button type="button" data-agent-rp-generation-action aria-label={busy === 'rewrite' ? '正在重做本轮' : '修改输入并重做本轮'}
         aria-disabled={rewriteUnavailable || undefined} data-unavailable={rewriteUnavailable || undefined}
         onClick={rewriteUnavailable ? undefined : () => { setError(undefined); setRewriteOpen(true) }}>
         {busy === 'rewrite' ? <IconLoadingOutlineMedium className="agent-rp-generation-loading" /> : <IconEditOutlineMedium />}
@@ -1387,13 +1390,13 @@ function GenerationTail({
     {currentReply && drawOpen && <ImageGenerationDialog projection={projection} initialMode="scene" initialNote={sceneNote}
       onClose={() => { setDrawOpen(false) }} onGenerate={request => { runImageGeneration(sessionId, request) }} />}
     {rewriteOpen && editableUserText !== undefined && <RewriteTurnDialog
-      initialText={editableUserText} mode="branch"
+      initialText={editableUserText} mode="regenerate"
       busy={busy === 'rewrite'} {...error === undefined ? {} : { error }}
       onClose={() => { if (busy !== 'rewrite') setRewriteOpen(false) }}
       onRewrite={text => {
         setBusy('rewrite')
         setError(undefined)
-        void rewriteTurn(sessionId, turn.turn, text).then(
+        void redoTurn(sessionId, text).then(
           () => { setBusy(undefined); setRewriteOpen(false) },
           (reason: unknown) => {
             setBusy(undefined)
@@ -13636,14 +13639,16 @@ export function apply(ctx: ClientContext): void {
     if (value.workspaceWarning !== undefined) sessionLaunchNotices.publish(value.workspaceWarning)
     return sessionId
   }
-  const rewriteTurn = async (sourceSessionId: SessionId, turn: number, draft: string): Promise<void> => {
-    await launchRoleplaySession({
-      format: 0,
-      sourceSessionId,
-      kind: 'rewrite',
-      turn,
-      text: draft,
-    })
+  /**
+   * Redo the last turn with edited input, in place.
+   *
+   * This used to fork a child Session from the prefix before the turn. It no
+   * longer does: the old turn is retired from this Session's surface and the
+   * edited text is re-sent, which is the same mechanism a regenerate uses.
+   * Editing an older floor is a branch, and stays one.
+   */
+  const redoTurn = async (sessionId: SessionId, draft: string): Promise<void> => {
+    await redoRoleplayTurn(String(sessionId), draft)
   }
   /**
    * Branch the transcript from one floor on.
@@ -14339,7 +14344,7 @@ export function apply(ctx: ClientContext): void {
     name: 'conversation.chat.turnActions',
     id: 'agent-rp-generation',
     order: 100,
-  }, props => <GenerationTail {...props} rewriteTurn={rewriteTurn}
+  }, props => <GenerationTail {...props} redoTurn={redoTurn}
     runImageGeneration={runImageGeneration} />))
   // DSH 0.2.0 made `conversation.chat.turnTail` an ordinary list slot, so an
   // entry can no longer decline through a selector — the decision moves into the
@@ -14352,7 +14357,7 @@ export function apply(ctx: ClientContext): void {
   }, props => ctx.slots.spec('conversation.chat.turnActions') !== undefined
     || props.turn.data.get('turn-tail')?.closing == null
     ? null
-    : <GenerationTail {...props} rewriteTurn={rewriteTurn}
+    : <GenerationTail {...props} redoTurn={redoTurn}
     runImageGeneration={runImageGeneration} />))
   ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
     name: 'conversation.composer.dock', id: 'agent-rp-status', order: -100,

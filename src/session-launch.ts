@@ -233,20 +233,6 @@ export function parseAgentRpSessionLaunchRequest(value: unknown): AgentRpSession
       ...(agentPresetId === undefined ? {} : { agentPresetId }),
     }
   }
-  if (record.kind === 'rewrite') {
-    if (typeof record.turn !== 'number' || !Number.isSafeInteger(record.turn) || record.turn < 1
-      || typeof record.text !== 'string' || record.text.trim() === '' || record.text.length > 8_000
-      || Object.keys(record).some(key => !['format', 'sourceSessionId', 'kind', 'turn', 'text'].includes(key))) {
-      throw new Error('改写会话请求字段无效')
-    }
-    return {
-      format: 0,
-      sourceSessionId: record.sourceSessionId as string,
-      kind: 'rewrite',
-      turn: record.turn,
-      text: record.text,
-    }
-  }
   if (record.kind === 'branch') {
     if (typeof record.fromFloor !== 'number' || !Number.isSafeInteger(record.fromFloor) || record.fromFloor < 0
       || Object.keys(record).some(key => !['format', 'sourceSessionId', 'kind', 'fromFloor', 'memory'].includes(key))) {
@@ -735,21 +721,3 @@ export function prepareAgentRpBranchSession(
   }
 }
 
-/** Cut one completed user turn from an Agent RP transcript without changing its source. */
-export function prepareAgentRpRewriteSession(
-  session: Pick<Session, 'snapshotEvents'>,
-  turn: number,
-  sourceTitle?: string,
-): PreparedAgentRpSession {
-  if (!Number.isSafeInteger(turn) || turn < 1) throw new Error('改写轮次无效')
-  const start = session.snapshotEvents().find(event => event.type === 'turn/start' && event.data.turn === turn)
-  if (start === undefined) throw new Error(`第 ${turn} 轮不存在`)
-  const end = session.snapshotEvents().find(event => event.seq > start.seq && event.type === 'turn/end' && event.data.turn === turn)
-  if (end === undefined) throw new Error(`第 ${turn} 轮尚未完成，请等待回复结束`)
-  const userMessage = session.snapshotEvents().find(event => event.seq > start.seq && event.seq < end.seq && event.type === 'user/message')
-  if (userMessage === undefined) throw new Error('这一轮没有可改写的用户消息')
-  const seed = session.snapshotEvents().slice(0, start.seq)
-  const characterName = readActiveSessionCharacter(seed)?.result.name
-  const title = sourceTitle?.trim() || characterName?.trim() || '角色对话'
-  return { seed, title: `${title} · 改写` }
-}

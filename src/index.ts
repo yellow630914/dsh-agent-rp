@@ -33,6 +33,7 @@ import { characterLibraryRoleplayResourceId } from './roleplay-resource-library-
 import { installRoleplayResourceCatalogHttp } from './roleplay-resource-catalog-http.ts'
 import { RegexPackLibrary } from './regex-pack-library.ts'
 import { installRegexPackLibraryHttp } from './regex-pack-library-http.ts'
+import { installRoleplayTurnRedoHttp } from './roleplay-turn-redo-http.ts'
 import { installSessionRegexPackHttp } from './session-regex-pack-http.ts'
 import { installStateSchemeLibraryHttp } from './state-scheme-library-http.ts'
 import { installRoleplayStateResettleHttp } from './roleplay-state-resettle-http.ts'
@@ -1799,6 +1800,7 @@ export async function apply(ctx: Context, config: AgentRpConfig): Promise<void> 
         installPresetLibraryHttp(webCtx, presetLibrary, server)
         installRegexPackLibraryHttp(webCtx, regexPackLibrary, server)
         installSessionRegexPackHttp(webCtx, ctx, server, regexPackLibrary)
+        installRoleplayTurnRedoHttp(webCtx, ctx, server)
         installStateSchemeLibraryHttp(webCtx, stateSchemeLibrary, server)
         installRoleplayStateSchemeSessionHttp(webCtx, ctx, server, stateSchemeLibrary)
         installRoleplayStateResettleHttp(webCtx, ctx, server, {
